@@ -73,9 +73,7 @@ fn alert_card(attention: u64, failed_remotes: u64) -> Html {
 
 fn gauge(label: &str, value: f64, detail: String, color: &str) -> Html {
     let safe = value.clamp(0.0, 100.0);
-    let style = format!(
-        "background:conic-gradient({color} {safe:.1}%, #edf1f6 {safe:.1}% 100%);"
-    );
+    let style = format!("background:conic-gradient({color} {safe:.1}%, #edf1f6 {safe:.1}% 100%);");
     html! {
         <div class="nexus-gauge-item">
             <div class="nexus-gauge" style={style}>
@@ -103,13 +101,7 @@ fn health_row(label: &str, online: u64, issues: u64, detail: String) -> Html {
     }
 }
 
-fn workload_panel(
-    title: &str,
-    icon: &str,
-    total: u64,
-    running: u64,
-    stopped: u64,
-) -> Html {
+fn workload_panel(title: &str, icon: &str, total: u64, running: u64, stopped: u64) -> Html {
     let running_pct = if total == 0 {
         0.0
     } else {
