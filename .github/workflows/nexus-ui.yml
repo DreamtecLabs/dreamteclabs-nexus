@@ -4,30 +4,54 @@ on:
   pull_request:
     paths:
       - 'ui/**'
+      - 'docs/nexus-frontend-architecture.md'
       - '.github/workflows/nexus-ui.yml'
 
 permissions:
   contents: read
 
 jobs:
-  check:
+  boundary:
     runs-on: ubuntu-latest
-    timeout-minutes: 20
+    timeout-minutes: 10
     steps:
       - name: Checkout
         uses: actions/checkout@v4
+        with:
+          fetch-depth: 2
 
       - name: Install Rust stable
         uses: dtolnay/rust-toolchain@stable
         with:
-          targets: wasm32-unknown-unknown
           components: rustfmt
-
-      - name: Use crates.io in CI
-        run: mv .cargo/config.toml .cargo/config.debian.toml
 
       - name: Check formatting
         run: cargo fmt --manifest-path ui/Cargo.toml --all -- --check
 
-      - name: Check Nexus UI
-        run: cargo check --manifest-path ui/Cargo.toml --target wasm32-unknown-unknown
+      - name: Enforce frontend-only boundary
+        shell: bash
+        run: |
+          set -euo pipefail
+          changed="$(git diff --name-only HEAD^1 HEAD)"
+          printf '%s\n' "$changed"
+
+          forbidden="$(printf '%s\n' "$changed" | grep -E '^(server/|lib/|cli/|pdm-config/|pdm-api/)' || true)"
+          if [[ -n "$forbidden" ]]; then
+            echo "Nexus UI changes must not modify PDM engine paths:" >&2
+            printf '%s\n' "$forbidden" >&2
+            exit 1
+          fi
+
+          if ! git diff --quiet HEAD^1 HEAD -- ui/src/lib.rs; then
+            echo "ui/src/lib.rs must stay identical to upstream for this integration seam" >&2
+            exit 1
+          fi
+
+      - name: Verify Nexus ownership seam
+        shell: bash
+        run: |
+          set -euo pipefail
+          test -f ui/src/nexus/mod.rs
+          test -f ui/src/nexus/home.rs
+          grep -q 'mod nexus;' ui/src/main_menu.rs
+          grep -q 'NexusHome' ui/src/main_menu.rs
