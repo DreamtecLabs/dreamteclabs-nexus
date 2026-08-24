@@ -61,12 +61,17 @@ fn dashboard(status: &ResourcesStatus) -> Html {
     let healthy = status
         .remote_list
         .iter()
-        .filter(|r| matches!(r.status, RemoteStatus::Good))
+        .filter(|r| matches!(r.status.clone(), RemoteStatus::Good))
         .count();
     let warnings = status
         .remote_list
         .iter()
-        .filter(|r| matches!(r.status, RemoteStatus::Warning | RemoteStatus::Error))
+        .filter(|r| {
+            matches!(
+                r.status.clone(),
+                RemoteStatus::Warning | RemoteStatus::Error
+            )
+        })
         .count()
         + status.failed_remotes as usize;
 
