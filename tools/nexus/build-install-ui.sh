@@ -38,17 +38,64 @@ fi
 dpkg-query -W -f='${Package} ${Version}\n' proxmox-datacenter-manager-ui > "$backup_dir/package-version.txt" 2>/dev/null || true
 git rev-parse HEAD > "$backup_dir/nexus-git-sha.txt"
 
-apt-get update
-apt-get install -y --no-install-recommends devscripts equivs git ca-certificates
+echo "[1/7] Repairing any interrupted APT/dpkg state"
+dpkg --configure -a
+apt-get -f install -y
 
-mk-build-deps \
+echo "[2/7] Ensuring Proxmox development repository is available"
+keyring="/usr/share/keyrings/proxmox-archive-keyring.gpg"
+if [[ ! -f "$keyring" ]]; then
+  echo "Missing Proxmox archive keyring: $keyring" >&2
+  echo "This host must be a supported PDM/Debian Trixie installation before building Nexus." >&2
+  exit 1
+fi
+
+devel_source="/etc/apt/sources.list.d/proxmox-devel.sources"
+if ! grep -RqsE '^[[:space:]]*URIs:[[:space:]]+https?://download\.proxmox\.com/debian/devel/?' /etc/apt/sources.list /etc/apt/sources.list.d 2>/dev/null \
+   && ! grep -RqsE '^[[:space:]]*deb[[:space:]].*download\.proxmox\.com/debian/devel/?[[:space:]]+trixie[[:space:]]+main' /etc/apt/sources.list /etc/apt/sources.list.d 2>/dev/null; then
+  cat > "$devel_source" <<EOF
+Types: deb
+URIs: http://download.proxmox.com/debian/devel/
+Suites: trixie
+Components: main
+Signed-By: $keyring
+EOF
+  echo "Added temporary build repository: $devel_source"
+fi
+
+apt-get update
+
+echo "[3/7] Installing Debian build tooling"
+apt-get install -y --no-install-recommends \
+  build-essential \
+  devscripts \
+  equivs \
+  git \
+  ca-certificates
+
+echo "[4/7] Installing the exact PDM UI Build-Depends"
+# Proxmox intentionally resolves a number of Rust crates from Debian packages
+# in /usr/share/cargo/registry. The cross-project devel repository is required
+# for development-only packages that are not published on crates.io.
+if ! mk-build-deps \
   --install \
   --remove \
   --tool 'apt-get -y --no-install-recommends' \
-  ui/debian/control
+  ui/debian/control; then
+  echo >&2
+  echo "Unable to satisfy PDM UI build dependencies." >&2
+  echo "Unsatisfied dependencies reported by dpkg-checkbuilddeps:" >&2
+  dpkg-checkbuilddeps ui/debian/control 2>&1 || true
+  echo >&2
+  echo "Configured Proxmox repositories:" >&2
+  grep -RhsE '^(Types:|URIs:|Suites:|Components:|deb )' /etc/apt/sources.list /etc/apt/sources.list.d 2>/dev/null >&2 || true
+  exit 1
+fi
 
+echo "[5/7] Initializing UI assets"
 git submodule update --init --recursive
 
+echo "[6/7] Building PDM/Nexus UI Debian package"
 make -C ui clean
 make -C ui deb
 
@@ -58,6 +105,7 @@ if [[ -z "$package" || ! -f "$package" ]]; then
   exit 1
 fi
 
+echo "[7/7] Installing Nexus UI package"
 dpkg -i "$package"
 
 echo
