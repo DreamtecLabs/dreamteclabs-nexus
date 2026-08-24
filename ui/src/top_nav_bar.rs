@@ -134,12 +134,18 @@ impl Component for PdmTopNavBar {
             .with_item(
                 MenuItem::new(tr!("Language"))
                     .icon_class("fa fa-language")
-                    .on_select(ctx.link().callback(|_| Msg::ChangeView(Some(ViewState::LanguageDialog)))),
+                    .on_select(
+                        ctx.link()
+                            .callback(|_| Msg::ChangeView(Some(ViewState::LanguageDialog))),
+                    ),
             )
             .with_item(
                 MenuItem::new(tr!("Theme"))
                     .icon_class("fa fa-desktop")
-                    .on_select(ctx.link().callback(|_| Msg::ChangeView(Some(ViewState::ThemeDialog)))),
+                    .on_select(
+                        ctx.link()
+                            .callback(|_| Msg::ChangeView(Some(ViewState::ThemeDialog))),
+                    ),
             )
             .with_item(MenuEntry::Separator)
             .with_item(
@@ -156,12 +162,19 @@ impl Component for PdmTopNavBar {
         if let Some(username) = &props.username {
             actions.add_child(
                 RunningTasksButton::new(props.running_tasks.clone())
-                    .on_show_task(ctx.link().callback(|info| Msg::ChangeView(Some(ViewState::OpenTask(info)))))
+                    .on_show_task(
+                        ctx.link()
+                            .callback(|info| Msg::ChangeView(Some(ViewState::OpenTask(info)))),
+                    )
                     .buttons(vec![
-                        Button::new(tr!("Local Tasks")).on_activate(move |_| set_location_href("#/administration/tasks")),
-                        Button::new(tr!("Remote Tasks")).on_activate(move |_| set_location_href("#/remotes/tasks")),
+                        Button::new(tr!("Local Tasks"))
+                            .on_activate(move |_| set_location_href("#/administration/tasks")),
+                        Button::new(tr!("Remote Tasks"))
+                            .on_activate(move |_| set_location_href("#/remotes/tasks")),
                     ])
-                    .render(|item: &TaskListItem| format_optional_remote_upid(&item.upid, true).into()),
+                    .render(|item: &TaskListItem| {
+                        format_optional_remote_upid(&item.upid, true).into()
+                    }),
             );
             actions.add_child(
                 MenuButton::new(username.clone())
