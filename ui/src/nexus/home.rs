@@ -4,14 +4,22 @@ use wasm_bindgen_futures::spawn_local;
 use yew::prelude::*;
 
 fn pct(used: f64, total: f64) -> f64 {
-    if total <= 0.0 { 0.0 } else { ((used / total) * 100.0).clamp(0.0, 100.0) }
+    if total <= 0.0 {
+        0.0
+    } else {
+        ((used / total) * 100.0).clamp(0.0, 100.0)
+    }
 }
 
 fn format_bytes(value: u64) -> String {
     const GIB: f64 = 1024.0 * 1024.0 * 1024.0;
     const TIB: f64 = GIB * 1024.0;
     let value = value as f64;
-    if value >= TIB { format!("{:.1} TiB", value / TIB) } else { format!("{:.1} GiB", value / GIB) }
+    if value >= TIB {
+        format!("{:.1} TiB", value / TIB)
+    } else {
+        format!("{:.1} GiB", value / GIB)
+    }
 }
 
 fn metric_card(label: &str, value: String, detail: String, accent: &str) -> Html {
@@ -46,15 +54,35 @@ fn usage_card(title: &str, percentage: f64, detail: String) -> Html {
 
 fn dashboard(status: &ResourcesStatus) -> Html {
     let pve_nodes = status.pve_nodes.online + status.pve_nodes.offline + status.pve_nodes.unknown;
-    let vm_total = status.qemu.running + status.qemu.stopped + status.qemu.template + status.qemu.unknown;
-    let lxc_total = status.lxc.running + status.lxc.stopped + status.lxc.template + status.lxc.unknown;
-    let healthy = status.remote_list.iter().filter(|r| matches!(r.status, RemoteStatus::Good)).count();
-    let warnings = status.remote_list.iter().filter(|r| matches!(r.status, RemoteStatus::Warning | RemoteStatus::Error)).count() + status.failed_remotes as usize;
+    let vm_total =
+        status.qemu.running + status.qemu.stopped + status.qemu.template + status.qemu.unknown;
+    let lxc_total =
+        status.lxc.running + status.lxc.stopped + status.lxc.template + status.lxc.unknown;
+    let healthy = status
+        .remote_list
+        .iter()
+        .filter(|r| matches!(r.status, RemoteStatus::Good))
+        .count();
+    let warnings = status
+        .remote_list
+        .iter()
+        .filter(|r| matches!(r.status, RemoteStatus::Warning | RemoteStatus::Error))
+        .count()
+        + status.failed_remotes as usize;
 
     let cpu = pct(status.pve_cpu_stats.used, status.pve_cpu_stats.max);
-    let memory = pct(status.pve_memory_stats.used as f64, status.pve_memory_stats.total as f64);
-    let storage = pct(status.pve_storage_stats.used as f64, status.pve_storage_stats.total as f64);
-    let backup_storage = pct(status.pbs_storage_stats.used as f64, status.pbs_storage_stats.total as f64);
+    let memory = pct(
+        status.pve_memory_stats.used as f64,
+        status.pve_memory_stats.total as f64,
+    );
+    let storage = pct(
+        status.pve_storage_stats.used as f64,
+        status.pve_storage_stats.total as f64,
+    );
+    let backup_storage = pct(
+        status.pbs_storage_stats.used as f64,
+        status.pbs_storage_stats.total as f64,
+    );
 
     html! {
         <>
