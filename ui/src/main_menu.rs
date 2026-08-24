@@ -157,7 +157,7 @@ impl Component for PdmMainMenu {
         register_view(
             &mut menu,
             &mut content,
-            "Overview",
+            "Dashboard",
             "dashboard",
             Some("fa fa-th-large"),
             move |_| html! { <NexusHome/> },
@@ -166,7 +166,7 @@ impl Component for PdmMainMenu {
         register_view(
             &mut menu,
             &mut content,
-            "Workloads",
+            "Inventory",
             "guests",
             Some("fa fa-cubes"),
             |_| GuestPanel::new().into(),
@@ -465,13 +465,23 @@ impl Component for PdmMainMenu {
             .with_child(html! {
                 <style>{r#"
                     .nexus-navigation {
-                        background: #111827 !important;
-                        color: #d1d5db !important;
-                        border-right: 1px solid #1f2937 !important;
+                        background: #ffffff !important;
+                        color: #344054 !important;
+                        border-right: 1px solid #e4e7ec !important;
                     }
                     .nexus-navigation a,
                     .nexus-navigation button {
-                        font-size: 13px !important;
+                        color: #344054 !important;
+                        font-size: 12.5px !important;
+                    }
+                    .nexus-navigation a:hover,
+                    .nexus-navigation button:hover {
+                        background: #f2f4f7 !important;
+                    }
+                    .nexus-navigation [aria-current="page"],
+                    .nexus-navigation .pwt-nav-item-active {
+                        background: #eef3ff !important;
+                        color: #315bea !important;
                     }
                 "#}</style>
             })
