@@ -32,17 +32,6 @@ use crate::{
 mod nexus;
 use nexus::NexusHome;
 
-/*
-use crate::{
-    AccessControl, Dashboard, PbsDatastorePanel, PbsDatastoreRootPanel, PbsTapePanel,
-    ServerAdministration, SystemConfiguration, XtermJsConsole,
-};
-
-use crate::configuration::{RemoteConfigPanel, TrafficControlView};
-use crate::certificates::CertificatesPanel;
-
-*/
-
 use pwt_macros::builder;
 
 #[derive(Clone, PartialEq, Properties)]
@@ -52,14 +41,10 @@ pub struct MainMenu {
     #[prop_or_default]
     pub username: Option<AttrValue>,
 
-    /// If set, add a loading indicator to the remote menu.
-    ///
-    /// Just to indicate that the remote list may not be up to date.
     #[builder(IntoPropValue, into_prop_value)]
     #[prop_or_default]
     pub remote_list_loading: bool,
 
-    /// Set the list of remotes
     #[builder]
     #[prop_or_default]
     pub remote_list: Vec<RemoteListCacheEntry>,
@@ -121,8 +106,6 @@ fn register_submenu(
     );
 }
 
-impl PdmMainMenu {}
-
 impl Component for PdmMainMenu {
     type Message = Msg;
     type Properties = MainMenu;
@@ -169,115 +152,209 @@ impl Component for PdmMainMenu {
         let mut content = SelectionView::new()
             .class(FlexFit)
             .selection(self.menu_selection.clone());
-
         let mut menu = Menu::new();
+
+        // Nexus primary navigation. Keep PDM route IDs underneath so deep links and
+        // engine-owned panels continue to work while the information architecture is ours.
+        register_view(
+            &mut menu,
+            &mut content,
+            "Overview",
+            "dashboard",
+            Some("fa fa-th-large"),
+            move |_| html! { <NexusHome/> },
+        );
 
         register_view(
             &mut menu,
             &mut content,
-            tr!("Dashboard"),
-            "dashboard",
-            Some("fa fa-tachometer"),
-            move |_| html! { <NexusHome/> },
+            "Workloads",
+            "guests",
+            Some("fa fa-cubes"),
+            |_| GuestPanel::new().into(),
         );
 
-        let mut views = Menu::new();
+        let mut infrastructure = Menu::new();
+        register_view(
+            &mut infrastructure,
+            &mut content,
+            "All remotes",
+            "remotes",
+            Some("fa fa-server"),
+            |_| {
+                Container::new()
+                    .class("pwt-content-spacer")
+                    .class(pwt::css::FlexFit)
+                    .with_child(html! {<RemotesPanel/>})
+                    .into()
+            },
+        );
 
-        let mut found = false;
-
-        for view in &props.view_list {
-            let view = view.to_string();
-            if route_view.as_ref() == Some(&view) {
-                found = true;
-            }
+        for remote in props.remote_list.iter().filter(|remote| remote.ty == RemoteType::Pve) {
             register_view(
-                &mut views,
+                &mut infrastructure,
                 &mut content,
-                view.clone(),
-                &format!("view-{view}"),
-                Some("fa fa-plus-square-o"),
-                move |_| View::new(Some(view.clone().into())).into(),
-            );
-        }
-
-        if let (false, Some(view)) = (found, route_view) {
-            register_view(
-                &mut views,
-                &mut content,
-                view.clone(),
-                &format!("view-{view}"),
-                Some("fa fa-plus-square-o"),
-                move |_| View::new(Some(view.clone().into())).into(),
+                &remote.id,
+                &format!("remote-{}", remote.id),
+                Some("fa fa-server"),
+                {
+                    let remote = remote.clone();
+                    move |_| crate::pve::PveRemote::new(remote.id.clone()).into()
+                },
             );
         }
 
         register_submenu(
             &mut menu,
             &mut content,
-            tr!("Views"),
-            "views",
-            Some("fa fa-th-large"),
-            move |_| ViewGrid::new().into(),
-            views,
+            "Infrastructure",
+            "infrastructure",
+            Some(if props.remote_list_loading { "fa fa-refresh fa-spin" } else { "fa fa-server" }),
+            |_| {
+                Container::new()
+                    .class("pwt-content-spacer")
+                    .class(pwt::css::FlexFit)
+                    .with_child(html! {<RemotesPanel/>})
+                    .into()
+            },
+            infrastructure,
         );
 
-        if self.acl_context.check_privs(&["system"], PRIV_SYS_AUDIT) {
-            let allow_editing = self
-                .acl_context
-                .check_privs(&["system", "notes"], PRIV_SYS_MODIFY);
-
+        let mut backups = Menu::new();
+        let mut has_pbs = false;
+        for remote in props.remote_list.iter().filter(|remote| remote.ty == RemoteType::Pbs) {
+            has_pbs = true;
             register_view(
+                &mut backups,
+                &mut content,
+                &remote.id,
+                &format!("remote-{}", remote.id),
+                Some("fa fa-database"),
+                {
+                    let remote = remote.clone();
+                    move |_| crate::pbs::PbsRemote::new(remote.id.clone()).into()
+                },
+            );
+        }
+        if has_pbs {
+            register_submenu(
                 &mut menu,
                 &mut content,
-                tr!("Notes"),
-                "notes",
-                Some("fa fa-sticky-note-o"),
-                move |_| {
-                    let mut notes = NotesView::new("/config/notes");
-
-                    if allow_editing {
-                        notes.set_on_submit(|notes| async move {
-                            proxmox_yew_comp::http_put(
-                                "/config/notes",
-                                Some(serde_json::to_value(&notes)?),
-                            )
-                            .await
-                        });
-                    }
-
+                "Backups",
+                "backups",
+                Some("fa fa-database"),
+                |_| {
                     Container::new()
                         .class("pwt-content-spacer")
                         .class(pwt::css::FlexFit)
-                        .with_child(notes)
+                        .with_child(html! {<RemotesPanel/>})
                         .into()
                 },
-            )
+                backups,
+            );
         }
 
-        let mut config_submenu = Menu::new();
+        let mut networking = Menu::new();
+        register_view(
+            &mut networking,
+            &mut content,
+            "SDN",
+            "sdn",
+            Some("fa fa-sitemap"),
+            |_| ZoneTree::new().into(),
+        );
+        register_view(
+            &mut networking,
+            &mut content,
+            "EVPN",
+            "evpn",
+            Some("fa fa-share-alt"),
+            |_| EvpnPanel::new().into(),
+        );
+        register_submenu(
+            &mut menu,
+            &mut content,
+            "Networking",
+            "networking",
+            Some("fa fa-sitemap"),
+            |_| ZoneTree::new().into(),
+            networking,
+        );
 
         register_view(
-            &mut config_submenu,
+            &mut menu,
             &mut content,
-            tr!("Access Control"),
+            "Storage",
+            "ceph",
+            Some("fa fa-database"),
+            |_| CephView::new().into(),
+        );
+
+        let mut views_menu = Menu::new();
+        let mut found = false;
+        for view_name in &props.view_list {
+            let view_name = view_name.to_string();
+            if route_view.as_ref() == Some(&view_name) {
+                found = true;
+            }
+            register_view(
+                &mut views_menu,
+                &mut content,
+                view_name.clone(),
+                &format!("view-{view_name}"),
+                Some("fa fa-plus-square-o"),
+                move |_| View::new(Some(view_name.clone().into())).into(),
+            );
+        }
+        if let (false, Some(view_name)) = (found, route_view) {
+            register_view(
+                &mut views_menu,
+                &mut content,
+                view_name.clone(),
+                &format!("view-{view_name}"),
+                Some("fa fa-plus-square-o"),
+                move |_| View::new(Some(view_name.clone().into())).into(),
+            );
+        }
+        register_submenu(
+            &mut menu,
+            &mut content,
+            "Views",
+            "views",
+            Some("fa fa-columns"),
+            |_| ViewGrid::new().into(),
+            views_menu,
+        );
+
+        let mut settings = Menu::new();
+        register_view(
+            &mut settings,
+            &mut content,
+            "System",
+            "configuration",
+            Some("fa fa-sliders"),
+            |_| html! { <SystemConfiguration/> },
+        );
+        register_view(
+            &mut settings,
+            &mut content,
+            "Access Control",
             "access",
             Some("fa fa-key"),
             |_| html! {<AccessControl/>},
         );
-
         register_view(
-            &mut config_submenu,
+            &mut settings,
             &mut content,
-            tr!("Certificates"),
+            "Certificates",
             "certificates",
             Some("fa fa-certificate"),
             |_| html! {<CertificatesPanel/>},
         );
-
         register_view(
-            &mut config_submenu,
+            &mut settings,
             &mut content,
-            tr!("Subscription"),
+            "Subscription",
             "subscription",
             Some("fa fa-support"),
             |_| {
@@ -288,135 +365,78 @@ impl Component for PdmMainMenu {
                     .into()
             },
         );
-
-        register_submenu(
-            &mut menu,
-            &mut content,
-            tr!("Configuration"),
-            "configuration",
-            Some("fa fa-gears"),
-            |_| html! { <SystemConfiguration/> },
-            config_submenu,
-        );
-
         register_view(
-            &mut menu,
+            &mut settings,
             &mut content,
-            tr!("Subscription Registry"),
+            "Subscription Registry",
             "subscription-registry",
             Some("fa fa-id-card"),
             |_| SubscriptionRegistryProps::new().into(),
         );
 
-        let mut admin_submenu = Menu::new();
-
-        register_view(
-            &mut admin_submenu,
-            &mut content,
-            tr!("Shell"),
-            "shell",
-            Some("fa fa-terminal"),
-            |_| XTermJs::new().into(),
-        );
-
-        let username = ctx.props().username.clone();
-        register_submenu(
-            &mut menu,
-            &mut content,
-            tr!("Administration"),
-            "administration",
-            Some("fa fa-wrench"),
-            move |_| {
-                ServerAdministration::new()
-                    .username(username.clone())
-                    .into()
-            },
-            admin_submenu,
-        );
-
-        let mut sdn_submenu = Menu::new();
-
-        register_view(
-            &mut sdn_submenu,
-            &mut content,
-            tr!("EVPN"),
-            "evpn",
-            Some("fa fa-sitemap"),
-            |_| EvpnPanel::new().into(),
-        );
-
-        register_submenu(
-            &mut menu,
-            &mut content,
-            tr!("SDN"),
-            "sdn",
-            Some("fa fa-sdn"),
-            |_| ZoneTree::new().into(),
-            sdn_submenu,
-        );
-
-        register_view(
-            &mut menu,
-            &mut content,
-            tr!("Ceph"),
-            "ceph",
-            Some("fa fa-ceph"),
-            |_| CephView::new().into(),
-        );
-
-        register_view(
-            &mut menu,
-            &mut content,
-            tr!("Guests"),
-            "guests",
-            Some("fa fa-desktop"),
-            |_| GuestPanel::new().into(),
-        );
-
-        let mut remote_submenu = Menu::new();
-
-        for remote in props.remote_list.iter() {
+        if self.acl_context.check_privs(&["system"], PRIV_SYS_AUDIT) {
+            let allow_editing = self
+                .acl_context
+                .check_privs(&["system", "notes"], PRIV_SYS_MODIFY);
             register_view(
-                &mut remote_submenu,
+                &mut settings,
                 &mut content,
-                &remote.id,
-                &format!("remote-{}", remote.id),
-                Some("fa fa-server"),
-                {
-                    let remote = remote.clone();
-                    move |_| match remote.ty {
-                        RemoteType::Pve => crate::pve::PveRemote::new(remote.id.clone()).into(),
-                        RemoteType::Pbs => crate::pbs::PbsRemote::new(remote.id.clone()).into(),
+                "Notes",
+                "notes",
+                Some("fa fa-sticky-note-o"),
+                move |_| {
+                    let mut notes = NotesView::new("/config/notes");
+                    if allow_editing {
+                        notes.set_on_submit(|notes| async move {
+                            proxmox_yew_comp::http_put(
+                                "/config/notes",
+                                Some(serde_json::to_value(&notes)?),
+                            )
+                            .await
+                        });
                     }
+                    Container::new()
+                        .class("pwt-content-spacer")
+                        .class(pwt::css::FlexFit)
+                        .with_child(notes)
+                        .into()
                 },
             );
         }
 
+        let username = ctx.props().username.clone();
+        register_view(
+            &mut settings,
+            &mut content,
+            "Administration",
+            "administration",
+            Some("fa fa-wrench"),
+            move |_| ServerAdministration::new().username(username.clone()).into(),
+        );
+        register_view(
+            &mut settings,
+            &mut content,
+            "Shell",
+            "shell",
+            Some("fa fa-terminal"),
+            |_| XTermJs::new().into(),
+        );
         register_submenu(
             &mut menu,
             &mut content,
-            tr!("Remotes"),
-            "remotes",
-            Some(if props.remote_list_loading {
-                "fa fa-refresh fa-spin"
-            } else {
-                "fa fa-server"
-            }),
-            |_| {
-                Container::new()
-                    .class("pwt-content-spacer")
-                    .class(pwt::css::FlexFit)
-                    .with_child(html! {<RemotesPanel/>})
-                    .into()
-            },
-            remote_submenu,
+            "Settings",
+            "settings",
+            Some("fa fa-cog"),
+            |_| html! { <SystemConfiguration/> },
+            settings,
         );
 
         let drawer = NavigationDrawer::new(menu)
-            .aria_label("Datacenter Manager")
+            .aria_label("Nexus navigation")
+            .class("nexus-navigation")
             .class("pwt-border-end")
             .class(css::Flex::None)
-            .width(275)
+            .width(238)
             .router(true)
             .default_active(self.active.to_string())
             .selection(self.menu_selection.clone())
@@ -428,6 +448,19 @@ impl Component for PdmMainMenu {
         Container::new()
             .class(Display::Flex)
             .class(FlexFit)
+            .with_child(html! {
+                <style>{r#"
+                    .nexus-navigation {
+                        background: #111827 !important;
+                        color: #d1d5db !important;
+                        border-right: 1px solid #1f2937 !important;
+                    }
+                    .nexus-navigation a,
+                    .nexus-navigation button {
+                        font-size: 13px !important;
+                    }
+                "#}</style>
+            })
             .with_child(
                 Row::new()
                     .class(FlexFit)
