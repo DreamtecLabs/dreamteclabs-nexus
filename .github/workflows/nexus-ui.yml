@@ -23,6 +23,9 @@ jobs:
           targets: wasm32-unknown-unknown
           components: rustfmt
 
+      - name: Use crates.io in CI
+        run: mv .cargo/config.toml .cargo/config.debian.toml
+
       - name: Check formatting
         run: cargo fmt --manifest-path ui/Cargo.toml --all -- --check
 
