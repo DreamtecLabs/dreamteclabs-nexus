@@ -4,6 +4,7 @@ on:
   pull_request:
     paths:
       - 'ui/**'
+      - 'tools/nexus/**'
       - 'docs/nexus-frontend-architecture.md'
       - '.github/workflows/nexus-ui.yml'
 
@@ -27,6 +28,9 @@ jobs:
 
       - name: Check formatting
         run: cargo fmt --manifest-path ui/Cargo.toml --all -- --check
+
+      - name: Check deployment helper syntax
+        run: bash -n tools/nexus/build-install-ui.sh
 
       - name: Enforce frontend-only boundary
         shell: bash
