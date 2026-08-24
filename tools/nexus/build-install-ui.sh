@@ -38,11 +38,11 @@ fi
 dpkg-query -W -f='${Package} ${Version}\n' proxmox-datacenter-manager-ui > "$backup_dir/package-version.txt" 2>/dev/null || true
 git rev-parse HEAD > "$backup_dir/nexus-git-sha.txt"
 
-echo "[1/7] Repairing any interrupted APT/dpkg state"
+echo "[1/8] Repairing any interrupted APT/dpkg state"
 dpkg --configure -a
 apt-get -f install -y
 
-echo "[2/7] Ensuring Proxmox development repository is available"
+echo "[2/8] Ensuring Proxmox development repository is available"
 keyring="/usr/share/keyrings/proxmox-archive-keyring.gpg"
 if [[ ! -f "$keyring" ]]; then
   echo "Missing Proxmox archive keyring: $keyring" >&2
@@ -65,7 +65,7 @@ fi
 
 apt-get update
 
-echo "[3/7] Installing Debian build tooling"
+echo "[3/8] Installing Debian build tooling"
 apt-get install -y --no-install-recommends \
   build-essential \
   devscripts \
@@ -73,10 +73,7 @@ apt-get install -y --no-install-recommends \
   git \
   ca-certificates
 
-echo "[4/7] Installing the exact PDM UI Build-Depends"
-# Proxmox intentionally resolves a number of Rust crates from Debian packages
-# in /usr/share/cargo/registry. The cross-project devel repository is required
-# for development-only packages that are not published on crates.io.
+echo "[4/8] Installing the exact PDM UI Build-Depends"
 if ! mk-build-deps \
   --install \
   --remove \
@@ -92,10 +89,24 @@ if ! mk-build-deps \
   exit 1
 fi
 
-echo "[5/7] Initializing UI assets"
+echo "[5/8] Installing Cargo dependencies missing from upstream Debian control"
+# ui/Cargo.toml requires proxmox-subscription 1.x with the api-types feature,
+# but current upstream ui/debian/control does not list that crate as a Build-Depends.
+# Install the Proxmox-packaged crate explicitly rather than changing upstream packaging.
+apt-get install -y --no-install-recommends \
+  librust-proxmox-subscription-dev \
+  'librust-proxmox-subscription+api-types-dev'
+
+if ! find /usr/share/cargo/registry -maxdepth 1 -type d -name 'proxmox-subscription-*' -print -quit | grep -q .; then
+  echo "proxmox-subscription crate is still missing from /usr/share/cargo/registry." >&2
+  apt-cache policy librust-proxmox-subscription-dev 'librust-proxmox-subscription+api-types-dev' >&2 || true
+  exit 1
+fi
+
+echo "[6/8] Initializing UI assets"
 git submodule update --init --recursive
 
-echo "[6/7] Building PDM/Nexus UI Debian package"
+echo "[7/8] Building PDM/Nexus UI Debian package"
 make -C ui clean
 make -C ui deb
 
@@ -105,7 +116,7 @@ if [[ -z "$package" || ! -f "$package" ]]; then
   exit 1
 fi
 
-echo "[7/7] Installing Nexus UI package"
+echo "[8/8] Installing Nexus UI package"
 dpkg -i "$package"
 
 echo
