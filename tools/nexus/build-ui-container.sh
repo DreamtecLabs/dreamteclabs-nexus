@@ -2,7 +2,6 @@
 set -euo pipefail
 
 cd /workspace
-git config --global --add safe.directory /workspace
 
 apt-get update
 apt-get install -y --no-install-recommends \
@@ -15,6 +14,8 @@ apt-get install -y --no-install-recommends \
   gnupg \
   iso-codes \
   lintian
+
+git config --global --add safe.directory /workspace
 
 keyring=/usr/share/keyrings/proxmox-archive-keyring.gpg
 curl -fsSL https://enterprise.proxmox.com/debian/proxmox-archive-keyring-trixie.gpg -o "$keyring"
