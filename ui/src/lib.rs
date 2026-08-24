@@ -38,6 +38,7 @@ mod search_provider;
 pub use search_provider::SearchProvider;
 
 mod dashboard;
+mod nexus;
 
 mod guests;
 
@@ -273,8 +274,7 @@ pub async fn check_pdm_subscription() -> bool {
 ///
 ///
 /// NOTE: This should be only used for PDM itself, or for when it's used for a PDM specific feature,
-/// i.e., one that's not just relayed 1:1 to a specific remote node, as for that one should use the
-/// remote-specific alert.
+/// i.e., one that's not just relayed 1:1 to a specific remote node, as for that one should use the remote-specific alert.
 pub fn pdm_subscription_alert(on_close: impl IntoEventCallback<()>) -> AlertDialog {
     let (title, msg) = pdm_subscription_title_and_message();
     AlertDialog::new(Container::from_tag("p").with_child(msg))
@@ -303,10 +303,9 @@ pub fn extract_package_version(
     package_name: &str,
 ) -> Option<Version> {
     let entry = updates.nodes.get(node)?;
-    let version = entry
-        .versions
-        .iter()
-        .find_map(|package| (package.package == package_name).then_some(package.version.clone()))?;
+    let version = updates.nodes.get(node)?.versions.iter().find_map(|package| {
+        (package.package == package_name).then_some(package.version.clone())
+    })?;
 
     version.parse().ok()
 }
