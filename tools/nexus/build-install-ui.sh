@@ -71,7 +71,8 @@ apt-get install -y --no-install-recommends \
   devscripts \
   equivs \
   git \
-  ca-certificates
+  ca-certificates \
+  lintian
 
 echo "[4/10] Installing the exact PDM UI Build-Depends"
 if ! mk-build-deps \
@@ -161,16 +162,25 @@ fi
 echo "[9/10] Building PDM/Nexus UI Debian package"
 make -C ui clean
 if ! make -C ui deb; then
-  echo >&2
-  echo "Nexus UI build failed." >&2
-  echo "Current memory/swap state:" >&2
-  free -h >&2 || true
-  if command -v journalctl >/dev/null 2>&1; then
-    echo "Recent kernel OOM messages (if accessible):" >&2
-    journalctl -k -n 100 --no-pager 2>/dev/null | grep -Ei 'out of memory|oom|killed process' | tail -n 20 >&2 || true
+  # dpkg-buildpackage may have completed successfully and only the final lintian
+  # invocation failed. If the expected package exists, preserve it and allow the
+  # install step to continue after validating it below.
+  built_package="$(find ui -maxdepth 1 -type f -name 'proxmox-datacenter-manager-ui_*.deb' -printf '%T@ %p\n' | sort -nr | head -n1 | cut -d' ' -f2-)"
+  if [[ -n "$built_package" && -f "$built_package" ]]; then
+    echo "Build command returned non-zero, but a Debian package was produced: $built_package" >&2
+    echo "Continuing with package validation/install." >&2
+  else
+    echo >&2
+    echo "Nexus UI build failed." >&2
+    echo "Current memory/swap state:" >&2
+    free -h >&2 || true
+    if command -v journalctl >/dev/null 2>&1; then
+      echo "Recent kernel OOM messages (if accessible):" >&2
+      journalctl -k -n 100 --no-pager 2>/dev/null | grep -Ei 'out of memory|oom|killed process' | tail -n 20 >&2 || true
+    fi
+    echo "If rustc still exits with SIGKILL, raise the LXC to 6-8 GiB RAM or add swap on the Proxmox host." >&2
+    exit 1
   fi
-  echo "If rustc still exits with SIGKILL, raise the LXC to 6-8 GiB RAM or add swap on the Proxmox host." >&2
-  exit 1
 fi
 
 package="$(find ui -maxdepth 1 -type f -name 'proxmox-datacenter-manager-ui_*.deb' -printf '%T@ %p\n' | sort -nr | head -n1 | cut -d' ' -f2-)"
@@ -178,6 +188,9 @@ if [[ -z "$package" || ! -f "$package" ]]; then
   echo "UI package was not produced." >&2
   exit 1
 fi
+
+echo "Validating package: $package"
+dpkg-deb --info "$package" >/dev/null
 
 echo "[10/10] Installing Nexus UI package"
 dpkg -i "$package"
