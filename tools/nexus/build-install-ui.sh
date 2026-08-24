@@ -101,7 +101,6 @@ if ! find /usr/share/cargo/registry -maxdepth 1 -type d -name 'proxmox-subscript
 fi
 
 echo "[6/10] Installing build-time data files used by upstream PDM UI"
-# prepared_answer_form.rs embeds this file at compile time with include_str!().
 apt-get install -y --no-install-recommends iso-codes
 
 iso_json="/usr/share/iso-codes/json/iso_3166-1.json"
@@ -115,9 +114,10 @@ echo "[7/10] Initializing UI assets"
 git submodule update --init --recursive
 
 echo "[8/10] Preparing a low-memory Rust/WASM build"
-# The upstream Debian rules enable fat LTO for the wasm build. That is memory intensive,
-# and on small PDM LXCs rustc can be OOM-killed (SIGKILL). Force all build layers to one
-# worker without changing upstream source or packaging rules.
+# Upstream Debian packaging enables fat LTO and debuginfo for the release build.
+# That profile is appropriate for official release packages, but it can exceed the
+# memory available on small PDM LXCs. Nexus development builds override only Cargo's
+# build profile via environment variables; no upstream source/package file is modified.
 existing_deb_build_options="${DEB_BUILD_OPTIONS:-}"
 existing_deb_build_options="$(printf '%s' "$existing_deb_build_options" | sed -E 's/(^|[[:space:]])parallel=[0-9]+//g; s/^[[:space:]]+//; s/[[:space:]]+$//; s/[[:space:]]+/ /g')"
 if [[ -n "$existing_deb_build_options" ]]; then
@@ -128,6 +128,12 @@ fi
 export CARGO_BUILD_JOBS=1
 export CARGO_INCREMENTAL=0
 export MAKEFLAGS="-j1"
+# Cargo environment configuration has higher precedence than the profile values
+# appended by debian/rules. Thin LTO and no debug symbols substantially reduce peak
+# memory while preserving an optimized release WASM suitable for Nexus UI testing.
+export CARGO_PROFILE_RELEASE_LTO=thin
+export CARGO_PROFILE_RELEASE_DEBUG=0
+export CARGO_PROFILE_RELEASE_CODEGEN_UNITS=1
 
 printf 'Memory before build:\n'
 free -h || true
@@ -139,14 +145,16 @@ if [[ -r /sys/fs/cgroup/memory.swap.max ]]; then
 fi
 printf 'DEB_BUILD_OPTIONS=%s\n' "$DEB_BUILD_OPTIONS"
 printf 'CARGO_BUILD_JOBS=%s\n' "$CARGO_BUILD_JOBS"
+printf 'CARGO_PROFILE_RELEASE_LTO=%s\n' "$CARGO_PROFILE_RELEASE_LTO"
+printf 'CARGO_PROFILE_RELEASE_DEBUG=%s\n' "$CARGO_PROFILE_RELEASE_DEBUG"
 
-# A fat-LTO wasm link can still exceed very small cgroup limits. Warn before spending
-# several minutes compiling so the next failure is immediately actionable.
-if [[ -r /sys/fs/cgroup/memory.max ]]; then
-  memory_max="$(cat /sys/fs/cgroup/memory.max)"
-  if [[ "$memory_max" =~ ^[0-9]+$ ]] && (( memory_max < 3221225472 )); then
-    echo "WARNING: this container is limited to less than 3 GiB RAM." >&2
-    echo "The upstream fat-LTO wasm link may still be OOM-killed even with one build job." >&2
+memory_bytes="$(awk '/MemTotal:/ {print $2 * 1024}' /proc/meminfo 2>/dev/null || echo 0)"
+swap_bytes="$(awk '/SwapTotal:/ {print $2 * 1024}' /proc/meminfo 2>/dev/null || echo 0)"
+if [[ "$memory_bytes" =~ ^[0-9]+([.][0-9]+)?$ ]] && [[ "$swap_bytes" =~ ^[0-9]+([.][0-9]+)?$ ]]; then
+  memory_int="${memory_bytes%.*}"
+  swap_int="${swap_bytes%.*}"
+  if (( memory_int < 3758096384 && swap_int == 0 )); then
+    echo "WARNING: less than 3.5 GiB RAM and no swap detected; even the low-memory profile may OOM." >&2
   fi
 fi
 
@@ -161,6 +169,7 @@ if ! make -C ui deb; then
     echo "Recent kernel OOM messages (if accessible):" >&2
     journalctl -k -n 100 --no-pager 2>/dev/null | grep -Ei 'out of memory|oom|killed process' | tail -n 20 >&2 || true
   fi
+  echo "If rustc still exits with SIGKILL, raise the LXC to 6-8 GiB RAM or add swap on the Proxmox host." >&2
   exit 1
 fi
 
