@@ -28,6 +28,10 @@ use crate::{
     SystemConfiguration,
 };
 
+#[path = "nexus/mod.rs"]
+mod nexus;
+use nexus::NexusHome;
+
 /*
 use crate::{
     AccessControl, Dashboard, PbsDatastorePanel, PbsDatastoreRootPanel, PbsTapePanel,
@@ -174,7 +178,7 @@ impl Component for PdmMainMenu {
             tr!("Dashboard"),
             "dashboard",
             Some("fa fa-tachometer"),
-            move |_| View::new(None).into(),
+            move |_| html! { <NexusHome/> },
         );
 
         let mut views = Menu::new();
