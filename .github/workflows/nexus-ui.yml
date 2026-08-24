@@ -33,6 +33,7 @@ jobs:
         run: |
           bash -n tools/nexus/build-install-ui.sh
           bash -n tools/nexus/build-ui-ci.sh
+          bash -n tools/nexus/build-ui-container.sh
 
       - name: Enforce frontend-only boundary
         shell: bash
@@ -61,6 +62,38 @@ jobs:
           test -f ui/src/nexus/home.rs
           grep -q 'mod nexus;' ui/src/main_menu.rs
           grep -q 'NexusHome' ui/src/main_menu.rs
+
+  hosted-package-verification:
+    name: PDM package / Debian Trixie verification
+    needs: boundary
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          clean: true
+          fetch-depth: 1
+          submodules: false
+
+      - name: Build package in Debian Trixie
+        run: |
+          docker run --rm \
+            --memory=7g \
+            -v "$GITHUB_WORKSPACE:/workspace" \
+            -w /workspace \
+            debian:trixie \
+            bash tools/nexus/build-ui-container.sh
+
+      - name: Upload verification package
+        uses: actions/upload-artifact@v4
+        with:
+          name: nexus-pdm-ui-verified-${{ github.sha }}
+          path: |
+            artifacts/*.deb
+            artifacts/SHA256SUMS
+          if-no-files-found: error
+          retention-days: 7
 
   pdm-package:
     name: PDM package / self-hosted
