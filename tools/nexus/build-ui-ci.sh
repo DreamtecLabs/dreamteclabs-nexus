@@ -9,6 +9,16 @@ if [[ ! -f ui/debian/control ]]; then
   exit 1
 fi
 
+if [[ -r /etc/os-release ]]; then
+  # shellcheck disable=SC1091
+  . /etc/os-release
+fi
+if [[ "${VERSION_CODENAME:-}" != "trixie" ]]; then
+  echo "The Nexus self-hosted build runner must use Debian Trixie." >&2
+  echo "Detected VERSION_CODENAME=${VERSION_CODENAME:-unknown}." >&2
+  exit 1
+fi
+
 if ! command -v sudo >/dev/null 2>&1; then
   echo "sudo is required on the self-hosted runner." >&2
   exit 1
