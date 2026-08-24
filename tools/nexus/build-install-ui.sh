@@ -38,11 +38,11 @@ fi
 dpkg-query -W -f='${Package} ${Version}\n' proxmox-datacenter-manager-ui > "$backup_dir/package-version.txt" 2>/dev/null || true
 git rev-parse HEAD > "$backup_dir/nexus-git-sha.txt"
 
-echo "[1/9] Repairing any interrupted APT/dpkg state"
+echo "[1/10] Repairing any interrupted APT/dpkg state"
 dpkg --configure -a
 apt-get -f install -y
 
-echo "[2/9] Ensuring Proxmox development repository is available"
+echo "[2/10] Ensuring Proxmox development repository is available"
 keyring="/usr/share/keyrings/proxmox-archive-keyring.gpg"
 if [[ ! -f "$keyring" ]]; then
   echo "Missing Proxmox archive keyring: $keyring" >&2
@@ -65,7 +65,7 @@ fi
 
 apt-get update
 
-echo "[3/9] Installing Debian build tooling"
+echo "[3/10] Installing Debian build tooling"
 apt-get install -y --no-install-recommends \
   build-essential \
   devscripts \
@@ -73,7 +73,7 @@ apt-get install -y --no-install-recommends \
   git \
   ca-certificates
 
-echo "[4/9] Installing the exact PDM UI Build-Depends"
+echo "[4/10] Installing the exact PDM UI Build-Depends"
 if ! mk-build-deps \
   --install \
   --remove \
@@ -89,7 +89,7 @@ if ! mk-build-deps \
   exit 1
 fi
 
-echo "[5/9] Installing Cargo dependencies missing from upstream Debian control"
+echo "[5/10] Installing Cargo dependencies missing from upstream Debian control"
 apt-get install -y --no-install-recommends \
   librust-proxmox-subscription-dev \
   'librust-proxmox-subscription+api-types-dev'
@@ -100,7 +100,7 @@ if ! find /usr/share/cargo/registry -maxdepth 1 -type d -name 'proxmox-subscript
   exit 1
 fi
 
-echo "[6/9] Installing build-time data files used by upstream PDM UI"
+echo "[6/10] Installing build-time data files used by upstream PDM UI"
 # prepared_answer_form.rs embeds this file at compile time with include_str!().
 apt-get install -y --no-install-recommends iso-codes
 
@@ -111,12 +111,58 @@ if [[ ! -f "$iso_json" ]]; then
   exit 1
 fi
 
-echo "[7/9] Initializing UI assets"
+echo "[7/10] Initializing UI assets"
 git submodule update --init --recursive
 
-echo "[8/9] Building PDM/Nexus UI Debian package"
+echo "[8/10] Preparing a low-memory Rust/WASM build"
+# The upstream Debian rules enable fat LTO for the wasm build. That is memory intensive,
+# and on small PDM LXCs rustc can be OOM-killed (SIGKILL). Force all build layers to one
+# worker without changing upstream source or packaging rules.
+existing_deb_build_options="${DEB_BUILD_OPTIONS:-}"
+existing_deb_build_options="$(printf '%s' "$existing_deb_build_options" | sed -E 's/(^|[[:space:]])parallel=[0-9]+//g; s/^[[:space:]]+//; s/[[:space:]]+$//; s/[[:space:]]+/ /g')"
+if [[ -n "$existing_deb_build_options" ]]; then
+  export DEB_BUILD_OPTIONS="$existing_deb_build_options parallel=1"
+else
+  export DEB_BUILD_OPTIONS="parallel=1"
+fi
+export CARGO_BUILD_JOBS=1
+export CARGO_INCREMENTAL=0
+export MAKEFLAGS="-j1"
+
+printf 'Memory before build:\n'
+free -h || true
+if [[ -r /sys/fs/cgroup/memory.max ]]; then
+  printf 'cgroup memory.max: %s\n' "$(cat /sys/fs/cgroup/memory.max)"
+fi
+if [[ -r /sys/fs/cgroup/memory.swap.max ]]; then
+  printf 'cgroup memory.swap.max: %s\n' "$(cat /sys/fs/cgroup/memory.swap.max)"
+fi
+printf 'DEB_BUILD_OPTIONS=%s\n' "$DEB_BUILD_OPTIONS"
+printf 'CARGO_BUILD_JOBS=%s\n' "$CARGO_BUILD_JOBS"
+
+# A fat-LTO wasm link can still exceed very small cgroup limits. Warn before spending
+# several minutes compiling so the next failure is immediately actionable.
+if [[ -r /sys/fs/cgroup/memory.max ]]; then
+  memory_max="$(cat /sys/fs/cgroup/memory.max)"
+  if [[ "$memory_max" =~ ^[0-9]+$ ]] && (( memory_max < 3221225472 )); then
+    echo "WARNING: this container is limited to less than 3 GiB RAM." >&2
+    echo "The upstream fat-LTO wasm link may still be OOM-killed even with one build job." >&2
+  fi
+fi
+
+echo "[9/10] Building PDM/Nexus UI Debian package"
 make -C ui clean
-make -C ui deb
+if ! make -C ui deb; then
+  echo >&2
+  echo "Nexus UI build failed." >&2
+  echo "Current memory/swap state:" >&2
+  free -h >&2 || true
+  if command -v journalctl >/dev/null 2>&1; then
+    echo "Recent kernel OOM messages (if accessible):" >&2
+    journalctl -k -n 100 --no-pager 2>/dev/null | grep -Ei 'out of memory|oom|killed process' | tail -n 20 >&2 || true
+  fi
+  exit 1
+fi
 
 package="$(find ui -maxdepth 1 -type f -name 'proxmox-datacenter-manager-ui_*.deb' -printf '%T@ %p\n' | sort -nr | head -n1 | cut -d' ' -f2-)"
 if [[ -z "$package" || ! -f "$package" ]]; then
@@ -124,7 +170,7 @@ if [[ -z "$package" || ! -f "$package" ]]; then
   exit 1
 fi
 
-echo "[9/9] Installing Nexus UI package"
+echo "[10/10] Installing Nexus UI package"
 dpkg -i "$package"
 
 echo
