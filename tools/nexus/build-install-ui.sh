@@ -38,11 +38,11 @@ fi
 dpkg-query -W -f='${Package} ${Version}\n' proxmox-datacenter-manager-ui > "$backup_dir/package-version.txt" 2>/dev/null || true
 git rev-parse HEAD > "$backup_dir/nexus-git-sha.txt"
 
-echo "[1/8] Repairing any interrupted APT/dpkg state"
+echo "[1/9] Repairing any interrupted APT/dpkg state"
 dpkg --configure -a
 apt-get -f install -y
 
-echo "[2/8] Ensuring Proxmox development repository is available"
+echo "[2/9] Ensuring Proxmox development repository is available"
 keyring="/usr/share/keyrings/proxmox-archive-keyring.gpg"
 if [[ ! -f "$keyring" ]]; then
   echo "Missing Proxmox archive keyring: $keyring" >&2
@@ -65,7 +65,7 @@ fi
 
 apt-get update
 
-echo "[3/8] Installing Debian build tooling"
+echo "[3/9] Installing Debian build tooling"
 apt-get install -y --no-install-recommends \
   build-essential \
   devscripts \
@@ -73,7 +73,7 @@ apt-get install -y --no-install-recommends \
   git \
   ca-certificates
 
-echo "[4/8] Installing the exact PDM UI Build-Depends"
+echo "[4/9] Installing the exact PDM UI Build-Depends"
 if ! mk-build-deps \
   --install \
   --remove \
@@ -89,10 +89,7 @@ if ! mk-build-deps \
   exit 1
 fi
 
-echo "[5/8] Installing Cargo dependencies missing from upstream Debian control"
-# ui/Cargo.toml requires proxmox-subscription 1.x with the api-types feature,
-# but current upstream ui/debian/control does not list that crate as a Build-Depends.
-# Install the Proxmox-packaged crate explicitly rather than changing upstream packaging.
+echo "[5/9] Installing Cargo dependencies missing from upstream Debian control"
 apt-get install -y --no-install-recommends \
   librust-proxmox-subscription-dev \
   'librust-proxmox-subscription+api-types-dev'
@@ -103,10 +100,21 @@ if ! find /usr/share/cargo/registry -maxdepth 1 -type d -name 'proxmox-subscript
   exit 1
 fi
 
-echo "[6/8] Initializing UI assets"
+echo "[6/9] Installing build-time data files used by upstream PDM UI"
+# prepared_answer_form.rs embeds this file at compile time with include_str!().
+apt-get install -y --no-install-recommends iso-codes
+
+iso_json="/usr/share/iso-codes/json/iso_3166-1.json"
+if [[ ! -f "$iso_json" ]]; then
+  echo "Required ISO country data is missing after installing iso-codes: $iso_json" >&2
+  dpkg -L iso-codes 2>/dev/null | grep -E 'iso_3166-1\.json$' >&2 || true
+  exit 1
+fi
+
+echo "[7/9] Initializing UI assets"
 git submodule update --init --recursive
 
-echo "[7/8] Building PDM/Nexus UI Debian package"
+echo "[8/9] Building PDM/Nexus UI Debian package"
 make -C ui clean
 make -C ui deb
 
@@ -116,7 +124,7 @@ if [[ -z "$package" || ! -f "$package" ]]; then
   exit 1
 fi
 
-echo "[8/8] Installing Nexus UI package"
+echo "[9/9] Installing Nexus UI package"
 dpkg -i "$package"
 
 echo
