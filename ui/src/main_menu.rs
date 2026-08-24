@@ -154,8 +154,6 @@ impl Component for PdmMainMenu {
             .selection(self.menu_selection.clone());
         let mut menu = Menu::new();
 
-        // Nexus primary navigation. Keep PDM route IDs underneath so deep links and
-        // engine-owned panels continue to work while the information architecture is ours.
         register_view(
             &mut menu,
             &mut content,
@@ -190,7 +188,11 @@ impl Component for PdmMainMenu {
             },
         );
 
-        for remote in props.remote_list.iter().filter(|remote| remote.ty == RemoteType::Pve) {
+        for remote in props
+            .remote_list
+            .iter()
+            .filter(|remote| remote.ty == RemoteType::Pve)
+        {
             register_view(
                 &mut infrastructure,
                 &mut content,
@@ -209,7 +211,11 @@ impl Component for PdmMainMenu {
             &mut content,
             "Infrastructure",
             "infrastructure",
-            Some(if props.remote_list_loading { "fa fa-refresh fa-spin" } else { "fa fa-server" }),
+            Some(if props.remote_list_loading {
+                "fa fa-refresh fa-spin"
+            } else {
+                "fa fa-server"
+            }),
             |_| {
                 Container::new()
                     .class("pwt-content-spacer")
@@ -222,7 +228,11 @@ impl Component for PdmMainMenu {
 
         let mut backups = Menu::new();
         let mut has_pbs = false;
-        for remote in props.remote_list.iter().filter(|remote| remote.ty == RemoteType::Pbs) {
+        for remote in props
+            .remote_list
+            .iter()
+            .filter(|remote| remote.ty == RemoteType::Pbs)
+        {
             has_pbs = true;
             register_view(
                 &mut backups,
@@ -411,7 +421,11 @@ impl Component for PdmMainMenu {
             "Administration",
             "administration",
             Some("fa fa-wrench"),
-            move |_| ServerAdministration::new().username(username.clone()).into(),
+            move |_| {
+                ServerAdministration::new()
+                    .username(username.clone())
+                    .into()
+            },
         );
         register_view(
             &mut settings,
