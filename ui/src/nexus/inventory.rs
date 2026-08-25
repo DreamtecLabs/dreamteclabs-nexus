@@ -5,10 +5,16 @@ use yew::prelude::*;
 
 use crate::guests::GuestPanel;
 
-fn kpi(icon: &str, label: &str, value: u64, detail: String, tone: &str) -> Html {
+fn kpi(
+    icon: &'static str,
+    label: &'static str,
+    value: u64,
+    detail: String,
+    tone: &'static str,
+) -> Html {
     html! {
         <section class={classes!("nexus-inventory-kpi", tone)}>
-            <span class="nexus-inventory-kpi-icon"><i class={icon.to_string()}></i></span>
+            <span class="nexus-inventory-kpi-icon"><i class={icon}></i></span>
             <div class="nexus-inventory-kpi-copy">
                 <span>{label}</span>
                 <strong>{value}</strong>
