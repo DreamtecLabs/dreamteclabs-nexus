@@ -82,7 +82,7 @@ jobs:
             exit 1
           fi
 
-          if ! git diff --quiet HEAD^1 HEAD -- ui/src/lib.rs; then
+          if git rev-parse HEAD^1 >/dev/null 2>&1 && ! git diff --quiet HEAD^1 HEAD -- ui/src/lib.rs; then
             echo "ui/src/lib.rs must stay identical to upstream for this integration seam" >&2
             exit 1
           fi
@@ -120,7 +120,7 @@ jobs:
         run: |
           set -euo pipefail
           test "$(cat artifacts/BUILD_COMMIT)" = "$GITHUB_SHA"
-          sha256sum --check artifacts/SHA256SUMS --ignore-missing
+          (cd artifacts && sha256sum --check SHA256SUMS)
           dpkg-deb --info artifacts/proxmox-datacenter-manager-ui_*.deb >/dev/null
 
       - name: Upload commit-addressed package
