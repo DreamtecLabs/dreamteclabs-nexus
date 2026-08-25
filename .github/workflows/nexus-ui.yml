@@ -1,0 +1,96 @@
+name: Nexus UI
+
+on:
+  pull_request:
+    paths:
+      - 'ui/**'
+      - 'tools/nexus/**'
+      - 'docs/nexus-frontend-architecture.md'
+      - '.github/workflows/nexus-ui.yml'
+
+permissions:
+  contents: read
+
+jobs:
+  boundary:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 2
+
+      - name: Install Rust stable
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          components: rustfmt
+
+      - name: Check formatting
+        run: cargo fmt --manifest-path ui/Cargo.toml --all -- --check
+
+      - name: Check helper syntax
+        run: |
+          bash -n tools/nexus/build-install-ui.sh
+          bash -n tools/nexus/build-ui-ci.sh
+          bash -n tools/nexus/build-ui-container.sh
+
+      - name: Enforce frontend-only boundary
+        shell: bash
+        run: |
+          set -euo pipefail
+          changed="$(git diff --name-only HEAD^1 HEAD)"
+          printf '%s\n' "$changed"
+
+          forbidden="$(printf '%s\n' "$changed" | grep -E '^(server/|lib/|cli/|pdm-config/|pdm-api/)' || true)"
+          if [[ -n "$forbidden" ]]; then
+            echo "Nexus UI changes must not modify PDM engine paths:" >&2
+            printf '%s\n' "$forbidden" >&2
+            exit 1
+          fi
+
+          if ! git diff --quiet HEAD^1 HEAD -- ui/src/lib.rs; then
+            echo "ui/src/lib.rs must stay identical to upstream for this integration seam" >&2
+            exit 1
+          fi
+
+      - name: Verify Nexus ownership seam
+        shell: bash
+        run: |
+          set -euo pipefail
+          test -f ui/src/nexus/mod.rs
+          test -f ui/src/nexus/home.rs
+          grep -q 'mod nexus;' ui/src/main_menu.rs
+          grep -q 'NexusHome' ui/src/main_menu.rs
+
+  hosted-package-verification:
+    name: PDM package / Debian Trixie verification
+    needs: boundary
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          clean: true
+          fetch-depth: 1
+          submodules: false
+
+      - name: Build package in Debian Trixie
+        run: |
+          docker run --rm \
+            --memory=7g \
+            -v "$GITHUB_WORKSPACE:/workspace" \
+            -w /workspace \
+            debian:trixie \
+            bash tools/nexus/build-ui-container.sh
+
+      - name: Upload verification package
+        uses: actions/upload-artifact@v4
+        with:
+          name: nexus-pdm-ui-verified-${{ github.sha }}
+          path: |
+            artifacts/*.deb
+            artifacts/SHA256SUMS
+          if-no-files-found: error
+          retention-days: 14
