@@ -19,8 +19,10 @@ fn kpi(icon: &str, label: &str, value: u64, detail: String, tone: &str) -> Html 
 }
 
 fn summary(status: &ResourcesStatus) -> Html {
-    let vm_total = status.qemu.running + status.qemu.stopped + status.qemu.template + status.qemu.unknown;
-    let lxc_total = status.lxc.running + status.lxc.stopped + status.lxc.template + status.lxc.unknown;
+    let vm_total =
+        status.qemu.running + status.qemu.stopped + status.qemu.template + status.qemu.unknown;
+    let lxc_total =
+        status.lxc.running + status.lxc.stopped + status.lxc.template + status.lxc.unknown;
     let running = status.qemu.running + status.lxc.running;
     let stopped = status.qemu.stopped + status.lxc.stopped;
     let total = vm_total + lxc_total;
