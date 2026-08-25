@@ -102,7 +102,7 @@ jobs:
     name: Build PDM UI package
     needs: boundary
     if: needs.boundary.outputs.ui_changed == 'true'
-    runs-on: self-hosted
+    runs-on: ubuntu-latest
     timeout-minutes: 45
     steps:
       - name: Checkout
@@ -112,8 +112,14 @@ jobs:
           fetch-depth: 2
           submodules: recursive
 
-      - name: Build Debian package on Trixie runner
-        run: bash tools/nexus/build-ui-ci.sh
+      - name: Build package in Debian Trixie
+        run: |
+          docker run --rm \
+            --memory=7g \
+            -v "$GITHUB_WORKSPACE:/workspace" \
+            -w /workspace \
+            debian:trixie \
+            bash tools/nexus/build-ui-container.sh
 
       - name: Validate artifact provenance
         shell: bash
