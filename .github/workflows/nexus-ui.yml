@@ -93,29 +93,4 @@ jobs:
             artifacts/*.deb
             artifacts/SHA256SUMS
           if-no-files-found: error
-          retention-days: 7
-
-  pdm-package:
-    name: PDM package / self-hosted
-    needs: boundary
-    runs-on: self-hosted
-    timeout-minutes: 45
-    steps:
-      - name: Checkout
-        uses: actions/checkout@v4
-        with:
-          clean: true
-          fetch-depth: 1
-
-      - name: Build real PDM/Nexus Debian package
-        run: bash tools/nexus/build-ui-ci.sh
-
-      - name: Upload Debian package
-        uses: actions/upload-artifact@v4
-        with:
-          name: nexus-pdm-ui-${{ github.sha }}
-          path: |
-            artifacts/*.deb
-            artifacts/SHA256SUMS
-          if-no-files-found: error
           retention-days: 14
