@@ -15,11 +15,25 @@ jobs:
   boundary:
     runs-on: ubuntu-latest
     timeout-minutes: 10
+    outputs:
+      ui_changed: ${{ steps.changes.outputs.ui_changed }}
     steps:
       - name: Checkout
         uses: actions/checkout@v4
         with:
           fetch-depth: 2
+
+      - name: Detect UI changes
+        id: changes
+        shell: bash
+        run: |
+          set -euo pipefail
+          changed="$(git diff --name-only HEAD^1 HEAD)"
+          if printf '%s\n' "$changed" | grep -q '^ui/'; then
+            echo 'ui_changed=true' >> "$GITHUB_OUTPUT"
+          else
+            echo 'ui_changed=false' >> "$GITHUB_OUTPUT"
+          fi
 
       - name: Install Rust stable
         uses: dtolnay/rust-toolchain@stable
@@ -66,6 +80,7 @@ jobs:
   hosted-package-verification:
     name: PDM package / Debian Trixie verification
     needs: boundary
+    if: needs.boundary.outputs.ui_changed == 'true'
     runs-on: ubuntu-latest
     timeout-minutes: 45
     steps:
