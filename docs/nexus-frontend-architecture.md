@@ -18,6 +18,8 @@ A PDM update should normally affect Nexus in one of two ways:
 
 Large edits to PDM core UI files are considered an architectural regression and should be refactored into the Nexus namespace before merge.
 
-## Initial seam
+## Current integration seam
 
-The default Dashboard route is redirected to `NexusHome`. The first `NexusHome` delegates to the upstream PDM dashboard so behavior and data loading remain identical while the ownership boundary is established. Subsequent visual changes should happen inside the Nexus namespace rather than by rewriting the PDM dashboard in place.
+The default Dashboard route is redirected to `NexusHome`. `NexusHome` owns the Nexus dashboard composition and visual system while consuming PDM's existing `/resources/status` API and data types. The PDM backend, resource model, authentication and operational engine remain unchanged.
+
+Primary navigation and top-level branding are adapted through small UI integration seams in `ui/src/main_menu.rs` and `ui/src/top_nav_bar.rs`. New Nexus presentation work should continue under `ui/src/nexus/` rather than rewriting PDM backend or domain logic.
