@@ -235,8 +235,10 @@ impl Component for DatacenterManagerApp {
                 true
             }
             Msg::ShowSubscriptionAlert => {
-                self.subscription_confirmed = false;
-                self.show_subscription_alert = Some(true);
+                // Nexus keeps subscription information available in Settings, but does not
+                // interrupt operators with the upstream login-time subscription nag dialog.
+                self.subscription_confirmed = true;
+                self.show_subscription_alert = Some(false);
                 true
             }
             Msg::Logout => {
