@@ -94,7 +94,7 @@ pub fn nexus_inventory() -> Html {
             </div>
 
             <section class="nexus-inventory-table-shell">
-                {GuestPanel::new()}
+                {VNode::from(GuestPanel::new())}
             </section>
         </div>
     }
