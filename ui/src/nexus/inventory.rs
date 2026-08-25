@@ -2,6 +2,7 @@ use pdm_api_types::resource::ResourcesStatus;
 use proxmox_yew_comp::http_get;
 use wasm_bindgen_futures::spawn_local;
 use yew::prelude::*;
+use yew::virtual_dom::VNode;
 
 use crate::guests::GuestPanel;
 
