@@ -19,7 +19,6 @@ use crate::configuration::subscription_panel::SubscriptionPanel;
 use crate::configuration::subscription_registry::SubscriptionRegistryProps;
 use crate::configuration::views::ViewGrid;
 use crate::dashboard::view::View;
-use crate::guests::GuestPanel;
 use crate::remotes::RemotesPanel;
 use crate::sdn::ZoneTree;
 use crate::sdn::evpn::EvpnPanel;
@@ -30,7 +29,7 @@ use crate::{
 
 #[path = "nexus/mod.rs"]
 mod nexus;
-use nexus::NexusHome;
+use nexus::{NexusHome, NexusInventory};
 
 use pwt_macros::builder;
 
@@ -169,7 +168,7 @@ impl Component for PdmMainMenu {
             "Inventory",
             "guests",
             Some("fa fa-cubes"),
-            |_| GuestPanel::new().into(),
+            move |_| html! { <NexusInventory/> },
         );
 
         let mut infrastructure = Menu::new();
