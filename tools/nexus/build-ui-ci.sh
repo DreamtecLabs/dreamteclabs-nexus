@@ -96,8 +96,11 @@ if [[ -z "$package" || ! -f "$package" ]]; then
 fi
 
 dpkg-deb --info "$package" >/dev/null
+rm -rf artifacts
 mkdir -p artifacts
 cp -f "$package" artifacts/
-sha256sum artifacts/*.deb | tee artifacts/SHA256SUMS
+sha256sum artifacts/*.deb | sed 's#artifacts/##' | tee artifacts/SHA256SUMS
+git rev-parse HEAD > artifacts/BUILD_COMMIT
 
 echo "Built artifact: $package"
+echo "Build commit: $(cat artifacts/BUILD_COMMIT)"

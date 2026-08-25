@@ -4,5 +4,7 @@
 //! upstream UI remain easy to synchronize.
 
 mod home;
+mod inventory;
 
 pub use home::NexusHome;
+pub use inventory::NexusInventory;

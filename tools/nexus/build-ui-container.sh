@@ -56,6 +56,8 @@ package="$(find ui -maxdepth 1 -type f -name 'proxmox-datacenter-manager-ui_*.de
 test -n "$package"
 test -f "$package"
 dpkg-deb --info "$package" >/dev/null
+rm -rf artifacts
 mkdir -p artifacts
 cp -f "$package" artifacts/
-sha256sum artifacts/*.deb | tee artifacts/SHA256SUMS
+sha256sum artifacts/*.deb | sed 's#artifacts/##' | tee artifacts/SHA256SUMS
+git rev-parse HEAD > artifacts/BUILD_COMMIT
