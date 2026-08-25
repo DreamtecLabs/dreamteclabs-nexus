@@ -15,10 +15,11 @@ if [[ ! -f ui/debian/control ]]; then
 fi
 
 branch="$(git branch --show-current)"
-if [[ "$branch" != "feature/nexus-ui-foundation" ]]; then
-  echo "Expected feature/nexus-ui-foundation, got: ${branch:-detached}" >&2
+if [[ -z "$branch" ]]; then
+  echo "Detached HEAD detected; refusing to build/install because deployment provenance would be ambiguous." >&2
   exit 1
 fi
+printf 'Deploying Nexus UI from branch: %s\n' "$branch"
 
 if ! git diff --quiet || ! git diff --cached --quiet; then
   echo "Working tree is not clean; refusing to build/install." >&2
