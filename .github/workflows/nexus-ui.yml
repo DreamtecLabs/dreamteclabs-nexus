@@ -7,9 +7,19 @@ on:
       - 'tools/nexus/**'
       - 'docs/nexus-frontend-architecture.md'
       - '.github/workflows/nexus-ui.yml'
+  push:
+    branches:
+      - master
+    paths:
+      - 'ui/**'
+      - 'tools/nexus/**'
+      - 'docs/nexus-frontend-architecture.md'
+      - '.github/workflows/nexus-ui.yml'
+  workflow_dispatch:
 
 permissions:
   contents: read
+  actions: read
 
 jobs:
   boundary:
@@ -28,7 +38,11 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          changed="$(git diff --name-only HEAD^1 HEAD)"
+          if git rev-parse HEAD^1 >/dev/null 2>&1; then
+            changed="$(git diff --name-only HEAD^1 HEAD)"
+          else
+            changed="$(git show --pretty='' --name-only HEAD)"
+          fi
           if printf '%s\n' "$changed" | grep -q '^ui/'; then
             echo 'ui_changed=true' >> "$GITHUB_OUTPUT"
           else
@@ -48,12 +62,17 @@ jobs:
           bash -n tools/nexus/build-install-ui.sh
           bash -n tools/nexus/build-ui-ci.sh
           bash -n tools/nexus/build-ui-container.sh
+          bash -n tools/nexus/deploy-ui.sh
 
       - name: Enforce frontend-only boundary
         shell: bash
         run: |
           set -euo pipefail
-          changed="$(git diff --name-only HEAD^1 HEAD)"
+          if git rev-parse HEAD^1 >/dev/null 2>&1; then
+            changed="$(git diff --name-only HEAD^1 HEAD)"
+          else
+            changed="$(git show --pretty='' --name-only HEAD)"
+          fi
           printf '%s\n' "$changed"
 
           forbidden="$(printf '%s\n' "$changed" | grep -E '^(server/|lib/|cli/|pdm-config/|pdm-api/)' || true)"
@@ -74,38 +93,43 @@ jobs:
           set -euo pipefail
           test -f ui/src/nexus/mod.rs
           test -f ui/src/nexus/home.rs
+          test -f ui/src/nexus/inventory.rs
           grep -q 'mod nexus;' ui/src/main_menu.rs
           grep -q 'NexusHome' ui/src/main_menu.rs
+          grep -q 'NexusInventory' ui/src/main_menu.rs
 
-  hosted-package-verification:
-    name: PDM package / Debian Trixie verification
+  package:
+    name: Build PDM UI package
     needs: boundary
     if: needs.boundary.outputs.ui_changed == 'true'
-    runs-on: ubuntu-latest
+    runs-on: [self-hosted, Linux, X64]
     timeout-minutes: 45
     steps:
       - name: Checkout
         uses: actions/checkout@v4
         with:
           clean: true
-          fetch-depth: 1
-          submodules: false
+          fetch-depth: 2
+          submodules: recursive
 
-      - name: Build package in Debian Trixie
+      - name: Build Debian package on Trixie runner
+        run: bash tools/nexus/build-ui-ci.sh
+
+      - name: Validate artifact provenance
+        shell: bash
         run: |
-          docker run --rm \
-            --memory=7g \
-            -v "$GITHUB_WORKSPACE:/workspace" \
-            -w /workspace \
-            debian:trixie \
-            bash tools/nexus/build-ui-container.sh
+          set -euo pipefail
+          test "$(cat artifacts/BUILD_COMMIT)" = "$GITHUB_SHA"
+          sha256sum --check artifacts/SHA256SUMS --ignore-missing
+          dpkg-deb --info artifacts/proxmox-datacenter-manager-ui_*.deb >/dev/null
 
-      - name: Upload verification package
+      - name: Upload commit-addressed package
         uses: actions/upload-artifact@v4
         with:
-          name: nexus-pdm-ui-verified-${{ github.sha }}
+          name: nexus-pdm-ui-${{ github.sha }}
           path: |
             artifacts/*.deb
             artifacts/SHA256SUMS
+            artifacts/BUILD_COMMIT
           if-no-files-found: error
-          retention-days: 14
+          retention-days: 30
