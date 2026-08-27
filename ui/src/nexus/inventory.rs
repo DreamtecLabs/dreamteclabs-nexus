@@ -598,6 +598,10 @@ pub fn nexus_inventory() -> Html {
         let selected = selected.clone();
         let action_menu = action_menu.clone();
         Callback::from(move |event: MouseEvent| {
+            if event.button() != 0 {
+                return;
+            }
+
             let Some(target) = event
                 .target()
                 .and_then(|target| target.dyn_into::<web_sys::Element>().ok())
