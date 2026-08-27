@@ -43,7 +43,12 @@ fn guest_type_from_row(row: &web_sys::Element) -> String {
         return String::from("Guest");
     };
 
-    if name_cell.query_selector(".fa-cube").ok().flatten().is_some() {
+    if name_cell
+        .query_selector(".fa-cube")
+        .ok()
+        .flatten()
+        .is_some()
+    {
         String::from("Linux Container")
     } else if name_cell
         .query_selector(".fa-desktop")
