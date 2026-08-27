@@ -156,7 +156,9 @@ fn classify_original_actions(row: &web_sys::Element) {
         let Some(element) = descendants.item(index) else {
             continue;
         };
-        if element.get_attribute("role").as_deref() != Some("button")
+        let is_button = element.tag_name() == "BUTTON"
+            || element.get_attribute("role").as_deref() == Some("button");
+        if !is_button
             || element.has_attribute("data-nexus-primary")
             || element.has_attribute("data-nexus-overflow")
         {
@@ -697,7 +699,7 @@ pub fn nexus_inventory() -> Html {
                     <code class="nexus-filter-more">{"+ More"}</code>
                     <span class="nexus-filter-hint"><span class="nexus-inventory-live-dot"></span>{"Live from PDM"}</span>
                 </div>
-                <div class="nexus-inventory-table-shell" onclick={on_table_click}>{VNode::from(GuestPanel::new())}</div>
+                <div class="nexus-inventory-table-shell" onmousedown={on_table_click}>{VNode::from(GuestPanel::new())}</div>
             </section>
             {selected.as_ref().map(|details| detail_drawer(details, close_drawer.clone(), open_pve.clone()))}
             {action_menu.as_ref().map(|menu| {
