@@ -24,7 +24,7 @@ serde_json = "1.0"
 wasm-bindgen = "0.2.92"
 wasm-bindgen-futures = "0.4"
 wasm-logger = "0.2"
-web-sys = { version = "0.3", features = ["Location", "DataTransfer", "Element", "HtmlCollection", "Node", "EventTarget", "MouseEvent"] }
+web-sys = { version = "0.3", features = ["Location", "DataTransfer", "Document", "Element", "HtmlCollection", "HtmlElement", "Node", "EventTarget", "MouseEvent"] }
 yew = { version = "0.21",  features = ["csr"] }
 yew-router = { version = "0.18" }
 
@@ -58,10 +58,3 @@ pdm-search = { version = "0.2", path = "../lib/pdm-search" }
 [patch.crates-io]
 # proxmox-client = { path = "../../proxmox/proxmox-client" }
 # proxmox-human-byte = { path = "../../proxmox/proxmox-human-byte" }
-# proxmox-installer-types = { path = "../proxmox/proxmox-installer-types" }
-# proxmox-login = { path = "../../proxmox/proxmox-login" }
-# proxmox-rrd-api-types = { path = "../../proxmox/proxmox-rrd-api-types" }
-# proxmox-schema = { path = "../../proxmox/proxmox-schema" }
-# proxmox-yew-comp = { path = "../../proxmox-yew-comp" }
-# pwt = { path = "../../proxmox-yew-widget-toolkit" }
-# pwt-macros = { path = "../../proxmox-yew-widget-toolkit/pwt-macros" }
