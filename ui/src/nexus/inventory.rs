@@ -148,9 +148,8 @@ fn classify_original_actions(row: &web_sys::Element) {
         return;
     };
     let status = row_field(row, "Status", 2).to_lowercase();
-    let resume = status.contains("paused")
-        || status.contains("suspended")
-        || status.contains("prelaunch");
+    let resume =
+        status.contains("paused") || status.contains("suspended") || status.contains("prelaunch");
 
     let descendants = action_cell.get_elements_by_tag_name("*");
     for index in 0..descendants.length() {
@@ -301,9 +300,7 @@ fn mark_selected_row(row_key: Option<&str>) {
             continue;
         }
         row.remove_attribute("data-nexus-selected").ok();
-        if row_key.is_some()
-            && row.get_attribute("data-nexus-row-key").as_deref() == row_key
-        {
+        if row_key.is_some() && row.get_attribute("data-nexus-row-key").as_deref() == row_key {
             row.set_attribute("data-nexus-selected", "true").ok();
         }
     }
@@ -328,7 +325,9 @@ fn trigger_hidden_action(row_key: &str, action: &str) -> bool {
     true
 }
 
-fn enabled_primary(details: &GuestRowDetails) -> Option<(&'static str, &'static str, &'static str)> {
+fn enabled_primary(
+    details: &GuestRowDetails,
+) -> Option<(&'static str, &'static str, &'static str)> {
     if details.resume == Some(true) {
         Some(("resume", "fa fa-play", "resume"))
     } else if details.shutdown == Some(true) {
@@ -359,7 +358,8 @@ fn decorate_action_cells() {
         let Some(details) = details_from_row(&row) else {
             continue;
         };
-        row.set_attribute("data-nexus-row-key", &details.row_key).ok();
+        row.set_attribute("data-nexus-row-key", &details.row_key)
+            .ok();
 
         let cells = row.children();
         let Some(action_cell) = cells.item(cells.length() - 1) else {
