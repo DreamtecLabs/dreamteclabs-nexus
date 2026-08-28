@@ -425,13 +425,9 @@ impl LoadableComponent for GuestPanelComp {
                     return true;
                 };
                 let local_id = entry.resource.id();
-                let pve_url = get_deep_url(
-                    ctx.link(),
-                    &entry.remote,
-                    Some(entry.node()),
-                    &local_id,
-                )
-                .map(|url| url.href());
+                let pve_url =
+                    get_deep_url(ctx.link(), &entry.remote, Some(entry.node()), &local_id)
+                        .map(|url| url.href());
                 self.selected_nexus = Some(entry.nexus_selection(pve_url));
                 return true;
             }
@@ -967,10 +963,7 @@ fn legacy_guest_actions(link: &LoadableComponentScope<GuestPanelComp>, entry: &G
         .into()
 }
 
-fn nexus_guest_actions(
-    link: &LoadableComponentScope<GuestPanelComp>,
-    entry: &GuestEntry,
-) -> Html {
+fn nexus_guest_actions(link: &LoadableComponentScope<GuestPanelComp>, entry: &GuestEntry) -> Html {
     let key = entry.key();
     let status = entry.resource.status().to_string();
     let template = entry.template();
@@ -1017,9 +1010,7 @@ fn nexus_guest_actions(
                 .on_activate({
                     let link = link.clone();
                     let key = key.clone();
-                    move |_| {
-                        link.change_view(Some(ViewState::Confirm(action.clone(), key.clone())))
-                    }
+                    move |_| link.change_view(Some(ViewState::Confirm(action.clone(), key.clone())))
                 }),
         )
         .tip(label)
@@ -1081,9 +1072,7 @@ fn nexus_guest_actions(
             .disabled(template || !live)
             .on_select({
                 let link = link.clone();
-                move |_| {
-                    link.change_view(Some(ViewState::Confirm(Action::Shutdown, key.clone())))
-                }
+                move |_| link.change_view(Some(ViewState::Confirm(Action::Shutdown, key.clone())))
             })
     });
     if resume {
@@ -1094,9 +1083,7 @@ fn nexus_guest_actions(
                 .disabled(template)
                 .on_select({
                     let link = link.clone();
-                    move |_| {
-                        link.change_view(Some(ViewState::Confirm(Action::Resume, key.clone())))
-                    }
+                    move |_| link.change_view(Some(ViewState::Confirm(Action::Resume, key.clone())))
                 })
         });
     } else {
@@ -1107,9 +1094,7 @@ fn nexus_guest_actions(
                 .disabled(template || live)
                 .on_select({
                     let link = link.clone();
-                    move |_| {
-                        link.change_view(Some(ViewState::Confirm(Action::Start, key.clone())))
-                    }
+                    move |_| link.change_view(Some(ViewState::Confirm(Action::Start, key.clone())))
                 })
         });
     }
