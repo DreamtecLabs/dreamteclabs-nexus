@@ -1,0 +1,26 @@
+name: Format native Inventory GuestPanel
+on:
+  push:
+    branches: [fix/inventory-native-guest-panel]
+    paths: ['.github/workflows/format-native-guest-panel.yml']
+permissions:
+  contents: write
+jobs:
+  format:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: fix/inventory-native-guest-panel
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: rustfmt
+      - run: cargo fmt --manifest-path ui/Cargo.toml --all
+      - run: rm .github/workflows/format-native-guest-panel.yml
+      - name: Commit formatting
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add ui/src/guests.rs ui/src/nexus/inventory.rs .github/workflows/format-native-guest-panel.yml
+          git commit -m "style(inventory): apply rustfmt"
+          git push origin HEAD:fix/inventory-native-guest-panel
