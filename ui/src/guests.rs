@@ -33,6 +33,7 @@ use pwt::props::{
 use pwt::state::{KeyedSlabTree, PersistentState, Selection, Store, TreeStore};
 use pwt::widget::data_table::{DataTable, DataTableColumn, DataTableHeader};
 use pwt::widget::form::Field;
+use pwt::widget::menu::{Menu, MenuButton, MenuItem};
 use pwt::widget::{
     ActionIcon, Button, Column, Container, Fa, MessageBox, MessageBoxButtons, Row, SegmentedButton,
     Toolbar, Tooltip, Trigger,
@@ -64,11 +65,18 @@ pub enum ViewMode {
 }
 
 #[derive(Clone, PartialEq, Properties)]
-pub struct GuestPanel {}
+pub struct GuestPanel {
+    #[prop_or_default]
+    pub nexus_mode: bool,
+}
 
 impl GuestPanel {
     pub fn new() -> Self {
         yew::props!(Self {})
+    }
+
+    pub fn nexus() -> Self {
+        yew::props!(Self { nexus_mode: true })
     }
 }
 
@@ -82,6 +90,23 @@ impl From<GuestPanel> for VNode {
     fn from(val: GuestPanel) -> Self {
         VComp::new::<LoadableComponentMaster<GuestPanelComp>>(Rc::new(val), None).into()
     }
+}
+
+#[derive(Clone, PartialEq)]
+struct GuestSelection {
+    name: String,
+    id: String,
+    guest_type: String,
+    status: String,
+    remote: String,
+    node: String,
+    tags: Vec<String>,
+    cpu: String,
+    cpu_percent: u32,
+    memory: String,
+    memory_percent: u32,
+    uptime: String,
+    pve_url: Option<String>,
 }
 
 /// One guest row: a guest resource together with the remote it lives on (the
@@ -170,6 +195,46 @@ impl GuestEntry {
             vmid: self.vmid(),
         }
     }
+
+    fn nexus_selection(&self, pve_url: Option<String>) -> GuestSelection {
+        let guest_type = match self.guest_type() {
+            GuestType::Qemu => "Virtual Machine",
+            GuestType::Lxc => "Linux Container",
+        };
+        let uptime = if self.uptime() == 0 {
+            String::from("-")
+        } else {
+            format_duration_human(self.uptime() as f64)
+        };
+        let cpu_percent = (self.cpu() * 100.0).round().clamp(0.0, 100.0) as u32;
+        let memory_percent = if self.maxmem() == 0 {
+            0
+        } else {
+            ((self.mem() as f64 / self.maxmem() as f64) * 100.0)
+                .round()
+                .clamp(0.0, 100.0) as u32
+        };
+
+        GuestSelection {
+            name: self.resource.name().to_string(),
+            id: self.vmid().to_string(),
+            guest_type: guest_type.to_string(),
+            status: self.resource.status().to_string(),
+            remote: self.remote.clone(),
+            node: self.node().to_string(),
+            tags: self.tags().to_vec(),
+            cpu: format!("{:.1}%", self.cpu() * 100.0),
+            cpu_percent,
+            memory: tr!(
+                "{0} of {1}",
+                HumanByte::from(self.mem()),
+                HumanByte::from(self.maxmem())
+            ),
+            memory_percent,
+            uptime,
+            pve_url,
+        }
+    }
 }
 
 /// Tree node for the grouped-by-remote view.
@@ -210,6 +275,8 @@ pub enum Msg {
     LoadFinished(Vec<RemoteResources>),
     Filter(String),
     SetViewMode(ViewMode),
+    SelectionChange,
+    ClearSelection,
     GuestAction(Action, Key),
     /// Show the progress of a started task, deriving the task base URL from the
     /// UPID's own remote so concurrent actions on different remotes can't clobber it.
@@ -224,6 +291,7 @@ pub struct GuestPanelComp {
     flat_columns: Rc<Vec<DataTableHeader<GuestEntry>>>,
     tree_columns: Rc<Vec<DataTableHeader<GuestTreeNode>>>,
     selection: Selection,
+    selected_nexus: Option<GuestSelection>,
     filter: String,
     view_mode: PersistentState<ViewMode>,
     /// Whether the tree has been built at least once; the first build expands all
@@ -268,14 +336,23 @@ impl LoadableComponent for GuestPanelComp {
 
         // root stays hidden so the remote groups are the top-level rows
         let tree_store = TreeStore::new().view_root(false);
+        let selection = Selection::new().on_select({
+            let link = ctx.link().clone();
+            move |_| link.send_message(Msg::SelectionChange)
+        });
 
         Self {
             state: LoadableComponentState::new(),
             store: Store::with_extract_key(|entry: &GuestEntry| entry.key()),
-            tree_columns: tree_columns(ctx.link().clone(), tree_store.clone()),
+            tree_columns: tree_columns(
+                ctx.link().clone(),
+                tree_store.clone(),
+                ctx.props().nexus_mode,
+            ),
             tree_store,
-            flat_columns: flat_columns(ctx.link().clone()),
-            selection: Selection::new(),
+            flat_columns: flat_columns(ctx.link().clone(), ctx.props().nexus_mode),
+            selection,
+            selected_nexus: None,
             filter: String::new(),
             view_mode: PersistentState::new(StorageLocation::local("VirtualGuestsViewMode")),
             tree_built: false,
@@ -334,6 +411,34 @@ impl LoadableComponent for GuestPanelComp {
                     self.tree_store.write().update_root_tree(tree);
                     self.tree_built = true;
                 }
+            }
+            Msg::SelectionChange => {
+                if !ctx.props().nexus_mode {
+                    return false;
+                }
+                let Some(key) = self.selection.selected_key() else {
+                    self.selected_nexus = None;
+                    return true;
+                };
+                let Some(entry) = self.store.read().lookup_record(&key).cloned() else {
+                    self.selected_nexus = None;
+                    return true;
+                };
+                let local_id = entry.resource.id();
+                let pve_url = get_deep_url(
+                    ctx.link(),
+                    &entry.remote,
+                    Some(entry.node()),
+                    &local_id,
+                )
+                .map(|url| url.href());
+                self.selected_nexus = Some(entry.nexus_selection(pve_url));
+                return true;
+            }
+            Msg::ClearSelection => {
+                self.selected_nexus = None;
+                self.selection.clear();
+                return true;
             }
             Msg::ShowTask(upid) => {
                 // derive the base URL from the UPID's own remote, so an action on
@@ -463,7 +568,7 @@ impl LoadableComponent for GuestPanelComp {
         )
     }
 
-    fn main_view(&self, _ctx: &LoadableComponentContext<Self>) -> Html {
+    fn main_view(&self, ctx: &LoadableComponentContext<Self>) -> Html {
         let total = self.store.data_len();
         let visible = self.store.filtered_data_len();
 
@@ -523,7 +628,22 @@ impl LoadableComponent for GuestPanelComp {
             };
             column.add_child(table);
         }
-        column.into()
+
+        let content: Html = column.into();
+        if !ctx.props().nexus_mode {
+            return content;
+        }
+
+        let drawer_open = self.selected_nexus.is_some();
+        html! {
+            <>
+                <style>{NEXUS_GUEST_PANEL_CSS}</style>
+                <div class={classes!("nexus-native-guest-content", drawer_open.then_some("drawer-open"))}>
+                    {content}
+                </div>
+                {self.selected_nexus.as_ref().map(|details| nexus_guest_drawer(ctx.link(), details))}
+            </>
+        }
     }
 
     fn dialog_view(
@@ -731,7 +851,7 @@ fn uptime_html(entry: &GuestEntry) -> Html {
     }
 }
 
-fn guest_actions(link: &LoadableComponentScope<GuestPanelComp>, entry: &GuestEntry) -> Html {
+fn legacy_guest_actions(link: &LoadableComponentScope<GuestPanelComp>, entry: &GuestEntry) -> Html {
     let key = entry.key();
     let status = entry.resource.status().to_string();
     let template = entry.template();
@@ -847,8 +967,269 @@ fn guest_actions(link: &LoadableComponentScope<GuestPanelComp>, entry: &GuestEnt
         .into()
 }
 
+fn nexus_guest_actions(
+    link: &LoadableComponentScope<GuestPanelComp>,
+    entry: &GuestEntry,
+) -> Html {
+    let key = entry.key();
+    let status = entry.resource.status().to_string();
+    let template = entry.template();
+    let remote = entry.remote.clone();
+    let node = entry.node().to_string();
+    let local_id = entry.resource.id();
+    let guest_info = entry.guest_info();
+    let is_qemu = entry.guest_type() == GuestType::Qemu;
+    let live = guest_is_live(&status);
+    let resume = is_qemu && matches!(status.as_str(), "paused" | "prelaunch" | "suspended");
+
+    let primary = (!template).then(|| {
+        let (action, icon, scheme, label, tone) = if resume {
+            (
+                Action::Resume,
+                "fa fa-fw fa-play",
+                ColorScheme::Warning,
+                tr!("Resume"),
+                "resume",
+            )
+        } else if live {
+            (
+                Action::Shutdown,
+                "fa fa-fw fa-power-off",
+                ColorScheme::Primary,
+                tr!("Shutdown"),
+                "shutdown",
+            )
+        } else {
+            (
+                Action::Start,
+                "fa fa-fw fa-play",
+                ColorScheme::Success,
+                tr!("Start"),
+                "start",
+            )
+        };
+        Tooltip::new(
+            ActionIcon::new(icon)
+                .class("nexus-primary-action")
+                .class(tone)
+                .class(scheme)
+                .aria_label(label.clone())
+                .on_activate({
+                    let link = link.clone();
+                    let key = key.clone();
+                    move |_| {
+                        link.change_view(Some(ViewState::Confirm(action.clone(), key.clone())))
+                    }
+                }),
+        )
+        .tip(label)
+    });
+
+    let mut menu = Menu::new();
+    menu.add_item({
+        let remote = remote.clone();
+        let name = entry.resource.name().to_string();
+        MenuItem::new(tr!("Snapshots"))
+            .icon_class("fa fa-fw fa-history")
+            .on_select({
+                let link = link.clone();
+                move |_| {
+                    link.change_view(Some(ViewState::Snapshots(
+                        remote.clone(),
+                        guest_info,
+                        name.clone(),
+                    )))
+                }
+            })
+    });
+    menu.add_item({
+        let remote = remote.clone();
+        let node = node.clone();
+        MenuItem::new(tr!("Migrate"))
+            .icon_class("fa fa-fw fa-paper-plane-o")
+            .disabled(template)
+            .on_select({
+                let link = link.clone();
+                move |_| {
+                    link.change_view(Some(ViewState::Migrate(
+                        remote.clone(),
+                        node.clone(),
+                        guest_info,
+                    )))
+                }
+            })
+    });
+    menu.add_item({
+        let remote = remote.clone();
+        let node = node.clone();
+        let local_id = local_id.clone();
+        MenuItem::new(tr!("Open in PVE UI"))
+            .icon_class("fa fa-fw fa-external-link")
+            .on_select({
+                let link = link.clone();
+                move |_| {
+                    if let Some(url) = get_deep_url(&link, &remote, Some(&node), &local_id) {
+                        let _ = window().open_with_url(&url.href());
+                    }
+                }
+            })
+    });
+    menu.add_item({
+        let key = key.clone();
+        MenuItem::new(tr!("Shutdown"))
+            .icon_class("fa fa-fw fa-power-off")
+            .disabled(template || !live)
+            .on_select({
+                let link = link.clone();
+                move |_| {
+                    link.change_view(Some(ViewState::Confirm(Action::Shutdown, key.clone())))
+                }
+            })
+    });
+    if resume {
+        menu.add_item({
+            let key = key.clone();
+            MenuItem::new(tr!("Resume"))
+                .icon_class("fa fa-fw fa-play")
+                .disabled(template)
+                .on_select({
+                    let link = link.clone();
+                    move |_| {
+                        link.change_view(Some(ViewState::Confirm(Action::Resume, key.clone())))
+                    }
+                })
+        });
+    } else {
+        menu.add_item({
+            let key = key.clone();
+            MenuItem::new(tr!("Start"))
+                .icon_class("fa fa-fw fa-play")
+                .disabled(template || live)
+                .on_select({
+                    let link = link.clone();
+                    move |_| {
+                        link.change_view(Some(ViewState::Confirm(Action::Start, key.clone())))
+                    }
+                })
+        });
+    }
+
+    Row::new()
+        .gap(1)
+        .class("nexus-row-actions")
+        .class(JustifyContent::FlexEnd)
+        .with_optional_child(primary)
+        .with_child(
+            MenuButton::new("")
+                .icon_class("fa fa-ellipsis-v")
+                .aria_label(tr!("More guest actions"))
+                .menu(menu),
+        )
+        .into()
+}
+
+fn guest_actions(
+    link: &LoadableComponentScope<GuestPanelComp>,
+    entry: &GuestEntry,
+    nexus_mode: bool,
+) -> Html {
+    if nexus_mode {
+        nexus_guest_actions(link, entry)
+    } else {
+        legacy_guest_actions(link, entry)
+    }
+}
+
+fn nexus_guest_drawer(
+    link: &LoadableComponentScope<GuestPanelComp>,
+    details: &GuestSelection,
+) -> Html {
+    let running = guest_is_live(&details.status);
+    let close = link.callback(|_| Msg::ClearSelection);
+    let pve_button = details.pve_url.as_ref().map(|url| {
+        let url = url.clone();
+        html! {
+            <div>
+                <dt>{"PVE Web UI"}</dt>
+                <dd>
+                    <button class="nexus-link-button" onclick={Callback::from(move |_| {
+                        let _ = window().open_with_url(&url);
+                    })}>
+                        {"Open in Proxmox "}<i class="fa fa-external-link"></i>
+                    </button>
+                </dd>
+            </div>
+        }
+    });
+
+    html! {
+        <aside class="nexus-guest-drawer" role="complementary" aria-label="Guest details">
+            <div class="nexus-guest-drawer-head">
+                <div class="nexus-guest-drawer-title">
+                    <h2>{format!("{} ({})", details.name, details.id)}</h2>
+                    <div class="nexus-guest-drawer-meta">
+                        <span class={classes!("nexus-guest-status", running.then_some("running"))}>
+                            <i class="fa fa-circle"></i>{details.status.clone()}
+                        </span>
+                        <span>{details.guest_type.clone()}</span>
+                    </div>
+                </div>
+                <button class="nexus-guest-drawer-close" aria-label="Close guest details" onclick={close}>
+                    <i class="fa fa-times"></i>
+                </button>
+            </div>
+            <div class="nexus-guest-tabs" role="tablist" aria-label="Guest detail sections">
+                <span class="active" role="tab" aria-selected="true">{"Overview"}</span>
+                <span role="tab">{"Compute"}</span>
+                <span role="tab">{"Network"}</span>
+                <span role="tab">{"Storage"}</span>
+                <span role="tab">{"Snapshots"}</span>
+                <span role="tab">{"Tasks"}</span>
+            </div>
+            <div class="nexus-guest-drawer-body">
+                <section class="nexus-guest-card">
+                    <h3>{"General"}</h3>
+                    <dl>
+                        <div><dt>{"ID"}</dt><dd>{details.id.clone()}</dd></div>
+                        <div><dt>{"Name"}</dt><dd>{details.name.clone()}</dd></div>
+                        <div><dt>{"Type"}</dt><dd>{details.guest_type.clone()}</dd></div>
+                        <div><dt>{"Status"}</dt><dd><span class={classes!("nexus-guest-inline-status", running.then_some("running"))}><i class="fa fa-circle"></i>{details.status.clone()}</span></dd></div>
+                        <div><dt>{"Remote"}</dt><dd>{details.remote.clone()}</dd></div>
+                        <div><dt>{"Node"}</dt><dd>{details.node.clone()}</dd></div>
+                        <div><dt>{"Uptime"}</dt><dd>{details.uptime.clone()}</dd></div>
+                        {pve_button}
+                    </dl>
+                </section>
+                <section class="nexus-guest-card">
+                    <h3>{"Resources"}</h3>
+                    <div class="nexus-resource-row">
+                        <div><span>{"CPU Usage"}</span><strong>{details.cpu.clone()}</strong></div>
+                        <div class="nexus-resource-track"><span style={format!("width:{}%", details.cpu_percent)}></span></div>
+                    </div>
+                    <div class="nexus-resource-row">
+                        <div><span>{"Memory Usage"}</span><strong>{format!("{} ({}%)", details.memory, details.memory_percent)}</strong></div>
+                        <div class="nexus-resource-track"><span style={format!("width:{}%", details.memory_percent)}></span></div>
+                    </div>
+                    <p class="nexus-resource-note">{"Storage and swap telemetry remain available through the PVE deep link."}</p>
+                </section>
+                <section class="nexus-guest-card">
+                    <h3>{"Tags"}</h3>
+                    <div class="nexus-guest-tags">
+                        {if details.tags.is_empty() {
+                            html! {<span class="empty">{"No tags"}</span>}
+                        } else {
+                            html! {for details.tags.iter().map(|tag| html! {<span>{tag.clone()}</span>})}
+                        }}
+                    </div>
+                </section>
+            </div>
+        </aside>
+    }
+}
+
 fn flat_columns(
     link: LoadableComponentScope<GuestPanelComp>,
+    nexus_mode: bool,
 ) -> Rc<Vec<DataTableHeader<GuestEntry>>> {
     Rc::new(vec![
         DataTableColumn::new(tr!("Name"))
@@ -899,7 +1280,7 @@ fn flat_columns(
             .into(),
         DataTableColumn::new(tr!("Actions"))
             .width("210px")
-            .render(move |entry: &GuestEntry| guest_actions(&link, entry))
+            .render(move |entry: &GuestEntry| guest_actions(&link, entry, nexus_mode))
             .into(),
     ])
 }
@@ -907,6 +1288,7 @@ fn flat_columns(
 fn tree_columns(
     link: LoadableComponentScope<GuestPanelComp>,
     store: TreeStore<GuestTreeNode>,
+    nexus_mode: bool,
 ) -> Rc<Vec<DataTableHeader<GuestTreeNode>>> {
     Rc::new(vec![
         DataTableColumn::new(tr!("Name"))
@@ -980,9 +1362,13 @@ fn tree_columns(
         DataTableColumn::new(tr!("Actions"))
             .width("210px")
             .render(move |node: &GuestTreeNode| match node {
-                GuestTreeNode::Guest(entry) => guest_actions(&link, entry),
+                GuestTreeNode::Guest(entry) => guest_actions(&link, entry, nexus_mode),
                 _ => html! {},
             })
             .into(),
     ])
 }
+
+const NEXUS_GUEST_PANEL_CSS: &str = r#"
+.nexus-native-guest-content{transition:margin-right .18s ease}.nexus-native-guest-content.drawer-open{margin-right:400px}@media(max-width:1200px){.nexus-native-guest-content.drawer-open{margin-right:0}}
+"#;
