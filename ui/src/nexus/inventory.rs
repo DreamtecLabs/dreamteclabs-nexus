@@ -703,7 +703,7 @@ pub fn nexus_inventory() -> Html {
                     <code class="nexus-filter-more">{"+ More"}</code>
                     <span class="nexus-filter-hint"><span class="nexus-inventory-live-dot"></span>{"Live from PDM"}</span>
                 </div>
-                <div class="nexus-inventory-table-shell" onmousedown={on_table_click}>{VNode::from(GuestPanel::new())}</div>
+                <div class="nexus-inventory-table-shell" onmousedown={on_table_click}>{VNode::from(GuestPanel::nexus())}</div>
             </section>
             {selected.as_ref().map(|details| detail_drawer(details, close_drawer.clone(), open_pve.clone()))}
             {action_menu.as_ref().map(|menu| {
