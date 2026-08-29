@@ -44,6 +44,53 @@ pub struct TopNavBar {
     #[builder(IntoPropValue, into_prop_value)]
     #[prop_or_default]
     pub username: Option<String>,
+
+    /// Id of the currently active top-level navigation entry (as reported by
+    /// `MainMenu::on_active_change`), rendered as a breadcrumb next to the
+    /// logo so users always see which section of Nexus they're in.
+    #[builder(IntoPropValue, into_prop_value)]
+    #[prop_or_default]
+    pub active_section: Option<AttrValue>,
+}
+
+/// Human-readable label for a top-level navigation entry id.
+///
+/// Mirrors the section names registered in `main_menu.rs` - keep the two in
+/// sync when menu entries are added, renamed or removed there.
+fn section_label(id: &str) -> String {
+    if let Some(remote) = id.strip_prefix("remote-") {
+        return remote.to_string();
+    }
+    if let Some(view) = id.strip_prefix("view-") {
+        return view.to_string();
+    }
+
+    match id {
+        "dashboard" => "Dashboard",
+        "guests" => "Inventory",
+        "remotes" => "All Remotes",
+        "infrastructure" => "Infrastructure",
+        "backups" => "Backups",
+        "sdn" => "SDN",
+        "networking" => "Networking",
+        "evpn" => "EVPN",
+        "ceph" => "Storage",
+        "views" => "Views",
+        "configuration" => "System",
+        "access" => "Access Control",
+        "certificates" => "Certificates",
+        "subscription" => "Subscription",
+        "subscription-registry" => "Subscription Registry",
+        "notes" => "Notes",
+        "administration" => "Administration",
+        "shell" => "Shell",
+        "settings" => "Settings",
+        other => {
+            // Fall back to a readable guess instead of showing a raw slug.
+            return other.replace(['-', '_'], " ");
+        }
+    }
+    .to_string()
 }
 
 impl TopNavBar {
@@ -229,6 +276,14 @@ impl Component for PdmTopNavBar {
                     </div>
                 </div>
             })
+            .with_optional_child(props.active_section.as_ref().map(|id| {
+                html! {
+                    <div class="nexus-breadcrumb" aria-hidden="true">
+                        <i class="fa fa-angle-right"></i>
+                        <span>{section_label(id)}</span>
+                    </div>
+                }
+            }))
             .with_flex_spacer()
             .with_child(
                 Container::new()

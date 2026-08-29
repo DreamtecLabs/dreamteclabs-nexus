@@ -51,6 +51,13 @@ pub struct MainMenu {
     #[builder]
     #[prop_or_default]
     pub view_list: Vec<String>,
+
+    /// Notifies the parent app of the currently active top-level menu entry
+    /// (e.g. "dashboard", "guests", "remote-homelab"), so it can be shown
+    /// elsewhere in the shell, e.g. as a breadcrumb in the top bar.
+    #[builder_cb(IntoEventCallback, into_event_callback, String)]
+    #[prop_or_default]
+    pub on_active_change: Option<Callback<String>>,
 }
 
 impl MainMenu {
@@ -123,9 +130,12 @@ impl Component for PdmMainMenu {
         }
     }
 
-    fn update(&mut self, _ctx: &Context<Self>, msg: Self::Message) -> bool {
+    fn update(&mut self, ctx: &Context<Self>, msg: Self::Message) -> bool {
         match msg {
             Msg::Select(key) => {
+                if let Some(on_active_change) = &ctx.props().on_active_change {
+                    on_active_change.emit(key.to_string());
+                }
                 self.active = key;
                 true
             }
