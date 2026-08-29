@@ -61,3 +61,13 @@ mkdir -p artifacts
 cp -f "$package" artifacts/
 sha256sum artifacts/*.deb | sed 's#artifacts/##' | tee artifacts/SHA256SUMS
 git rev-parse HEAD > artifacts/BUILD_COMMIT
+
+# Everything above ran as root inside this container, so the build output
+# bind-mounted into /workspace is owned by root on the host too. Hand it
+# back to the invoking (non-root) runner user before the container exits -
+# otherwise the next job's checkout can't clean or overwrite these files on
+# a persistent self-hosted runner (ephemeral GitHub-hosted runners never hit
+# this, since they get a fresh filesystem every run).
+if [ -n "${HOST_UID:-}" ] && [ -n "${HOST_GID:-}" ]; then
+  chown -R "${HOST_UID}:${HOST_GID}" /workspace
+fi
