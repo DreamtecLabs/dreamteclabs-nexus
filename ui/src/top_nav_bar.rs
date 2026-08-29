@@ -44,6 +44,53 @@ pub struct TopNavBar {
     #[builder(IntoPropValue, into_prop_value)]
     #[prop_or_default]
     pub username: Option<String>,
+
+    /// Id of the currently active top-level navigation entry (as reported by
+    /// `MainMenu::on_active_change`), rendered as a breadcrumb next to the
+    /// logo so users always see which section of Nexus they're in.
+    #[builder(IntoPropValue, into_prop_value)]
+    #[prop_or_default]
+    pub active_section: Option<AttrValue>,
+}
+
+/// Human-readable label for a top-level navigation entry id.
+///
+/// Mirrors the section names registered in `main_menu.rs` - keep the two in
+/// sync when menu entries are added, renamed or removed there.
+fn section_label(id: &str) -> String {
+    if let Some(remote) = id.strip_prefix("remote-") {
+        return remote.to_string();
+    }
+    if let Some(view) = id.strip_prefix("view-") {
+        return view.to_string();
+    }
+
+    match id {
+        "dashboard" => "Dashboard",
+        "guests" => "Inventory",
+        "remotes" => "All Remotes",
+        "infrastructure" => "Infrastructure",
+        "backups" => "Backups",
+        "sdn" => "SDN",
+        "networking" => "Networking",
+        "evpn" => "EVPN",
+        "ceph" => "Storage",
+        "views" => "Views",
+        "configuration" => "System",
+        "access" => "Access Control",
+        "certificates" => "Certificates",
+        "subscription" => "Subscription",
+        "subscription-registry" => "Subscription Registry",
+        "notes" => "Notes",
+        "administration" => "Administration",
+        "shell" => "Shell",
+        "settings" => "Settings",
+        other => {
+            // Fall back to a readable guess instead of showing a raw slug.
+            return other.replace(['-', '_'], " ");
+        }
+    }
+    .to_string()
 }
 
 impl TopNavBar {
@@ -217,28 +264,26 @@ impl Component for PdmTopNavBar {
             .class("pwt-border-bottom")
             .padding(2)
             .with_child(html! {
-                <>
-                    <style>{r#"
-                        .nexus-topbar{background:#fff!important;color:#0b1220!important;border-bottom:1px solid #dfe5ee!important;box-shadow:0 1px 4px rgba(15,23,42,.045);font-family:'Roboto Flex',Roboto,Arial,sans-serif!important}
-                        .nexus-topbar button{color:#111827!important}
-                        .nexus-navigation{background:#fff!important;color:#111827!important;border-right:1px solid #dfe5ee!important;font-family:'Roboto Flex',Roboto,Arial,sans-serif!important}
-                        .nexus-navigation a,.nexus-navigation button{color:#111827!important;font-weight:520!important}
-                        .nexus-navigation a:hover,.nexus-navigation button:hover{background:#f3f6fb!important;color:#0b1220!important}
-                        .nexus-navigation [aria-current='page'],.nexus-navigation .pwt-nav-item-active{background:#e9f0ff!important;color:#1d4ed8!important;font-weight:700!important}
-                    "#}</style>
-                    <div style="display:flex;align-items:center;gap:12px;min-width:238px;padding-left:3px;">
-                        <div style="position:relative;width:36px;height:36px;flex:0 0 36px;">
-                            <span style="position:absolute;width:11px;height:34px;left:12px;top:1px;border-radius:8px;background:linear-gradient(180deg,#60a5fa,#2563eb);transform:rotate(43deg);box-shadow:0 2px 5px rgba(37,99,235,.20);"></span>
-                            <span style="position:absolute;width:11px;height:34px;left:12px;top:1px;border-radius:8px;background:linear-gradient(180deg,#93c5fd,#4f46e5);transform:rotate(-43deg);box-shadow:0 2px 5px rgba(79,70,229,.16);"></span>
-                        </div>
-                        <div>
-                            <div style="font-size:17px;font-weight:800;line-height:1;letter-spacing:-.025em;color:#070d18;">{"NEXUS"}</div>
-                            <div style="font-size:10px;font-weight:600;color:#334155;margin-top:4px;">{"DreamtecLabs Nexus"}</div>
-                            <div style="font-size:9px;color:#64748b;margin-top:2px;">{engine}</div>
-                        </div>
+                <div style="display:flex;align-items:center;gap:12px;min-width:238px;padding-left:3px;">
+                    <div style="position:relative;width:36px;height:36px;flex:0 0 36px;">
+                        <span style="position:absolute;width:11px;height:34px;left:12px;top:1px;border-radius:8px;background:linear-gradient(180deg,#60a5fa,#2563eb);transform:rotate(43deg);box-shadow:0 2px 5px rgba(37,99,235,.20);"></span>
+                        <span style="position:absolute;width:11px;height:34px;left:12px;top:1px;border-radius:8px;background:linear-gradient(180deg,#93c5fd,#4f46e5);transform:rotate(-43deg);box-shadow:0 2px 5px rgba(79,70,229,.16);"></span>
                     </div>
-                </>
+                    <div>
+                        <div style="font-size:17px;font-weight:800;line-height:1;letter-spacing:-.025em;color:var(--pwt-color);">{"NEXUS"}</div>
+                        <div style="font-size:10px;font-weight:600;color:var(--pwt-color);margin-top:4px;">{"DreamtecLabs Nexus"}</div>
+                        <div style="font-size:9px;color:var(--pwt-color);opacity:.65;margin-top:2px;">{engine}</div>
+                    </div>
+                </div>
             })
+            .with_optional_child(props.active_section.as_ref().map(|id| {
+                html! {
+                    <div class="nexus-breadcrumb" aria-hidden="true">
+                        <i class="fa fa-angle-right"></i>
+                        <span>{section_label(id)}</span>
+                    </div>
+                }
+            }))
             .with_flex_spacer()
             .with_child(
                 Container::new()

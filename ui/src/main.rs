@@ -40,6 +40,7 @@ enum Msg {
     RemoteList(MsgRemoteList),
     ViewList(MsgViewList),
     UpdateViewList,
+    ActiveSection(String),
 }
 
 struct DatacenterManagerApp {
@@ -58,6 +59,10 @@ struct DatacenterManagerApp {
     view_list: Vec<String>,
     view_list_context: ViewListContext,
     _view_list_observer: SharedStateObserver<usize>,
+
+    // Mirrors `PdmMainMenu`'s active top-level entry, so the top bar can
+    // show a breadcrumb for whatever section the nav drawer has selected.
+    active_section: String,
 
     async_pool: AsyncPool,
 }
@@ -220,6 +225,7 @@ impl Component for DatacenterManagerApp {
             view_list: Vec::new(),
             view_list_context,
             _view_list_observer,
+            active_section: "dashboard".to_string(),
             async_pool: AsyncPool::new(),
         };
 
@@ -291,6 +297,10 @@ impl Component for DatacenterManagerApp {
                 self.update_views(ctx);
                 false
             }
+            Msg::ActiveSection(section) => {
+                self.active_section = section;
+                true
+            }
         }
     }
 
@@ -309,6 +319,7 @@ impl Component for DatacenterManagerApp {
             .with_child(
                 TopNavBar::new(self.running_tasks.clone())
                     .username(username.clone())
+                    .active_section(self.active_section.clone())
                     .on_logout(ctx.link().callback(|_| Msg::Logout)),
             )
             .with_child({
@@ -318,6 +329,7 @@ impl Component for DatacenterManagerApp {
                         .username(username.clone())
                         .remote_list(self.remote_list_cache.clone())
                         .remote_list_loading(self.remote_list_error.is_some())
+                        .on_active_change(ctx.link().callback(Msg::ActiveSection))
                         .into()
                 } else {
                     Dialog::new(tr!("Proxmox Datacenter Manager Login"))

@@ -1,6 +1,6 @@
 use std::rc::Rc;
 
-use html::IntoPropValue;
+use html::{IntoEventCallback, IntoPropValue};
 use yew::virtual_dom::{Key, VComp, VNode};
 
 use pwt::css::{self, Display, FlexFit};
@@ -51,6 +51,13 @@ pub struct MainMenu {
     #[builder]
     #[prop_or_default]
     pub view_list: Vec<String>,
+
+    /// Notifies the parent app of the currently active top-level menu entry
+    /// (e.g. "dashboard", "guests", "remote-homelab"), so it can be shown
+    /// elsewhere in the shell, e.g. as a breadcrumb in the top bar.
+    #[builder_cb(IntoEventCallback, into_event_callback, String)]
+    #[prop_or_default]
+    pub on_active_change: Option<Callback<String>>,
 }
 
 impl MainMenu {
@@ -123,9 +130,12 @@ impl Component for PdmMainMenu {
         }
     }
 
-    fn update(&mut self, _ctx: &Context<Self>, msg: Self::Message) -> bool {
+    fn update(&mut self, ctx: &Context<Self>, msg: Self::Message) -> bool {
         match msg {
             Msg::Select(key) => {
+                if let Some(on_active_change) = &ctx.props().on_active_change {
+                    on_active_change.emit(key.to_string());
+                }
                 self.active = key;
                 true
             }
@@ -461,29 +471,6 @@ impl Component for PdmMainMenu {
         Container::new()
             .class(Display::Flex)
             .class(FlexFit)
-            .with_child(html! {
-                <style>{r#"
-                    .nexus-navigation {
-                        background: #ffffff !important;
-                        color: #344054 !important;
-                        border-right: 1px solid #e4e7ec !important;
-                    }
-                    .nexus-navigation a,
-                    .nexus-navigation button {
-                        color: #344054 !important;
-                        font-size: 12.5px !important;
-                    }
-                    .nexus-navigation a:hover,
-                    .nexus-navigation button:hover {
-                        background: #f2f4f7 !important;
-                    }
-                    .nexus-navigation [aria-current="page"],
-                    .nexus-navigation .pwt-nav-item-active {
-                        background: #eef3ff !important;
-                        color: #315bea !important;
-                    }
-                "#}</style>
-            })
             .with_child(
                 Row::new()
                     .class(FlexFit)

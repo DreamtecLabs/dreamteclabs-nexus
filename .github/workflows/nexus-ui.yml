@@ -24,7 +24,7 @@ permissions:
 
 jobs:
   boundary:
-    runs-on: ubuntu-latest
+    runs-on: self-hosted
     timeout-minutes: 10
     outputs:
       ui_changed: ${{ steps.changes.outputs.ui_changed }}
@@ -103,7 +103,7 @@ jobs:
     name: Build PDM UI package
     needs: boundary
     if: needs.boundary.outputs.ui_changed == 'true'
-    runs-on: ubuntu-latest
+    runs-on: self-hosted
     timeout-minutes: 45
     steps:
       - name: Checkout
