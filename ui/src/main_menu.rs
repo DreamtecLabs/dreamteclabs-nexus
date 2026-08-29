@@ -14,7 +14,6 @@ use proxmox_yew_comp::{AclContext, NotesView, XTermJs};
 use pdm_api_types::remotes::RemoteType;
 use pdm_api_types::{PRIV_SYS_AUDIT, PRIV_SYS_MODIFY};
 
-use crate::ceph::CephView;
 use crate::configuration::subscription_panel::SubscriptionPanel;
 use crate::configuration::subscription_registry::SubscriptionRegistryProps;
 use crate::configuration::views::ViewGrid;
@@ -29,7 +28,7 @@ use crate::{
 
 #[path = "nexus/mod.rs"]
 mod nexus;
-use nexus::{NexusHome, NexusInventory};
+use nexus::{NexusHome, NexusInventory, NexusStorage};
 
 use pwt_macros::builder;
 
@@ -304,9 +303,9 @@ impl Component for PdmMainMenu {
             &mut menu,
             &mut content,
             "Storage",
-            "ceph",
+            "storage",
             Some("fa fa-database"),
-            |_| CephView::new().into(),
+            |_| html! { <NexusStorage/> },
         );
 
         let mut views_menu = Menu::new();
