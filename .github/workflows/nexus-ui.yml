@@ -122,6 +122,8 @@ jobs:
           mkdir -p artifacts
           docker run --rm \
             --memory=7g \
+            -e HOST_UID="$(id -u)" \
+            -e HOST_GID="$(id -g)" \
             -v "$GITHUB_WORKSPACE:/workspace" \
             -w /workspace \
             debian:trixie \
