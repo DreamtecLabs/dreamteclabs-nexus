@@ -1,6 +1,6 @@
 use std::rc::Rc;
 
-use html::IntoPropValue;
+use html::{IntoEventCallback, IntoPropValue};
 use yew::virtual_dom::{Key, VComp, VNode};
 
 use pwt::css::{self, Display, FlexFit};
