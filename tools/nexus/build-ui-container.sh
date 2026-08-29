@@ -3,6 +3,18 @@ set -euo pipefail
 
 cd /workspace
 
+# Everything below runs as root inside this container, so the build output
+# bind-mounted into /workspace ends up owned by root on the host too.
+# On a persistent self-hosted runner (unlike ephemeral GitHub-hosted ones,
+# which get a fresh filesystem every run) that breaks the *next* job's
+# checkout, which can't clean or overwrite root-owned files. Hand ownership
+# back to the invoking (non-root) runner user on every exit path - success
+# or failure (`set -e` above means any command failing exits immediately,
+# so a plain end-of-script chown would be skipped on a failed build).
+if [ -n "${HOST_UID:-}" ] && [ -n "${HOST_GID:-}" ]; then
+  trap 'chown -R "${HOST_UID}:${HOST_GID}" /workspace' EXIT
+fi
+
 apt-get update
 apt-get install -y --no-install-recommends \
   build-essential \
@@ -61,13 +73,3 @@ mkdir -p artifacts
 cp -f "$package" artifacts/
 sha256sum artifacts/*.deb | sed 's#artifacts/##' | tee artifacts/SHA256SUMS
 git rev-parse HEAD > artifacts/BUILD_COMMIT
-
-# Everything above ran as root inside this container, so the build output
-# bind-mounted into /workspace is owned by root on the host too. Hand it
-# back to the invoking (non-root) runner user before the container exits -
-# otherwise the next job's checkout can't clean or overwrite these files on
-# a persistent self-hosted runner (ephemeral GitHub-hosted runners never hit
-# this, since they get a fresh filesystem every run).
-if [ -n "${HOST_UID:-}" ] && [ -n "${HOST_GID:-}" ]; then
-  chown -R "${HOST_UID}:${HOST_GID}" /workspace
-fi
