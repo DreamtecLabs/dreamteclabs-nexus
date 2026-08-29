@@ -33,7 +33,12 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          sudo chown -R "$(id -u):$(id -g)" "$GITHUB_WORKSPACE"
+          docker run --rm \
+            -e HOST_UID="$(id -u)" \
+            -e HOST_GID="$(id -g)" \
+            -v "$GITHUB_WORKSPACE:/workspace" \
+            debian:trixie \
+            sh -c 'chown -R "$HOST_UID:$HOST_GID" /workspace'
 
       - name: Checkout
         uses: actions/checkout@v4
@@ -116,7 +121,12 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          sudo chown -R "$(id -u):$(id -g)" "$GITHUB_WORKSPACE"
+          docker run --rm \
+            -e HOST_UID="$(id -u)" \
+            -e HOST_GID="$(id -g)" \
+            -v "$GITHUB_WORKSPACE:/workspace" \
+            debian:trixie \
+            sh -c 'chown -R "$HOST_UID:$HOST_GID" /workspace'
 
       - name: Checkout
         uses: actions/checkout@v4
