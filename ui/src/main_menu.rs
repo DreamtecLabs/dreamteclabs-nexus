@@ -461,29 +461,6 @@ impl Component for PdmMainMenu {
         Container::new()
             .class(Display::Flex)
             .class(FlexFit)
-            .with_child(html! {
-                <style>{r#"
-                    .nexus-navigation {
-                        background: #ffffff !important;
-                        color: #344054 !important;
-                        border-right: 1px solid #e4e7ec !important;
-                    }
-                    .nexus-navigation a,
-                    .nexus-navigation button {
-                        color: #344054 !important;
-                        font-size: 12.5px !important;
-                    }
-                    .nexus-navigation a:hover,
-                    .nexus-navigation button:hover {
-                        background: #f2f4f7 !important;
-                    }
-                    .nexus-navigation [aria-current="page"],
-                    .nexus-navigation .pwt-nav-item-active {
-                        background: #eef3ff !important;
-                        color: #315bea !important;
-                    }
-                "#}</style>
-            })
             .with_child(
                 Row::new()
                     .class(FlexFit)

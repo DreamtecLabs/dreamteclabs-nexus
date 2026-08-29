@@ -1,3 +1,5 @@
+@import "nexus";
+
 // pwt's datatable styles every td and td > div with `white-space: nowrap; overflow: hidden;
 // text-overflow: ellipsis`, which clips long Issuer/Subject/SAN values in a KVGrid that uses the
 // same cell chrome. Opt KVGrid instances in to wrapping by adding this class - scoped so other

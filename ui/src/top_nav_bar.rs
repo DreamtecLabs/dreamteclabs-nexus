@@ -217,27 +217,17 @@ impl Component for PdmTopNavBar {
             .class("pwt-border-bottom")
             .padding(2)
             .with_child(html! {
-                <>
-                    <style>{r#"
-                        .nexus-topbar{background:#fff!important;color:#0b1220!important;border-bottom:1px solid #dfe5ee!important;box-shadow:0 1px 4px rgba(15,23,42,.045);font-family:'Roboto Flex',Roboto,Arial,sans-serif!important}
-                        .nexus-topbar button{color:#111827!important}
-                        .nexus-navigation{background:#fff!important;color:#111827!important;border-right:1px solid #dfe5ee!important;font-family:'Roboto Flex',Roboto,Arial,sans-serif!important}
-                        .nexus-navigation a,.nexus-navigation button{color:#111827!important;font-weight:520!important}
-                        .nexus-navigation a:hover,.nexus-navigation button:hover{background:#f3f6fb!important;color:#0b1220!important}
-                        .nexus-navigation [aria-current='page'],.nexus-navigation .pwt-nav-item-active{background:#e9f0ff!important;color:#1d4ed8!important;font-weight:700!important}
-                    "#}</style>
-                    <div style="display:flex;align-items:center;gap:12px;min-width:238px;padding-left:3px;">
-                        <div style="position:relative;width:36px;height:36px;flex:0 0 36px;">
-                            <span style="position:absolute;width:11px;height:34px;left:12px;top:1px;border-radius:8px;background:linear-gradient(180deg,#60a5fa,#2563eb);transform:rotate(43deg);box-shadow:0 2px 5px rgba(37,99,235,.20);"></span>
-                            <span style="position:absolute;width:11px;height:34px;left:12px;top:1px;border-radius:8px;background:linear-gradient(180deg,#93c5fd,#4f46e5);transform:rotate(-43deg);box-shadow:0 2px 5px rgba(79,70,229,.16);"></span>
-                        </div>
-                        <div>
-                            <div style="font-size:17px;font-weight:800;line-height:1;letter-spacing:-.025em;color:#070d18;">{"NEXUS"}</div>
-                            <div style="font-size:10px;font-weight:600;color:#334155;margin-top:4px;">{"DreamtecLabs Nexus"}</div>
-                            <div style="font-size:9px;color:#64748b;margin-top:2px;">{engine}</div>
-                        </div>
+                <div style="display:flex;align-items:center;gap:12px;min-width:238px;padding-left:3px;">
+                    <div style="position:relative;width:36px;height:36px;flex:0 0 36px;">
+                        <span style="position:absolute;width:11px;height:34px;left:12px;top:1px;border-radius:8px;background:linear-gradient(180deg,#60a5fa,#2563eb);transform:rotate(43deg);box-shadow:0 2px 5px rgba(37,99,235,.20);"></span>
+                        <span style="position:absolute;width:11px;height:34px;left:12px;top:1px;border-radius:8px;background:linear-gradient(180deg,#93c5fd,#4f46e5);transform:rotate(-43deg);box-shadow:0 2px 5px rgba(79,70,229,.16);"></span>
                     </div>
-                </>
+                    <div>
+                        <div style="font-size:17px;font-weight:800;line-height:1;letter-spacing:-.025em;color:var(--pwt-color);">{"NEXUS"}</div>
+                        <div style="font-size:10px;font-weight:600;color:var(--pwt-color);margin-top:4px;">{"DreamtecLabs Nexus"}</div>
+                        <div style="font-size:9px;color:var(--pwt-color);opacity:.65;margin-top:2px;">{engine}</div>
+                    </div>
+                </div>
             })
             .with_flex_spacer()
             .with_child(
