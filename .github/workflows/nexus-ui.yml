@@ -29,6 +29,12 @@ jobs:
     outputs:
       ui_changed: ${{ steps.changes.outputs.ui_changed }}
     steps:
+      - name: Recover workspace ownership
+        shell: bash
+        run: |
+          set -euo pipefail
+          sudo chown -R "$(id -u):$(id -g)" "$GITHUB_WORKSPACE"
+
       - name: Checkout
         uses: actions/checkout@v4
         with:
@@ -106,6 +112,12 @@ jobs:
     runs-on: self-hosted
     timeout-minutes: 45
     steps:
+      - name: Recover workspace ownership
+        shell: bash
+        run: |
+          set -euo pipefail
+          sudo chown -R "$(id -u):$(id -g)" "$GITHUB_WORKSPACE"
+
       - name: Checkout
         uses: actions/checkout@v4
         with:
