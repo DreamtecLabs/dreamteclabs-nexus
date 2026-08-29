@@ -4,7 +4,7 @@ use wasm_bindgen_futures::spawn_local;
 use yew::prelude::*;
 use yew::virtual_dom::VNode;
 
-use super::super::guests::GuestPanel;
+use crate::guests::GuestPanel;
 
 fn kpi(
     icon: &'static str,
