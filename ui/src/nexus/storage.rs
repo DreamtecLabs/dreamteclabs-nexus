@@ -33,7 +33,9 @@ fn usage_percent(used: u64, total: u64) -> f64 {
     }
 }
 
-fn split_storage(remotes: &[RemoteResources]) -> (Vec<StorageEntry>, Vec<StorageEntry>, Vec<String>) {
+fn split_storage(
+    remotes: &[RemoteResources],
+) -> (Vec<StorageEntry>, Vec<StorageEntry>, Vec<String>) {
     let mut pve = BTreeMap::<String, StorageEntry>::new();
     let mut pbs = BTreeMap::<String, StorageEntry>::new();
     let mut errors = Vec::new();
@@ -96,7 +98,11 @@ fn split_storage(remotes: &[RemoteResources]) -> (Vec<StorageEntry>, Vec<Storage
         }
     }
 
-    (pve.into_values().collect(), pbs.into_values().collect(), errors)
+    (
+        pve.into_values().collect(),
+        pbs.into_values().collect(),
+        errors,
+    )
 }
 
 fn tier_summary(title: &str, icon: &str, entries: &[StorageEntry], tone: &str) -> Html {
@@ -168,7 +174,8 @@ pub fn nexus_storage() -> Html {
         let resources = resources.clone();
         use_effect_with((), move |_| {
             spawn_local(async move {
-                let result: Result<Vec<RemoteResources>, _> = http_get("/resources/list", None).await;
+                let result: Result<Vec<RemoteResources>, _> =
+                    http_get("/resources/list", None).await;
                 resources.set(Some(result.map_err(|err| err.to_string())));
             });
             || ()
@@ -192,8 +199,12 @@ pub fn nexus_storage() -> Html {
                 </>
             }
         }
-        Some(Err(error)) => html! { <div class="nexus-storage-error"><i class="fa fa-exclamation-triangle"></i>{format!(" Storage inventory unavailable: {error}")}</div> },
-        None => html! { <div class="nexus-storage-loading"><i class="fa fa-refresh fa-spin"></i>{" Loading storage inventory…"}</div> },
+        Some(Err(error)) => {
+            html! { <div class="nexus-storage-error"><i class="fa fa-exclamation-triangle"></i>{format!(" Storage inventory unavailable: {error}")}</div> }
+        }
+        None => {
+            html! { <div class="nexus-storage-loading"><i class="fa fa-refresh fa-spin"></i>{" Loading storage inventory…"}</div> }
+        }
     };
 
     html! {
