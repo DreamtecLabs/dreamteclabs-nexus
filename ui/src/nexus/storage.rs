@@ -148,6 +148,19 @@ fn tier_summary(title: &str, icon: &str, entries: &[StorageEntry], tone: &str) -
     let used = entries.iter().map(|entry| entry.used).sum::<u64>();
     let free = total.saturating_sub(used);
     let pct = usage_percent(used, total);
+    let is_pve = tone == "pve";
+    let capacity_label = if is_pve {
+        "Configured capacity"
+    } else {
+        "Capacity"
+    };
+    let used_label = if is_pve { "Reported used" } else { "Used" };
+    let free_label = if is_pve { "Reported free" } else { "Free" };
+    let footer = if is_pve {
+        format!("{pct:.1}% target utilization · physical backing may overlap")
+    } else {
+        format!("{pct:.1}% utilized")
+    };
 
     html! {
         <section class={classes!("nexus-storage-tier-summary", tone.to_string())}>
@@ -156,12 +169,12 @@ fn tier_summary(title: &str, icon: &str, entries: &[StorageEntry], tone: &str) -
                 <div><span>{title}</span><strong>{entries.len()}</strong><small>{"storage targets"}</small></div>
             </div>
             <div class="nexus-storage-summary-capacity">
-                <div><span>{"Capacity"}</span><strong>{format_bytes(total)}</strong></div>
-                <div><span>{"Used"}</span><strong>{format_bytes(used)}</strong></div>
-                <div><span>{"Free"}</span><strong>{format_bytes(free)}</strong></div>
+                <div><span>{capacity_label}</span><strong>{format_bytes(total)}</strong></div>
+                <div><span>{used_label}</span><strong>{format_bytes(used)}</strong></div>
+                <div><span>{free_label}</span><strong>{format_bytes(free)}</strong></div>
             </div>
             <div class="nexus-storage-progress"><span style={format!("width:{pct:.1}%")}></span></div>
-            <small class="nexus-storage-summary-foot">{format!("{pct:.1}% utilized")}</small>
+            <small class="nexus-storage-summary-foot">{footer}</small>
         </section>
     }
 }
@@ -233,7 +246,7 @@ pub fn nexus_storage() -> Html {
                     {if errors.is_empty() { Html::default() } else { html! {
                         <div class="nexus-storage-warning"><i class="fa fa-exclamation-triangle"></i><span>{format!("Some remotes could not report storage: {}", errors.join(" · "))}</span></div>
                     } }}
-                    {storage_table("PVE Storage", "Live storage capacity exposed by Proxmox VE remotes. Shared storage is consolidated once per remote and storage ID.", "fa fa-server", &pve)}
+                    {storage_table("PVE Storage", "Configured storage targets exposed by Proxmox VE. Shared storage is consolidated once per remote and storage ID; target totals are not presented as unique physical capacity.", "fa fa-server", &pve)}
                     {storage_table("PBS Datastores", "Backup capacity exposed by Proxmox Backup Server remotes.", "fa fa-database", &pbs)}
                 </>
             }
