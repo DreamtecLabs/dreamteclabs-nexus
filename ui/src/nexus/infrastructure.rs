@@ -1,10 +1,10 @@
 use std::collections::{BTreeMap, BTreeSet};
 
 use futures::future::join_all;
-use pdm_api_types::RemoteUpid;
 use pdm_api_types::resource::{RemoteResources, Resource};
+use pdm_api_types::RemoteUpid;
 use proxmox_yew_comp::{http_get, http_post};
-use serde_json::{Value, json};
+use serde_json::{json, Value};
 use wasm_bindgen_futures::spawn_local;
 use web_sys::{HtmlInputElement, HtmlSelectElement};
 use yew::prelude::*;
@@ -85,9 +85,21 @@ fn selected_or_first(selected: &str, values: impl Iterator<Item = String>) -> St
     values.into_iter().next().unwrap_or_default()
 }
 
+fn json_display(value: Option<&Value>) -> String {
+    match value {
+        Some(Value::String(value)) => value.clone(),
+        Some(Value::Number(value)) => value.to_string(),
+        Some(value) if !value.is_null() => value.to_string(),
+        _ => "—".to_string(),
+    }
+}
+
 fn task_from_value(remote: &str, value: &Value) -> Option<DeploymentTask> {
     let kind = value.get("type")?.as_str()?.to_string();
-    if !matches!(kind.as_str(), "qmcreate" | "vzcreate" | "qmclone" | "vzclone") {
+    if !matches!(
+        kind.as_str(),
+        "qmcreate" | "vzcreate" | "qmclone" | "vzclone"
+    ) {
         return None;
     }
 
@@ -99,11 +111,7 @@ fn task_from_value(remote: &str, value: &Value) -> Option<DeploymentTask> {
             .unwrap_or("—")
             .to_string(),
         kind,
-        id: value
-            .get("id")
-            .and_then(Value::as_str)
-            .unwrap_or("—")
-            .to_string(),
+        id: json_display(value.get("id")),
         status: value
             .get("status")
             .and_then(Value::as_str)
@@ -117,7 +125,9 @@ fn task_from_value(remote: &str, value: &Value) -> Option<DeploymentTask> {
     })
 }
 
-async fn load_deployment_tasks(resources: Vec<RemoteResources>) -> Result<Vec<DeploymentTask>, String> {
+async fn load_deployment_tasks(
+    resources: Vec<RemoteResources>,
+) -> Result<Vec<DeploymentTask>, String> {
     let remotes: BTreeSet<String> = resources
         .iter()
         .filter(|remote| {
@@ -140,7 +150,11 @@ async fn load_deployment_tasks(resources: Vec<RemoteResources>) -> Result<Vec<De
     let mut errors = Vec::new();
     for (remote, result) in results {
         match result {
-            Ok(values) => tasks.extend(values.iter().filter_map(|value| task_from_value(&remote, value))),
+            Ok(values) => tasks.extend(
+                values
+                    .iter()
+                    .filter_map(|value| task_from_value(&remote, value)),
+            ),
             Err(err) => errors.push(format!("{remote}: {err}")),
         }
     }
@@ -176,7 +190,8 @@ pub fn nexus_infrastructure() -> Html {
         let resources = resources.clone();
         use_effect_with((), move |_| {
             spawn_local(async move {
-                let value: Result<Vec<RemoteResources>, _> = http_get("/resources/list", None).await;
+                let value: Result<Vec<RemoteResources>, _> =
+                    http_get("/resources/list", None).await;
                 resources.set(Some(value.map_err(|err| err.to_string())));
             });
             || ()
@@ -190,7 +205,10 @@ pub fn nexus_infrastructure() -> Html {
         .map(|resources| discover_targets(resources))
         .unwrap_or_default();
 
-    let selected_remote = selected_or_first(&remote, targets.iter().map(|target| target.remote.clone()));
+    let selected_remote = selected_or_first(
+        &remote,
+        targets.iter().map(|target| target.remote.clone()),
+    );
     let selected_node = selected_or_first(
         &node,
         targets
@@ -224,7 +242,9 @@ pub fn nexus_infrastructure() -> Html {
                 let next: Result<u32, _> = http_get(&url, None).await;
                 match next {
                     Ok(next) => vmid.set(next.to_string()),
-                    Err(err) => result.set(Some(Err(format!("Unable to reserve the next VMID: {err}")))),
+                    Err(err) => result.set(Some(Err(format!(
+                        "Unable to reserve the next VMID: {err}"
+                    )))),
                 }
             });
         })
@@ -243,16 +263,24 @@ pub fn nexus_infrastructure() -> Html {
         let bridge = (*bridge).clone();
         let source = (*source).clone();
         let password = (*password).clone();
-        let start_value = **start;
+        let start_value = *start;
         let busy = busy.clone();
         let result = result.clone();
 
         Callback::from(move |_| {
             let parsed = || -> Result<(u32, u64, u64, u64), String> {
-                let vmid = vmid.parse::<u32>().map_err(|_| "VMID must be a number.".to_string())?;
-                let cores = cores.parse::<u64>().map_err(|_| "Cores must be a number.".to_string())?;
-                let memory = memory.parse::<u64>().map_err(|_| "Memory must be a number.".to_string())?;
-                let disk = disk.parse::<u64>().map_err(|_| "Disk size must be a number.".to_string())?;
+                let vmid = vmid
+                    .parse::<u32>()
+                    .map_err(|_| "VMID must be a number.".to_string())?;
+                let cores = cores
+                    .parse::<u64>()
+                    .map_err(|_| "Cores must be a number.".to_string())?;
+                let memory = memory
+                    .parse::<u64>()
+                    .map_err(|_| "Memory must be a number.".to_string())?;
+                let disk = disk
+                    .parse::<u64>()
+                    .map_err(|_| "Disk size must be a number.".to_string())?;
                 Ok((vmid, cores, memory, disk))
             }();
 
@@ -264,8 +292,13 @@ pub fn nexus_infrastructure() -> Html {
                 }
             };
 
-            if selected_remote.is_empty() || selected_node.is_empty() || selected_storage.is_empty() {
-                result.set(Some(Err("Remote, node and storage are required.".to_string())));
+            if selected_remote.is_empty()
+                || selected_node.is_empty()
+                || selected_storage.is_empty()
+            {
+                result.set(Some(Err(
+                    "Remote, node and storage are required.".to_string()
+                )));
                 return;
             }
             if name.trim().is_empty() {
@@ -277,7 +310,9 @@ pub fn nexus_infrastructure() -> Html {
                 return;
             }
             if workload == "lxc" && source.trim().is_empty() {
-                result.set(Some(Err("An LXC OS template volume is required.".to_string())));
+                result.set(Some(Err(
+                    "An LXC OS template volume is required.".to_string()
+                )));
                 return;
             }
 
@@ -332,7 +367,11 @@ pub fn nexus_infrastructure() -> Html {
 
                 let response: Result<RemoteUpid, _> = http_post(&url, Some(payload)).await;
                 busy.set(false);
-                result.set(Some(response.map(|upid| format!("Deployment submitted to PDM: {upid:?}")).map_err(|err| err.to_string())));
+                result.set(Some(
+                    response
+                        .map(|upid| format!("Deployment submitted to PDM: {upid:?}"))
+                        .map_err(|err| err.to_string()),
+                ));
             });
         })
     };
@@ -388,7 +427,7 @@ pub fn nexus_infrastructure() -> Html {
                     {if *workload == "lxc" { html!{<label class="nexus-infra-wide"><span>{"Root password (optional)"}</span><input type="password" value={(*password).clone()} oninput={{ let password = password.clone(); Callback::from(move |event: InputEvent| password.set(input_value(event))) }}/></label>} } else { Html::default() }}
                 </div>
                 <div class="nexus-infra-actions">
-                    <label class="nexus-infra-check"><input type="checkbox" checked={**start} onchange={{ let start = start.clone(); Callback::from(move |event: Event| start.set(event.target_unchecked_into::<HtmlInputElement>().checked())) }}/><span>{"Start after deployment"}</span></label>
+                    <label class="nexus-infra-check"><input type="checkbox" checked={*start} onchange={{ let start = start.clone(); Callback::from(move |event: Event| start.set(event.target_unchecked_into::<HtmlInputElement>().checked())) }}/><span>{"Start after deployment"}</span></label>
                     <button class="nexus-infra-deploy" disabled={*busy || targets.is_empty()} onclick={deploy}>{if *busy { "Submitting to PDM…" } else { "Deploy workload" }}</button>
                 </div>
                 {match result.as_ref() {
@@ -413,7 +452,8 @@ pub fn nexus_deployments() -> Html {
         let refresh = *refresh_token;
         use_effect_with(refresh, move |_| {
             spawn_local(async move {
-                let resources: Result<Vec<RemoteResources>, _> = http_get("/resources/list", None).await;
+                let resources: Result<Vec<RemoteResources>, _> =
+                    http_get("/resources/list", None).await;
                 let result = match resources {
                     Ok(resources) => load_deployment_tasks(resources).await,
                     Err(err) => Err(err.to_string()),
