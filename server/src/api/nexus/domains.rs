@@ -68,6 +68,48 @@ fn read_inventory() -> Result<Value, Error> {
     serde_json::from_str(&raw).context("unable to parse domains-hosting.json")
 }
 
+fn upsert_mail_domain(inventory: &mut Value, domain: &str) -> Result<bool, Error> {
+    let domains = inventory
+        .get_mut("domains")
+        .and_then(Value::as_array_mut)
+        .context("domains-hosting inventory is missing a domains array")?;
+
+    if let Some(existing) = domains
+        .iter_mut()
+        .find(|entry| entry.get("name").and_then(Value::as_str) == Some(domain))
+    {
+        existing["mail"] = json!(true);
+        existing["webmail"] = json!(true);
+        existing["ddns"] = json!(true);
+        existing["tunnel"] = json!(true);
+        return Ok(false);
+    }
+
+    domains.push(json!({
+        "name": domain,
+        "mail": true,
+        "webmail": true,
+        "ddns": true,
+        "tunnel": true
+    }));
+    Ok(true)
+}
+
+async fn persist_mail_domain(domain: &str) -> Result<(), Error> {
+    let mut inventory = read_inventory()?;
+    upsert_mail_domain(&mut inventory, domain)?;
+
+    let temporary = format!("{INVENTORY_FILENAME}.tmp");
+    let contents = serde_json::to_vec_pretty(&inventory)?;
+    tokio::fs::write(&temporary, contents)
+        .await
+        .context("unable to write temporary domains inventory")?;
+    tokio::fs::rename(&temporary, INVENTORY_FILENAME)
+        .await
+        .context("unable to atomically replace domains inventory")?;
+    Ok(())
+}
+
 async fn command_output(program: &str, args: &[&str]) -> Result<String, Error> {
     let mut command = Command::new(program);
     command
@@ -319,6 +361,17 @@ pub async fn onboard_domain(domain: String, hestia_user: Option<String>) -> Resu
     let stdout = String::from_utf8_lossy(&output.stdout).trim().to_string();
     let helper_result: Value = serde_json::from_str(&stdout)
         .with_context(|| format!("domains helper returned invalid JSON: {stdout}"))?;
+
+    if let Err(err) = persist_mail_domain(&domain).await {
+        append_audit(
+            "onboard",
+            &domain,
+            &format!("providers completed; inventory persistence failed: {err}"),
+        )
+        .await?;
+        return Err(err);
+    }
+
     let validation = validate_domain_inner(&domain).await;
     append_audit("onboard", &domain, "completed").await?;
 
@@ -358,5 +411,19 @@ mod tests {
         let two = json!({"value":"\"v=spf1 a mx ~all\"\n\"v=spf1 ip4:192.0.2.1 ~all\""});
         assert_eq!(txt_prefix_count(&one, "v=spf1"), 1);
         assert_eq!(txt_prefix_count(&two, "v=spf1"), 2);
+    }
+
+    #[test]
+    fn onboarding_inventory_upsert_is_idempotent() {
+        let mut inventory = json!({"domains":[]});
+        assert!(upsert_mail_domain(&mut inventory, "example.com").unwrap());
+        assert!(!upsert_mail_domain(&mut inventory, "example.com").unwrap());
+        let domains = inventory["domains"].as_array().unwrap();
+        assert_eq!(domains.len(), 1);
+        assert_eq!(domains[0]["name"], "example.com");
+        assert_eq!(domains[0]["mail"], true);
+        assert_eq!(domains[0]["webmail"], true);
+        assert_eq!(domains[0]["ddns"], true);
+        assert_eq!(domains[0]["tunnel"], true);
     }
 }
