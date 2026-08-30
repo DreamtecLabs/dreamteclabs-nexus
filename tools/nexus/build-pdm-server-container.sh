@@ -31,6 +31,7 @@ EOF
 apt-get update
 export DEB_BUILD_PROFILES=nodoc
 mk-build-deps \
+  --build-dep \
   --install \
   --remove \
   --tool 'apt-get -y --no-install-recommends' \
