@@ -70,7 +70,10 @@ fn read_inventory() -> Result<Value, Error> {
 
 async fn command_output(program: &str, args: &[&str]) -> Result<String, Error> {
     let mut command = Command::new(program);
-    command.args(args).stdout(Stdio::piped()).stderr(Stdio::piped());
+    command
+        .args(args)
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped());
     let output = tokio::time::timeout(Duration::from_secs(12), command.output())
         .await
         .with_context(|| format!("{program} timed out"))??;
@@ -99,7 +102,11 @@ fn txt_contains(value: &Value, needle: &str) -> bool {
     value
         .get("value")
         .and_then(Value::as_str)
-        .is_some_and(|value| value.to_ascii_lowercase().contains(&needle.to_ascii_lowercase()))
+        .is_some_and(|value| {
+            value
+                .to_ascii_lowercase()
+                .contains(&needle.to_ascii_lowercase())
+        })
 }
 
 fn txt_prefix_count(value: &Value, prefix: &str) -> usize {
@@ -109,7 +116,11 @@ fn txt_prefix_count(value: &Value, prefix: &str) -> usize {
         .map(|value| {
             value
                 .lines()
-                .filter(|line| line.trim_matches('"').to_ascii_lowercase().starts_with(&prefix.to_ascii_lowercase()))
+                .filter(|line| {
+                    line.trim_matches('"')
+                        .to_ascii_lowercase()
+                        .starts_with(&prefix.to_ascii_lowercase())
+                })
                 .count()
         })
         .unwrap_or(0)
@@ -165,14 +176,20 @@ async fn validate_domain_inner(domain: &str) -> Value {
     let dmarc_ok = txt_prefix_count(&dmarc_txt, "v=dmarc1") == 1;
 
     let healthy = mail_a.get("ok").and_then(Value::as_bool).unwrap_or(false)
-        && webmail_dns.get("ok").and_then(Value::as_bool).unwrap_or(false)
+        && webmail_dns
+            .get("ok")
+            .and_then(Value::as_bool)
+            .unwrap_or(false)
         && mx_ok
         && spf_ok
         && dkim_ok
         && dmarc_ok
         && smtp.get("ok").and_then(Value::as_bool).unwrap_or(false)
         && imap.get("ok").and_then(Value::as_bool).unwrap_or(false)
-        && webmail_tls.get("ok").and_then(Value::as_bool).unwrap_or(false);
+        && webmail_tls
+            .get("ok")
+            .and_then(Value::as_bool)
+            .unwrap_or(false);
 
     json!({
         "domain": domain,
@@ -241,7 +258,11 @@ pub async fn validate_domain(domain: String) -> Result<Value, Error> {
         bail!("invalid domain");
     }
     let result = validate_domain_inner(&domain).await;
-    let outcome = if result.get("healthy").and_then(Value::as_bool).unwrap_or(false) {
+    let outcome = if result
+        .get("healthy")
+        .and_then(Value::as_bool)
+        .unwrap_or(false)
+    {
         "healthy"
     } else {
         "degraded"
@@ -272,7 +293,8 @@ pub async fn onboard_domain(domain: String, hestia_user: Option<String>) -> Resu
         bail!("invalid domain");
     }
 
-    let helper = std::env::var("NEXUS_DOMAINS_HELPER").unwrap_or_else(|_| DEFAULT_HELPER.to_string());
+    let helper =
+        std::env::var("NEXUS_DOMAINS_HELPER").unwrap_or_else(|_| DEFAULT_HELPER.to_string());
     if !Path::new(&helper).exists() {
         bail!("domains helper is not installed at {helper}");
     }
@@ -323,7 +345,11 @@ mod tests {
         let inventory = default_inventory();
         let domains = inventory["domains"].as_array().unwrap();
         assert!(domains.iter().any(|domain| domain["name"] == "mundoleo.co"));
-        assert!(domains.iter().any(|domain| domain["name"] == "kinpilot.app"));
+        assert!(
+            domains
+                .iter()
+                .any(|domain| domain["name"] == "kinpilot.app")
+        );
     }
 
     #[test]
