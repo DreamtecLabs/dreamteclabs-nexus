@@ -40,6 +40,11 @@ jobs:
   validate:
     runs-on: self-hosted
     timeout-minutes: 30
+    env:
+      # Do not inherit a host-level Cargo source replacement from the self-hosted
+      # runner (for example Debian's /usr/share/cargo/registry directory source).
+      # CI must resolve dependencies from the project's normal Cargo registry.
+      CARGO_HOME: ${{ runner.temp }}/nexus-domains-cargo
     steps:
       - name: Recover workspace ownership
         shell: bash
