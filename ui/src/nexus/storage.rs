@@ -33,6 +33,23 @@ fn usage_percent(used: u64, total: u64) -> f64 {
     }
 }
 
+fn normalized_status(status: &str) -> String {
+    status.trim().to_ascii_lowercase()
+}
+
+fn merge_shared_storage(existing: &mut StorageEntry, used: u64, total: u64, status: &str) {
+    existing.used = existing.used.max(used);
+    existing.total = existing.total.max(total);
+
+    let current_status = normalized_status(&existing.status);
+    let incoming_status = normalized_status(status);
+    if matches!(incoming_status.as_str(), "available" | "online")
+        || !matches!(current_status.as_str(), "available" | "online")
+    {
+        existing.status = status.to_string();
+    }
+}
+
 fn split_storage(
     remotes: &[RemoteResources],
 ) -> (Vec<StorageEntry>, Vec<StorageEntry>, Vec<String>) {
@@ -53,19 +70,40 @@ fn split_storage(
                     } else {
                         format!("{}/{}/{}", remote.remote, storage.node, storage.storage)
                     };
-                    pve.entry(key).or_insert_with(|| StorageEntry {
-                        remote: remote.remote.clone(),
-                        name: storage.storage.clone(),
-                        location: if storage.shared {
-                            "Shared cluster storage".to_string()
-                        } else {
-                            storage.node.clone()
-                        },
-                        kind: if storage.shared { "Shared" } else { "Local" }.to_string(),
-                        status: storage.status.clone(),
-                        used: storage.disk,
-                        total: storage.maxdisk,
-                    });
+
+                    if storage.shared {
+                        pve.entry(key)
+                            .and_modify(|entry| {
+                                merge_shared_storage(
+                                    entry,
+                                    storage.disk,
+                                    storage.maxdisk,
+                                    &storage.status,
+                                );
+                            })
+                            .or_insert_with(|| StorageEntry {
+                                remote: remote.remote.clone(),
+                                name: storage.storage.clone(),
+                                location: "Shared cluster storage".to_string(),
+                                kind: "Shared".to_string(),
+                                status: storage.status.clone(),
+                                used: storage.disk,
+                                total: storage.maxdisk,
+                            });
+                    } else {
+                        pve.insert(
+                            key,
+                            StorageEntry {
+                                remote: remote.remote.clone(),
+                                name: storage.storage.clone(),
+                                location: storage.node.clone(),
+                                kind: "Local".to_string(),
+                                status: storage.status.clone(),
+                                used: storage.disk,
+                                total: storage.maxdisk,
+                            },
+                        );
+                    }
                 }
                 Resource::PbsDatastore(datastore) => {
                     let key = format!("{}/{}", remote.remote, datastore.name);
@@ -141,7 +179,8 @@ fn storage_table(title: &str, subtitle: &str, icon: &str, entries: &[StorageEntr
                     <tbody>
                     {for entries.iter().map(|entry| {
                         let pct = usage_percent(entry.used, entry.total);
-                        let status_class = if entry.status == "online" || entry.status == "available" { "ok" } else { "warning" };
+                        let normalized = normalized_status(&entry.status);
+                        let status_class = if matches!(normalized.as_str(), "online" | "available") { "ok" } else { "warning" };
                         html! {
                             <tr>
                                 <td><strong>{entry.name.clone()}</strong></td>
@@ -194,7 +233,7 @@ pub fn nexus_storage() -> Html {
                     {if errors.is_empty() { Html::default() } else { html! {
                         <div class="nexus-storage-warning"><i class="fa fa-exclamation-triangle"></i><span>{format!("Some remotes could not report storage: {}", errors.join(" · "))}</span></div>
                     } }}
-                    {storage_table("PVE Storage", "Live storage capacity exposed by Proxmox VE remotes. Shared storage is counted once per remote.", "fa fa-server", &pve)}
+                    {storage_table("PVE Storage", "Live storage capacity exposed by Proxmox VE remotes. Shared storage is consolidated once per remote and storage ID.", "fa fa-server", &pve)}
                     {storage_table("PBS Datastores", "Backup capacity exposed by Proxmox Backup Server remotes.", "fa fa-database", &pbs)}
                 </>
             }
