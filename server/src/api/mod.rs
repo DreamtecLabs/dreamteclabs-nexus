@@ -12,7 +12,7 @@ pub mod access;
 pub mod auto_installer;
 pub mod ceph;
 pub mod config;
-pub mod domains;
+pub mod nexus;
 pub mod nodes;
 pub mod pbs;
 pub mod pve;
@@ -28,7 +28,7 @@ const SUBDIRS: SubdirMap = &sorted!([
     ("auto-install", &auto_installer::ROUTER),
     ("ceph", &ceph::ROUTER),
     ("config", &config::ROUTER),
-    ("domains", &domains::ROUTER),
+    ("domains", &nexus::domains::ROUTER),
     ("ping", &Router::new().get(&API_METHOD_PING)),
     ("pve", &pve::ROUTER),
     ("pbs", &pbs::ROUTER),
