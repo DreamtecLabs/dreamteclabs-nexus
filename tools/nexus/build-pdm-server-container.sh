@@ -50,8 +50,26 @@ mkdir -p artifacts-server
 # and avoids producing the documentation package in the CI container.
 dpkg-buildpackage -B -Pnodoc -uc -us
 
-package="$(find / -maxdepth 2 -type f -name 'proxmox-datacenter-manager_*_*.deb' ! -name '*-client_*' ! -name '*-dbgsym_*' -printf '%T@ %p\n' 2>/dev/null | sort -nr | head -n1 | cut -d' ' -f2-)"
-test -n "$package"
+# dpkg-buildpackage writes binary packages next to the source directory. Since
+# /workspace is bind-mounted as the source tree, its parent inside the build
+# container is /. Select the server package explicitly and reject ambiguity.
+shopt -s nullglob
+candidates=(/proxmox-datacenter-manager_*_*.deb)
+server_packages=()
+for candidate in "${candidates[@]}"; do
+  case "$(basename "$candidate")" in
+    *-client_* | *-dbgsym_*) ;;
+    *) server_packages+=("$candidate") ;;
+  esac
+done
+
+if [[ ${#server_packages[@]} -ne 1 ]]; then
+  echo "Expected exactly one proxmox-datacenter-manager server package, found ${#server_packages[@]}." >&2
+  printf 'Candidate: %s\n' "${candidates[@]:-<none>}" >&2
+  exit 1
+fi
+
+package="${server_packages[0]}"
 test -f "$package"
 test "$(dpkg-deb -f "$package" Package)" = "proxmox-datacenter-manager"
 dpkg-deb --info "$package" >/dev/null
