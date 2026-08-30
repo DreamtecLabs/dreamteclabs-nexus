@@ -1,0 +1,141 @@
+name: Nexus PDM
+
+on:
+  pull_request:
+    paths:
+      - 'server/**'
+      - 'lib/**'
+      - 'cli/**'
+      - 'debian/**'
+      - 'Cargo.toml'
+      - 'Cargo.lock'
+      - 'Makefile'
+      - 'defines.mk'
+      - 'tools/nexus/build-pdm-server-container.sh'
+      - 'tools/nexus/deploy-platform.sh'
+      - '.github/workflows/nexus-pdm.yml'
+  push:
+    branches:
+      - master
+    paths:
+      - 'server/**'
+      - 'lib/**'
+      - 'cli/**'
+      - 'debian/**'
+      - 'Cargo.toml'
+      - 'Cargo.lock'
+      - 'Makefile'
+      - 'defines.mk'
+      - 'tools/nexus/build-pdm-server-container.sh'
+      - 'tools/nexus/deploy-platform.sh'
+      - '.github/workflows/nexus-pdm.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  actions: read
+  pull-requests: write
+
+jobs:
+  server:
+    name: Build PDM server package
+    runs-on: self-hosted
+    timeout-minutes: 60
+    steps:
+      - name: Recover workspace ownership
+        shell: bash
+        run: |
+          set -euo pipefail
+          docker run --rm \
+            -e HOST_UID="$(id -u)" \
+            -e HOST_GID="$(id -g)" \
+            -v "$GITHUB_WORKSPACE:/workspace" \
+            debian:trixie \
+            sh -c 'chown -R "$HOST_UID:$HOST_GID" /workspace'
+
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          clean: true
+          fetch-depth: 2
+          submodules: recursive
+
+      - name: Install Rust stable
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          components: rustfmt
+
+      - name: Check PDM formatting
+        run: cargo fmt --all -- --check
+
+      - name: Check helper syntax
+        run: |
+          bash -n tools/nexus/build-pdm-server-container.sh
+          if test -f tools/nexus/deploy-platform.sh; then
+            bash -n tools/nexus/deploy-platform.sh
+          fi
+
+      - name: Build server package in Debian Trixie
+        id: package_build
+        continue-on-error: true
+        shell: bash
+        run: |
+          set -o pipefail
+          docker run --rm \
+            --memory=7g \
+            -e HOST_UID="$(id -u)" \
+            -e HOST_GID="$(id -g)" \
+            -v "$GITHUB_WORKSPACE:/workspace" \
+            -w /workspace \
+            debian:trixie \
+            bash tools/nexus/build-pdm-server-container.sh 2>&1 | tee server-build.log
+
+      - name: Publish server build diagnostics
+        if: steps.package_build.outcome == 'failure' && github.event_name == 'pull_request'
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const fs = require('fs');
+            const log = fs.readFileSync('server-build.log', 'utf8');
+            const lines = log.split(/\r?\n/);
+            const start = Math.max(0, lines.length - 140);
+            const excerpt = lines.slice(start).join('\n').slice(-50000);
+            const marker = '<!-- nexus-pdm-build-diagnostics -->';
+            const body = `${marker}\n### Nexus PDM build diagnostics\n\nCommit: \`${context.sha}\`\n\n\`\`\`text\n${excerpt}\n\`\`\``;
+            const { data: comments } = await github.rest.issues.listComments({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              issue_number: context.issue.number,
+              per_page: 100,
+            });
+            const existing = comments.find(comment => comment.body?.includes(marker));
+            if (existing) {
+              await github.rest.issues.updateComment({ owner: context.repo.owner, repo: context.repo.repo, comment_id: existing.id, body });
+            } else {
+              await github.rest.issues.createComment({ owner: context.repo.owner, repo: context.repo.repo, issue_number: context.issue.number, body });
+            }
+
+      - name: Fail when server package build fails
+        if: steps.package_build.outcome == 'failure'
+        run: exit 1
+
+      - name: Validate artifact provenance
+        shell: bash
+        run: |
+          set -euo pipefail
+          test "$(cat artifacts-server/BUILD_COMMIT)" = "$GITHUB_SHA"
+          (cd artifacts-server && sha256sum --check SHA256SUMS)
+          package="$(find artifacts-server -maxdepth 1 -type f -name 'proxmox-datacenter-manager_*_*.deb' ! -name '*-client_*' ! -name '*-dbgsym_*' | head -n1)"
+          test -n "$package"
+          test "$(dpkg-deb -f "$package" Package)" = 'proxmox-datacenter-manager'
+
+      - name: Upload commit-addressed server package
+        uses: actions/upload-artifact@v4
+        with:
+          name: nexus-pdm-server-${{ github.sha }}
+          path: |
+            artifacts-server/*.deb
+            artifacts-server/SHA256SUMS
+            artifacts-server/BUILD_COMMIT
+          if-no-files-found: error
+          retention-days: 30
