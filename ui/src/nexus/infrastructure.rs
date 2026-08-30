@@ -295,7 +295,7 @@ pub fn nexus_infrastructure() -> Html {
             if selected_remote.is_empty() || selected_node.is_empty() || selected_storage.is_empty()
             {
                 result.set(Some(Err(
-                    "Remote, node and storage are required.".to_string(),
+                    "Remote, node and storage are required.".to_string()
                 )));
                 return;
             }
@@ -309,7 +309,7 @@ pub fn nexus_infrastructure() -> Html {
             }
             if workload == "lxc" && source.trim().is_empty() {
                 result.set(Some(Err(
-                    "An LXC OS template volume is required.".to_string(),
+                    "An LXC OS template volume is required.".to_string()
                 )));
                 return;
             }
