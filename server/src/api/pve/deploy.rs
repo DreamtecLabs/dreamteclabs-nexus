@@ -50,7 +50,13 @@ struct CreateLxcParams {
     password: Option<String>,
 }
 
-fn validate_common(cores: u64, memory: u64, disk_gb: u64, storage: &str, bridge: &str) -> Result<(), Error> {
+fn validate_common(
+    cores: u64,
+    memory: u64,
+    disk_gb: u64,
+    storage: &str,
+    bridge: &str,
+) -> Result<(), Error> {
     if cores == 0 {
         bail!("cores must be greater than zero");
     }
