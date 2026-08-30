@@ -28,6 +28,7 @@ jobs:
     timeout-minutes: 10
     outputs:
       ui_changed: ${{ steps.changes.outputs.ui_changed }}
+      pdm_changed: ${{ steps.changes.outputs.pdm_changed }}
     steps:
       - name: Recover workspace ownership
         shell: bash
@@ -60,6 +61,11 @@ jobs:
           else
             echo 'ui_changed=false' >> "$GITHUB_OUTPUT"
           fi
+          if printf '%s\n' "$changed" | grep -Eq '^(server/|lib/|cli/|pdm-config/|pdm-api/|debian/)'; then
+            echo 'pdm_changed=true' >> "$GITHUB_OUTPUT"
+          else
+            echo 'pdm_changed=false' >> "$GITHUB_OUTPUT"
+          fi
 
       - name: Install Rust stable
         uses: dtolnay/rust-toolchain@stable
@@ -75,8 +81,12 @@ jobs:
           bash -n tools/nexus/build-ui-ci.sh
           bash -n tools/nexus/build-ui-container.sh
           bash -n tools/nexus/deploy-ui.sh
+          if test -f tools/nexus/deploy-platform.sh; then
+            bash -n tools/nexus/deploy-platform.sh
+          fi
 
       - name: Enforce frontend-only boundary
+        if: steps.changes.outputs.pdm_changed != 'true'
         shell: bash
         run: |
           set -euo pipefail
@@ -87,7 +97,7 @@ jobs:
           fi
           printf '%s\n' "$changed"
 
-          forbidden="$(printf '%s\n' "$changed" | grep -E '^(server/|lib/|cli/|pdm-config/|pdm-api/)' || true)"
+          forbidden="$(printf '%s\n' "$changed" | grep -E '^(server/|lib/|cli/|pdm-config/|pdm-api/|debian/)' || true)"
           if [[ -n "$forbidden" ]]; then
             echo "Nexus UI changes must not modify PDM engine paths:" >&2
             printf '%s\n' "$forbidden" >&2
@@ -98,6 +108,10 @@ jobs:
             echo "ui/src/lib.rs must stay identical to upstream for this integration seam" >&2
             exit 1
           fi
+
+      - name: Defer full-stack validation to Nexus PDM
+        if: steps.changes.outputs.pdm_changed == 'true'
+        run: echo 'PDM engine changes detected; full-stack server and UI validation is owned by the Nexus PDM workflow.'
 
       - name: Verify Nexus ownership seam
         shell: bash
@@ -113,7 +127,7 @@ jobs:
   package:
     name: Build PDM UI package
     needs: boundary
-    if: needs.boundary.outputs.ui_changed == 'true'
+    if: needs.boundary.outputs.ui_changed == 'true' && needs.boundary.outputs.pdm_changed != 'true'
     runs-on: self-hosted
     timeout-minutes: 45
     steps:
