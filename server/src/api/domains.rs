@@ -80,7 +80,11 @@ async fn command_output(program: &str, args: &[&str]) -> Result<String, Error> {
         bail!("{program} failed: {stderr}");
     }
 
-    Ok(String::from_utf8_lossy(&output.stdout).trim().to_string())
+    let stdout = String::from_utf8_lossy(&output.stdout).trim().to_string();
+    if !stdout.is_empty() {
+        return Ok(stdout);
+    }
+    Ok(String::from_utf8_lossy(&output.stderr).trim().to_string())
 }
 
 async fn dig(record_type: &str, name: &str) -> Value {
@@ -98,32 +102,38 @@ fn txt_contains(value: &Value, needle: &str) -> bool {
         .is_some_and(|value| value.to_ascii_lowercase().contains(&needle.to_ascii_lowercase()))
 }
 
-async fn tcp_check(host: &str, port: u16) -> Value {
-    match tokio::time::timeout(Duration::from_secs(5), tokio::net::TcpStream::connect((host, port))).await {
-        Ok(Ok(_)) => json!({"ok":true,"endpoint":format!("{host}:{port}")}),
-        Ok(Err(err)) => json!({"ok":false,"endpoint":format!("{host}:{port}"),"error":err.to_string()}),
-        Err(_) => json!({"ok":false,"endpoint":format!("{host}:{port}"),"error":"timeout"}),
-    }
+fn txt_prefix_count(value: &Value, prefix: &str) -> usize {
+    value
+        .get("value")
+        .and_then(Value::as_str)
+        .map(|value| {
+            value
+                .lines()
+                .filter(|line| line.trim_matches('"').to_ascii_lowercase().starts_with(&prefix.to_ascii_lowercase()))
+                .count()
+        })
+        .unwrap_or(0)
 }
 
-async fn certificate_check(host: &str) -> Value {
-    let connect = format!("{host}:443");
-    match command_output(
-        "openssl",
-        &[
-            "s_client",
-            "-connect",
-            &connect,
-            "-servername",
-            host,
-            "-verify_return_error",
-            "-brief",
-        ],
-    )
-    .await
-    {
-        Ok(output) => json!({"ok":true,"summary":output}),
-        Err(err) => json!({"ok":false,"error":err.to_string()}),
+async fn openssl_check(host: &str, port: u16, starttls: Option<&str>) -> Value {
+    let connect = format!("{host}:{port}");
+    let mut args = vec![
+        "s_client".to_string(),
+        "-connect".to_string(),
+        connect,
+        "-servername".to_string(),
+        host.to_string(),
+        "-verify_return_error".to_string(),
+        "-brief".to_string(),
+    ];
+    if let Some(protocol) = starttls {
+        args.push("-starttls".to_string());
+        args.push(protocol.to_string());
+    }
+    let refs: Vec<&str> = args.iter().map(String::as_str).collect();
+    match command_output("openssl", &refs).await {
+        Ok(output) => json!({"ok":true,"endpoint":format!("{host}:{port}"),"summary":output}),
+        Err(err) => json!({"ok":false,"endpoint":format!("{host}:{port}"),"error":err.to_string()}),
     }
 }
 
@@ -135,31 +145,34 @@ async fn validate_domain_inner(domain: &str) -> Value {
 
     let (mail_a, webmail_dns, mx, spf, dkim_txt, dmarc_txt, smtp, imap, webmail_tls) = tokio::join!(
         dig("A", &mail),
-        dig("CNAME", &webmail),
+        dig("A", &webmail),
         dig("MX", domain),
         dig("TXT", domain),
         dig("TXT", &dkim),
         dig("TXT", &dmarc),
-        tcp_check(&mail, 587),
-        tcp_check(&mail, 993),
-        certificate_check(&webmail),
+        openssl_check(&mail, 587, Some("smtp")),
+        openssl_check(&mail, 993, None),
+        openssl_check(&webmail, 443, None),
     );
 
     let mx_ok = mx
         .get("value")
         .and_then(Value::as_str)
         .is_some_and(|value| value.trim_end_matches('.').contains(&mail));
-    let spf_ok = txt_contains(&spf, "v=spf1");
+    let spf_count = txt_prefix_count(&spf, "v=spf1");
+    let spf_ok = spf_count == 1;
     let dkim_ok = txt_contains(&dkim_txt, "p=");
-    let dmarc_ok = txt_contains(&dmarc_txt, "v=dmarc1");
+    let dmarc_ok = txt_prefix_count(&dmarc_txt, "v=dmarc1") == 1;
 
     let healthy = mail_a.get("ok").and_then(Value::as_bool).unwrap_or(false)
+        && webmail_dns.get("ok").and_then(Value::as_bool).unwrap_or(false)
         && mx_ok
         && spf_ok
         && dkim_ok
         && dmarc_ok
         && smtp.get("ok").and_then(Value::as_bool).unwrap_or(false)
-        && imap.get("ok").and_then(Value::as_bool).unwrap_or(false);
+        && imap.get("ok").and_then(Value::as_bool).unwrap_or(false)
+        && webmail_tls.get("ok").and_then(Value::as_bool).unwrap_or(false);
 
     json!({
         "domain": domain,
@@ -168,7 +181,7 @@ async fn validate_domain_inner(domain: &str) -> Value {
             "mail_a": mail_a,
             "webmail_tunnel_dns": webmail_dns,
             "mx": {"ok":mx_ok,"detail":mx},
-            "spf": {"ok":spf_ok,"detail":spf},
+            "spf": {"ok":spf_ok,"count":spf_count,"detail":spf},
             "dkim": {"ok":dkim_ok,"detail":dkim_txt},
             "dmarc": {"ok":dmarc_ok,"detail":dmarc_txt},
             "smtp_submission": smtp,
@@ -179,12 +192,16 @@ async fn validate_domain_inner(domain: &str) -> Value {
 }
 
 async fn append_audit(action: &str, domain: &str, outcome: &str) -> Result<(), Error> {
+    let safe_outcome = outcome
+        .replace('\n', " ")
+        .replace('\r', " ")
+        .replace('\t', " ");
     let line = format!(
         "{}\taction={}\tdomain={}\toutcome={}\n",
         proxmox_time::epoch_i64(),
         action,
         domain,
-        outcome.replace(['\n', '\r', '\t'], " ")
+        safe_outcome
     );
     let mut file = tokio::fs::OpenOptions::new()
         .create(true)
@@ -307,5 +324,13 @@ mod tests {
         let domains = inventory["domains"].as_array().unwrap();
         assert!(domains.iter().any(|domain| domain["name"] == "mundoleo.co"));
         assert!(domains.iter().any(|domain| domain["name"] == "kinpilot.app"));
+    }
+
+    #[test]
+    fn spf_duplicate_detection_requires_exactly_one_record() {
+        let one = json!({"value":"\"v=spf1 a mx ~all\"\n\"google-site-verification=x\""});
+        let two = json!({"value":"\"v=spf1 a mx ~all\"\n\"v=spf1 ip4:192.0.2.1 ~all\""});
+        assert_eq!(txt_prefix_count(&one, "v=spf1"), 1);
+        assert_eq!(txt_prefix_count(&two, "v=spf1"), 2);
     }
 }
