@@ -35,6 +35,7 @@ use crate::connection::{self, probe_tls_connection};
 use crate::remote_tasks;
 use crate::remote_updates::get_available_updates_for_remote;
 
+mod deploy;
 mod firewall;
 mod lxc;
 mod node;
@@ -69,6 +70,7 @@ const MAIN_ROUTER: Router = Router::new()
 
 #[sortable]
 const REMOTE_SUBDIRS: SubdirMap = &sorted!([
+    ("deploy", &deploy::ROUTER),
     ("lxc", &lxc::ROUTER),
     ("firewall", &firewall::CLUSTER_FW_ROUTER),
     ("nodes", &NODES_ROUTER),
