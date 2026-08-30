@@ -3,7 +3,7 @@ name: Domains & Hosting
 on:
   pull_request:
     paths:
-      - 'server/src/api/domains.rs'
+      - 'server/src/api/nexus/**'
       - 'server/src/api/mod.rs'
       - 'services/nexus-domains-helper'
       - 'services/Makefile'
@@ -17,7 +17,7 @@ on:
     branches:
       - master
     paths:
-      - 'server/src/api/domains.rs'
+      - 'server/src/api/nexus/**'
       - 'server/src/api/mod.rs'
       - 'services/nexus-domains-helper'
       - 'services/Makefile'
@@ -66,8 +66,8 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          grep -q 'forbid_webmail_ddns' server/src/api/domains.rs
-          grep -q 'forbid_mail_proxy' server/src/api/domains.rs
+          grep -q 'forbid_webmail_ddns' server/src/api/nexus/domains.rs
+          grep -q 'forbid_mail_proxy' server/src/api/nexus/domains.rs
           grep -q 'webmail hostname is still DDNS-managed' services/nexus-domains-helper
           if grep -Eq 'cf_upsert_single_dns .* A .*mail_host' services/nexus-domains-helper; then
             echo 'mail.* A records must remain DDNS-owned' >&2
@@ -78,7 +78,7 @@ jobs:
         run: cargo fmt --all -- --check
 
       - name: Test domains API unit tests
-        run: cargo test -p server api::domains::tests --lib
+        run: cargo test -p server api::nexus::domains::tests --lib
 
       - name: Check server compilation
         run: cargo check -p server
