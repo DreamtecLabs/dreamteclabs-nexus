@@ -5,6 +5,8 @@
 
 mod home;
 mod inventory;
+mod storage;
 
 pub use home::NexusHome;
 pub use inventory::NexusInventory;
+pub use storage::NexusStorage;
