@@ -7,12 +7,12 @@ on:
       - 'lib/**'
       - 'cli/**'
       - 'debian/**'
+      - 'ui/**'
       - 'Cargo.toml'
       - 'Cargo.lock'
       - 'Makefile'
       - 'defines.mk'
-      - 'tools/nexus/build-pdm-server-container.sh'
-      - 'tools/nexus/deploy-platform.sh'
+      - 'tools/nexus/**'
       - '.github/workflows/nexus-pdm.yml'
   push:
     branches:
@@ -22,12 +22,12 @@ on:
       - 'lib/**'
       - 'cli/**'
       - 'debian/**'
+      - 'ui/**'
       - 'Cargo.toml'
       - 'Cargo.lock'
       - 'Makefile'
       - 'defines.mk'
-      - 'tools/nexus/build-pdm-server-container.sh'
-      - 'tools/nexus/deploy-platform.sh'
+      - 'tools/nexus/**'
       - '.github/workflows/nexus-pdm.yml'
   workflow_dispatch:
 
@@ -119,7 +119,7 @@ jobs:
         if: steps.package_build.outcome == 'failure'
         run: exit 1
 
-      - name: Validate artifact provenance
+      - name: Validate server artifact provenance
         shell: bash
         run: |
           set -euo pipefail
@@ -137,5 +137,94 @@ jobs:
             artifacts-server/*.deb
             artifacts-server/SHA256SUMS
             artifacts-server/BUILD_COMMIT
+          if-no-files-found: error
+          retention-days: 30
+
+  ui:
+    name: Build PDM UI package
+    runs-on: self-hosted
+    timeout-minutes: 45
+    steps:
+      - name: Recover workspace ownership
+        shell: bash
+        run: |
+          set -euo pipefail
+          docker run --rm \
+            -e HOST_UID="$(id -u)" \
+            -e HOST_GID="$(id -g)" \
+            -v "$GITHUB_WORKSPACE:/workspace" \
+            debian:trixie \
+            sh -c 'chown -R "$HOST_UID:$HOST_GID" /workspace'
+
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          clean: true
+          fetch-depth: 2
+          submodules: recursive
+
+      - name: Install Rust stable
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          components: rustfmt
+
+      - name: Check UI formatting
+        run: cargo fmt --manifest-path ui/Cargo.toml --all -- --check
+
+      - name: Build UI package in Debian Trixie
+        id: package_build
+        continue-on-error: true
+        shell: bash
+        run: |
+          set -o pipefail
+          docker run --rm \
+            --memory=7g \
+            -e HOST_UID="$(id -u)" \
+            -e HOST_GID="$(id -g)" \
+            -v "$GITHUB_WORKSPACE:/workspace" \
+            -w /workspace \
+            debian:trixie \
+            bash tools/nexus/build-ui-container.sh 2>&1 | tee ui-build.log
+
+      - name: Publish UI build diagnostics
+        if: steps.package_build.outcome == 'failure' && github.event_name == 'pull_request'
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const fs = require('fs');
+            const log = fs.readFileSync('ui-build.log', 'utf8');
+            const lines = log.split(/\r?\n/);
+            const start = Math.max(0, lines.length - 140);
+            const excerpt = lines.slice(start).join('\n').slice(-50000);
+            const marker = '<!-- nexus-pdm-ui-build-diagnostics -->';
+            const body = `${marker}\n### Nexus PDM UI build diagnostics\n\nCommit: \`${context.sha}\`\n\n\`\`\`text\n${excerpt}\n\`\`\``;
+            const { data: comments } = await github.rest.issues.listComments({ owner: context.repo.owner, repo: context.repo.repo, issue_number: context.issue.number, per_page: 100 });
+            const existing = comments.find(comment => comment.body?.includes(marker));
+            if (existing) {
+              await github.rest.issues.updateComment({ owner: context.repo.owner, repo: context.repo.repo, comment_id: existing.id, body });
+            } else {
+              await github.rest.issues.createComment({ owner: context.repo.owner, repo: context.repo.repo, issue_number: context.issue.number, body });
+            }
+
+      - name: Fail when UI package build fails
+        if: steps.package_build.outcome == 'failure'
+        run: exit 1
+
+      - name: Validate UI artifact provenance
+        shell: bash
+        run: |
+          set -euo pipefail
+          test "$(cat artifacts/BUILD_COMMIT)" = "$GITHUB_SHA"
+          (cd artifacts && sha256sum --check SHA256SUMS)
+          dpkg-deb --info artifacts/proxmox-datacenter-manager-ui_*.deb >/dev/null
+
+      - name: Upload commit-addressed UI package
+        uses: actions/upload-artifact@v4
+        with:
+          name: nexus-pdm-ui-${{ github.sha }}
+          path: |
+            artifacts/*.deb
+            artifacts/SHA256SUMS
+            artifacts/BUILD_COMMIT
           if-no-files-found: error
           retention-days: 30
