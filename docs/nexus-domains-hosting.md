@@ -4,7 +4,7 @@
 
 `Domains & Hosting` is the Nexus operational control plane for DreamtecLabs domains that use Cloudflare DNS/Tunnel, the central residential-IP DDNS service, Hestia mail/webmail, and the DreamtecLabs SMTP relay.
 
-The first implementation deliberately keeps provider credentials server-side and separates read-only validation from privileged onboarding. It does not expose Cloudflare tokens, SSH keys, Hestia credentials, mailbox passwords, or SMTP credentials to the browser.
+The first production implementation keeps provider credentials server-side and separates read-only validation from privileged onboarding. It does not expose Cloudflare tokens, SSH keys, Hestia credentials, mailbox passwords, or SMTP credentials to the browser.
 
 ## Ownership model
 
@@ -36,15 +36,15 @@ When `/etc/proxmox-datacenter-manager/domains-hosting.json` does not yet exist, 
 - `dreamtec.com.br`
 - `claudiokaist.com`
 
-The bootstrap inventory is only an initial state. Create `/etc/proxmox-datacenter-manager/domains-hosting.json` to make inventory changes explicit and versionable through operations/change management.
+After a successful onboarding, Nexus atomically persists the domain and its managed mail/webmail/DDNS/Tunnel capabilities into `/etc/proxmox-datacenter-manager/domains-hosting.json`. Re-running onboarding updates the existing entry instead of creating a duplicate.
 
 ## API and privileges
 
-The backend registers `/api2/json/domains` through the existing PDM/Nexus API router.
+The backend registers `/api2/json/domains` through the existing PDM/Nexus API router. Nexus-owned server implementation lives under `server/src/api/nexus/`; only the minimal router wiring remains in `server/src/api/mod.rs`, preserving the upstream PDM boundary.
 
 - `GET /domains`: requires `PRIV_SYS_AUDIT`; returns inventory and policy only.
 - `POST /domains/validate`: requires `PRIV_SYS_AUDIT`; performs read-only live checks.
-- `POST /domains/onboard`: requires `PRIV_SYS_MODIFY`; invokes the privileged helper and then performs final validation.
+- `POST /domains/onboard`: requires `PRIV_SYS_MODIFY`; invokes the privileged helper, persists source-of-truth state, and performs final validation.
 
 Validation covers:
 
@@ -98,6 +98,8 @@ NEXUS_MAIL_RELAY_IPV4=23.254.215.34
 NEXUS_WEBMAIL_HTTP_ORIGIN=http://192.168.0.29:80
 NEXUS_WEBMAIL_HTTPS_ORIGIN=https://192.168.0.29:443
 NEXUS_DMARC_POLICY=p=none
+# Optional. Set only when a real aggregate-report mailbox exists.
+NEXUS_DMARC_RUA=dmarc-reports@example.com
 ```
 
 Do not commit the real environment file or its values to Git.
@@ -141,9 +143,10 @@ For a new mail-enabled domain the privileged helper performs this sequence:
 11. Upsert MX.
 12. Upsert only the TXT record beginning with `v=spf1`; unrelated TXT verification records are preserved.
 13. Read the DKIM public key from Hestia and publish it.
-14. Publish DMARC using the configured initial policy, default `p=none`.
+14. Publish DMARC using the configured initial policy, default `p=none`. An aggregate-report `rua` address is added only when `NEXUS_DMARC_RUA` is explicitly configured.
 15. Switch the Tunnel origin to `HTTPS -> 192.168.0.29:443` and set `No TLS Verify=true`.
-16. Run final DNS/TLS/mail validation and return the result to the UI.
+16. Persist the managed domain into the Nexus source-of-truth inventory.
+17. Run final DNS/TLS/mail validation and return the result to the UI.
 
 The helper refuses ambiguous/destructive DNS updates, including duplicate SPF records, duplicate managed TXT records, multiple same-type records where ownership is unclear, and an existing MX that points somewhere other than `mail.<domain>`.
 
@@ -167,6 +170,8 @@ If certificate issuance fails while webmail is temporarily routed to HTTP:
 
 If DNS publication fails after Hestia was created, rerun onboarding. The helper will reuse the existing Hestia domain/DKIM and only update the DNS records it owns.
 
+If provider onboarding succeeds but Nexus cannot persist its inventory, the endpoint records that partial outcome in the audit log and returns an error. Re-running the onboarding is safe: provider changes are idempotent and the inventory upsert will be retried.
+
 If a manual rollback is required, do not delete a domain from Hestia as a first step. Restore DNS/Tunnel ownership first, verify mail delivery, and perform destructive deletion only as a separate reviewed change. The Nexus onboarding endpoint itself does not delete domains, mailboxes, Tunnel routes, or DNS records.
 
 ## Security guarantees
@@ -182,8 +187,12 @@ If a manual rollback is required, do not delete a domain from Hestia as a first 
 - The DDNS-managed mail A record remains owned by the central DDNS process.
 - Conflicting DNS states fail closed instead of being silently deleted/replaced.
 
+## CI boundaries
+
+The existing Nexus UI workflow continues to reject PDM engine changes. The explicit exception is limited to `server/src/api/nexus/**` plus the router wiring in `server/src/api/mod.rs`; the workflow verifies that wiring points at the Nexus domains router. The dedicated `Domains & Hosting` workflow checks helper syntax, hostname ownership guards, Rust formatting, domain unit tests, and server compilation. Both workflows use concurrency groups so superseded PR runs do not consume self-hosted runners unnecessarily.
+
 ## Scope of this delivery and extension seam
 
-This delivery establishes the real Nexus module, source-of-truth model, live health validation, audit trail, secure provider execution seam, and the full mail/webmail onboarding path used by the current infrastructure.
+This delivery establishes the real Nexus module, source-of-truth model and persistence, live health validation, audit trail, secure provider execution seam, and the full mail/webmail onboarding path used by the current infrastructure.
 
-The same backend boundary is intended for the next provider operations without putting provider logic into Yew/browser code: website/domain lifecycle in Hestia, mailbox CRUD/quota, Cloudflare DNS record CRUD, internal DNS adapters, tunnel inventory, certificate-expiry scheduling, and alert fan-out. Destructive operations should remain separate endpoints with explicit confirmation rather than being added to the onboarding helper.
+The backend seam is intentionally ready for subsequent provider-management surfaces without putting provider logic into Yew/browser code: website/domain lifecycle in Hestia, mailbox CRUD/quota, general Cloudflare DNS record CRUD, internal DNS adapters, tunnel inventory, certificate-expiry scheduling, and alert fan-out. Destructive operations should remain separate endpoints with explicit confirmation rather than being added to the onboarding helper.
