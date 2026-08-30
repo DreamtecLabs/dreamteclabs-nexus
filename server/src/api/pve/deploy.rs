@@ -266,7 +266,9 @@ pub async fn create_lxc(
         net0: format!("name=eth0,bridge={},ip=dhcp", bridge.trim()),
         unprivileged: true,
         start,
-        password: password.filter(|value| !value.is_empty()),
+        password: password
+            .filter(|value| !value.trim().is_empty())
+            .map(|value| value.trim().to_string()),
     };
 
     let path = format!("/api2/extjs/nodes/{node}/lxc");
