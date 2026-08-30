@@ -63,18 +63,18 @@ pub fn nexus_domains() -> Html {
             let busy_domain = busy_domain.clone();
             busy_domain.set(Some(domain.clone()));
             spawn_local(async move {
-                let result: Result<Value, _> = http_post(
-                    "/domains/validate",
-                    Some(json!({"domain": domain.clone()})),
-                )
-                .await;
+                let result: Result<Value, _> =
+                    http_post("/domains/validate", Some(json!({"domain": domain.clone()}))).await;
                 let mut next = (*validations).clone();
                 match result {
                     Ok(value) => {
                         next.insert(domain.clone(), value);
                     }
                     Err(err) => {
-                        next.insert(domain.clone(), json!({"healthy":false,"error":err.to_string()}));
+                        next.insert(
+                            domain.clone(),
+                            json!({"healthy":false,"error":err.to_string()}),
+                        );
                     }
                 }
                 validations.set(next);
@@ -110,7 +110,9 @@ pub fn nexus_domains() -> Html {
     let domain_input = {
         let onboard_domain = onboard_domain.clone();
         Callback::from(move |event: InputEvent| {
-            let input = event.target().and_then(|target| target.dyn_into::<HtmlInputElement>().ok());
+            let input = event
+                .target()
+                .and_then(|target| target.dyn_into::<HtmlInputElement>().ok());
             if let Some(input) = input {
                 onboard_domain.set(input.value());
             }
@@ -120,7 +122,9 @@ pub fn nexus_domains() -> Html {
     let user_input = {
         let hestia_user = hestia_user.clone();
         Callback::from(move |event: InputEvent| {
-            let input = event.target().and_then(|target| target.dyn_into::<HtmlInputElement>().ok());
+            let input = event
+                .target()
+                .and_then(|target| target.dyn_into::<HtmlInputElement>().ok());
             if let Some(input) = input {
                 hestia_user.set(input.value());
             }
