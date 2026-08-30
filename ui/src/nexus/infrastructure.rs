@@ -1,10 +1,10 @@
 use std::collections::{BTreeMap, BTreeSet};
 
 use futures::future::join_all;
-use pdm_api_types::resource::{RemoteResources, Resource};
 use pdm_api_types::RemoteUpid;
+use pdm_api_types::resource::{RemoteResources, Resource};
 use proxmox_yew_comp::{http_get, http_post};
-use serde_json::{json, Value};
+use serde_json::{Value, json};
 use wasm_bindgen_futures::spawn_local;
 use web_sys::{HtmlInputElement, HtmlSelectElement};
 use yew::prelude::*;
@@ -43,7 +43,9 @@ fn discover_targets(resources: &[RemoteResources]) -> (Vec<PveTarget>, Vec<Stora
                 Resource::PveNode(node) => {
                     targets.insert((remote.remote.clone(), node.node.clone()));
                 }
-                Resource::PveStorage(storage) if storage.status.eq_ignore_ascii_case("available") => {
+                Resource::PveStorage(storage)
+                    if storage.status.eq_ignore_ascii_case("available") =>
+                {
                     let key = (
                         remote.remote.clone(),
                         storage.node.clone(),
@@ -205,10 +207,8 @@ pub fn nexus_infrastructure() -> Html {
         .map(|resources| discover_targets(resources))
         .unwrap_or_default();
 
-    let selected_remote = selected_or_first(
-        &remote,
-        targets.iter().map(|target| target.remote.clone()),
-    );
+    let selected_remote =
+        selected_or_first(&remote, targets.iter().map(|target| target.remote.clone()));
     let selected_node = selected_or_first(
         &node,
         targets
@@ -242,9 +242,9 @@ pub fn nexus_infrastructure() -> Html {
                 let next: Result<u32, _> = http_get(&url, None).await;
                 match next {
                     Ok(next) => vmid.set(next.to_string()),
-                    Err(err) => result.set(Some(Err(format!(
-                        "Unable to reserve the next VMID: {err}"
-                    )))),
+                    Err(err) => {
+                        result.set(Some(Err(format!("Unable to reserve the next VMID: {err}"))))
+                    }
                 }
             });
         })
@@ -292,12 +292,10 @@ pub fn nexus_infrastructure() -> Html {
                 }
             };
 
-            if selected_remote.is_empty()
-                || selected_node.is_empty()
-                || selected_storage.is_empty()
+            if selected_remote.is_empty() || selected_node.is_empty() || selected_storage.is_empty()
             {
                 result.set(Some(Err(
-                    "Remote, node and storage are required.".to_string()
+                    "Remote, node and storage are required.".to_string(),
                 )));
                 return;
             }
@@ -311,7 +309,7 @@ pub fn nexus_infrastructure() -> Html {
             }
             if workload == "lxc" && source.trim().is_empty() {
                 result.set(Some(Err(
-                    "An LXC OS template volume is required.".to_string()
+                    "An LXC OS template volume is required.".to_string(),
                 )));
                 return;
             }
