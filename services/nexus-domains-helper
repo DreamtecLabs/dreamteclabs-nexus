@@ -18,6 +18,7 @@ MAIL_RELAY_IPV4="${NEXUS_MAIL_RELAY_IPV4:-23.254.215.34}"
 WEBMAIL_HTTP_ORIGIN="${NEXUS_WEBMAIL_HTTP_ORIGIN:-http://192.168.0.29:80}"
 WEBMAIL_HTTPS_ORIGIN="${NEXUS_WEBMAIL_HTTPS_ORIGIN:-https://192.168.0.29:443}"
 DMARC_POLICY="${NEXUS_DMARC_POLICY:-p=none}"
+DMARC_RUA="${NEXUS_DMARC_RUA:-}"
 
 require_cmd() {
     command -v "$1" >/dev/null 2>&1 || {
@@ -220,7 +221,7 @@ onboard() {
     local domain="$1" hestia_user="$2"
     validate_domain "$domain"
 
-    local mail_host="mail.${domain}" webmail_host="webmail.${domain}" zone_id public_ip dkim_value
+    local mail_host="mail.${domain}" webmail_host="webmail.${domain}" zone_id public_ip dkim_value dmarc_value
     local tunnel_id="${NEXUS_CF_TUNNEL_ID:-}" steps='[]'
     [[ -n "$tunnel_id" ]] || { echo "NEXUS_CF_TUNNEL_ID is required" >&2; exit 3; }
     local tunnel_target="${tunnel_id}.cfargotunnel.com"
@@ -245,7 +246,12 @@ onboard() {
 
     dkim_value="$(hestia_dkim_value "$hestia_user" "$domain")"
     cf_upsert_txt_prefix "$zone_id" "mail._domainkey.${domain}" "v=DKIM1" "$dkim_value"
-    cf_upsert_txt_prefix "$zone_id" "_dmarc.${domain}" "v=DMARC1" "v=DMARC1; ${DMARC_POLICY}; rua=mailto:postmaster@${domain}; adkim=r; aspf=r"
+
+    dmarc_value="v=DMARC1; ${DMARC_POLICY}; adkim=r; aspf=r"
+    if [[ -n "$DMARC_RUA" ]]; then
+        dmarc_value="${dmarc_value}; rua=mailto:${DMARC_RUA#mailto:}"
+    fi
+    cf_upsert_txt_prefix "$zone_id" "_dmarc.${domain}" "v=DMARC1" "$dmarc_value"
     steps="$(jq -c '. + ["cloudflare:mx","cloudflare:spf","cloudflare:dkim","cloudflare:dmarc"]' <<<"$steps")"
 
     cf_upsert_tunnel_ingress "$webmail_host" "$WEBMAIL_HTTPS_ORIGIN" true
