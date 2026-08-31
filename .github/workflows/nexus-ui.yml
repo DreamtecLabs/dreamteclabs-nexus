@@ -6,14 +6,9 @@ on:
       - 'ui/**'
       - 'server/src/api/nexus/**'
       - 'server/src/api/mod.rs'
-      - 'services/nexus-domains-helper'
-      - 'services/Makefile'
-      - 'debian/proxmox-datacenter-manager.install'
       - 'tools/nexus/**'
       - 'docs/nexus-frontend-architecture.md'
-      - 'docs/nexus-domains-hosting.md'
       - '.github/workflows/nexus-ui.yml'
-      - '.github/workflows/domains-hosting.yml'
   push:
     branches:
       - master
@@ -21,14 +16,9 @@ on:
       - 'ui/**'
       - 'server/src/api/nexus/**'
       - 'server/src/api/mod.rs'
-      - 'services/nexus-domains-helper'
-      - 'services/Makefile'
-      - 'debian/proxmox-datacenter-manager.install'
       - 'tools/nexus/**'
       - 'docs/nexus-frontend-architecture.md'
-      - 'docs/nexus-domains-hosting.md'
       - '.github/workflows/nexus-ui.yml'
-      - '.github/workflows/domains-hosting.yml'
   workflow_dispatch:
 
 concurrency:
@@ -43,10 +33,9 @@ permissions:
 jobs:
   boundary:
     runs-on: self-hosted
-    timeout-minutes: 10
+    timeout-minutes: 30
     outputs:
       ui_changed: ${{ steps.changes.outputs.ui_changed }}
-      domains_changed: ${{ steps.changes.outputs.domains_changed }}
     steps:
       - name: Recover workspace ownership
         shell: bash
@@ -63,8 +52,9 @@ jobs:
         uses: actions/checkout@v4
         with:
           fetch-depth: 2
+          submodules: recursive
 
-      - name: Detect Nexus changes
+      - name: Detect UI changes
         id: changes
         shell: bash
         run: |
@@ -78,11 +68,6 @@ jobs:
             echo 'ui_changed=true' >> "$GITHUB_OUTPUT"
           else
             echo 'ui_changed=false' >> "$GITHUB_OUTPUT"
-          fi
-          if printf '%s\n' "$changed" | grep -Eq '^(server/src/api/nexus/|server/src/api/mod.rs$|services/nexus-domains-helper$|services/Makefile$|debian/proxmox-datacenter-manager.install$|docs/nexus-domains-hosting.md$|\.github/workflows/domains-hosting.yml$)'; then
-            echo 'domains_changed=true' >> "$GITHUB_OUTPUT"
-          else
-            echo 'domains_changed=false' >> "$GITHUB_OUTPUT"
           fi
 
       - name: Install Rust stable
@@ -99,6 +84,7 @@ jobs:
           bash -n tools/nexus/build-ui-ci.sh
           bash -n tools/nexus/build-ui-container.sh
           bash -n tools/nexus/deploy-ui.sh
+          bash -n tools/nexus/validate-domains-ci.sh
 
       - name: Enforce Nexus ownership boundary
         shell: bash
@@ -142,66 +128,9 @@ jobs:
           grep -q 'NexusHome' ui/src/main_menu.rs
           grep -q 'NexusInventory' ui/src/main_menu.rs
 
-  domains:
-    name: Validate Domains & Hosting backend
-    needs: boundary
-    if: needs.boundary.outputs.domains_changed == 'true'
-    runs-on: self-hosted
-    timeout-minutes: 30
-    env:
-      CARGO_HOME: ${{ runner.temp }}/nexus-domains-cargo
-    steps:
-      - name: Recover workspace ownership
+      - name: Validate Domains & Hosting backend
         shell: bash
-        run: |
-          set -euo pipefail
-          docker run --rm \
-            -e HOST_UID="$(id -u)" \
-            -e HOST_GID="$(id -g)" \
-            -v "$GITHUB_WORKSPACE:/workspace" \
-            debian:trixie \
-            sh -c 'chown -R "$HOST_UID:$HOST_GID" /workspace'
-
-      - name: Checkout
-        uses: actions/checkout@v4
-        with:
-          fetch-depth: 2
-          submodules: recursive
-
-      - name: Use normal Cargo registry in CI
-        shell: bash
-        run: |
-          set -euo pipefail
-          if [[ -f .cargo/config.toml ]]; then
-            mv .cargo/config.toml .cargo/config.toml.debian-package-build
-          fi
-
-      - name: Install Rust stable
-        uses: dtolnay/rust-toolchain@stable
-        with:
-          components: rustfmt
-
-      - name: Check domains helper syntax and ownership guards
-        shell: bash
-        run: |
-          set -euo pipefail
-          bash -n services/nexus-domains-helper
-          grep -q 'forbid_webmail_ddns' server/src/api/nexus/domains.rs
-          grep -q 'forbid_mail_proxy' server/src/api/nexus/domains.rs
-          grep -q 'webmail hostname is still DDNS-managed' services/nexus-domains-helper
-          if grep -Eq 'cf_upsert_single_dns .* A .*mail_host' services/nexus-domains-helper; then
-            echo 'mail.* A records must remain DDNS-owned' >&2
-            exit 1
-          fi
-
-      - name: Check Rust formatting
-        run: cargo fmt --all -- --check
-
-      - name: Test domains API unit tests
-        run: cargo test -p server api::nexus::domains::tests --lib
-
-      - name: Check server compilation
-        run: cargo check -p server
+        run: bash tools/nexus/validate-domains-ci.sh
 
   package:
     name: Build PDM UI package
