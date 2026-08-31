@@ -193,6 +193,12 @@ hestia_has_mail_domain() {
     ssh "${SSH_OPTS[@]}" "$HESTIA_SSH_HOST" "$HESTIA_BIN/v-list-mail-domain '$user' '$domain' json >/dev/null 2>&1"
 }
 
+hestia_has_webmail() {
+    local user="$1" domain="$2" output
+    output="$(ssh "${SSH_OPTS[@]}" "$HESTIA_SSH_HOST" "$HESTIA_BIN/v-list-mail-domain '$user' '$domain' json")" || return 1
+    jq -e --arg domain "$domain" '.[$domain].WEBMAIL == "roundcube"' >/dev/null <<<"$output"
+}
+
 hestia_has_dkim() {
     local user="$1" domain="$2"
     ssh "${SSH_OPTS[@]}" "$HESTIA_SSH_HOST" "$HESTIA_BIN/v-list-mail-domain-dkim-dns '$user' '$domain' plain >/dev/null 2>&1"
@@ -202,6 +208,8 @@ hestia_ensure_mail_domain() {
     local user="$1" domain="$2"
     if ! hestia_has_mail_domain "$user" "$domain"; then
         ssh "${SSH_OPTS[@]}" "$HESTIA_SSH_HOST" "$HESTIA_BIN/v-add-mail-domain '$user' '$domain'"
+    fi
+    if ! hestia_has_webmail "$user" "$domain"; then
         ssh "${SSH_OPTS[@]}" "$HESTIA_SSH_HOST" "$HESTIA_BIN/v-add-mail-domain-webmail '$user' '$domain' roundcube"
     fi
     if ! hestia_has_dkim "$user" "$domain"; then
