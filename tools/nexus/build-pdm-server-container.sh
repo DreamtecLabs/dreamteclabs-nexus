@@ -31,6 +31,8 @@ EOF
 apt-get update
 export DEB_BUILD_PROFILES=nodoc
 mk-build-deps \
+  --build-dep \
+  --build-profiles nodoc \
   --install \
   --remove \
   --tool 'apt-get -y --no-install-recommends' \
@@ -46,13 +48,8 @@ export MAKEFLAGS=-j1
 rm -rf artifacts-server
 mkdir -p artifacts-server
 
-# Build only architecture-dependent packages. This compiles the real PDM API
-# and avoids producing the documentation package in the CI container.
 dpkg-buildpackage -B -Pnodoc -uc -us
 
-# dpkg-buildpackage writes binary packages next to the source directory. Since
-# /workspace is bind-mounted as the source tree, its parent inside the build
-# container is /. Select the server package explicitly and reject ambiguity.
 shopt -s nullglob
 candidates=(/proxmox-datacenter-manager_*_*.deb)
 server_packages=()
