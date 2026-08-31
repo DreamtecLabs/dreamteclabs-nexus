@@ -32,7 +32,7 @@ permissions:
 
 jobs:
   boundary:
-    runs-on: self-hosted
+    runs-on: ubuntu-24.04
     timeout-minutes: 30
     outputs:
       ui_changed: ${{ steps.changes.outputs.ui_changed }}
@@ -136,7 +136,7 @@ jobs:
     name: Build PDM UI package
     needs: boundary
     if: needs.boundary.outputs.ui_changed == 'true'
-    runs-on: self-hosted
+    runs-on: ubuntu-24.04
     timeout-minutes: 45
     steps:
       - name: Recover workspace ownership
