@@ -44,7 +44,7 @@ permissions:
 
 jobs:
   validate:
-    runs-on: self-hosted
+    runs-on: ubuntu-24.04
     timeout-minutes: 45
     steps:
       - name: Recover workspace ownership
