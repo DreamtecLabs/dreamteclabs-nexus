@@ -9,6 +9,7 @@ on:
       - 'services/Makefile'
       - 'debian/proxmox-datacenter-manager.install'
       - 'docs/nexus-domains-hosting.md'
+      - 'tools/nexus/validate-domains-ci.sh'
       - 'ui/src/nexus/domains.rs'
       - 'ui/src/nexus/mod.rs'
       - 'ui/src/main_menu.rs'
@@ -23,6 +24,7 @@ on:
       - 'services/Makefile'
       - 'debian/proxmox-datacenter-manager.install'
       - 'docs/nexus-domains-hosting.md'
+      - 'tools/nexus/validate-domains-ci.sh'
       - 'ui/src/nexus/domains.rs'
       - 'ui/src/nexus/mod.rs'
       - 'ui/src/main_menu.rs'
@@ -40,11 +42,6 @@ jobs:
   validate:
     runs-on: self-hosted
     timeout-minutes: 30
-    env:
-      # Do not inherit a host-level Cargo source replacement from the self-hosted
-      # runner. CI resolves dependencies from crates.io instead of Debian's
-      # package-build-only /usr/share/cargo/registry directory source.
-      CARGO_HOME: ${{ runner.temp }}/nexus-domains-cargo
     steps:
       - name: Recover workspace ownership
         shell: bash
@@ -63,39 +60,11 @@ jobs:
           fetch-depth: 2
           submodules: recursive
 
-      - name: Use normal Cargo registry in CI
-        shell: bash
-        run: |
-          set -euo pipefail
-          if [[ -f .cargo/config.toml ]]; then
-            mv .cargo/config.toml .cargo/config.toml.debian-package-build
-          fi
-
       - name: Install Rust stable
         uses: dtolnay/rust-toolchain@stable
         with:
           components: rustfmt
 
-      - name: Check helper syntax
-        run: bash -n services/nexus-domains-helper
-
-      - name: Enforce hostname ownership guards
+      - name: Validate Domains & Hosting
         shell: bash
-        run: |
-          set -euo pipefail
-          grep -q 'forbid_webmail_ddns' server/src/api/nexus/domains.rs
-          grep -q 'forbid_mail_proxy' server/src/api/nexus/domains.rs
-          grep -q 'webmail hostname is still DDNS-managed' services/nexus-domains-helper
-          if grep -Eq 'cf_upsert_single_dns .* A .*mail_host' services/nexus-domains-helper; then
-            echo 'mail.* A records must remain DDNS-owned' >&2
-            exit 1
-          fi
-
-      - name: Check Rust formatting
-        run: cargo fmt --all -- --check
-
-      - name: Test domains API unit tests
-        run: cargo test -p server api::nexus::domains::tests --lib
-
-      - name: Check server compilation
-        run: cargo check -p server
+        run: bash tools/nexus/validate-domains-ci.sh
