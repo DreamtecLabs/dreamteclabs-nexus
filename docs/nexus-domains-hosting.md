@@ -191,6 +191,8 @@ If a manual rollback is required, do not delete a domain from Hestia as a first 
 
 The existing Nexus UI workflow continues to reject PDM engine changes. The explicit exception is limited to `server/src/api/nexus/**` plus the router wiring in `server/src/api/mod.rs`; the workflow verifies that wiring points at the Nexus domains router. The dedicated `Domains & Hosting` workflow checks helper syntax, hostname ownership guards, Rust formatting, domain unit tests, and server compilation. Both workflows use concurrency groups so superseded PR runs do not consume self-hosted runners unnecessarily.
 
+The repository's `.cargo/config.toml` intentionally points normal Debian package builds at `/usr/share/cargo/registry`. The dedicated GitHub Actions job runs with an isolated `CARGO_HOME` and temporarily moves that project config out of Cargo's lookup path, so CI resolves the same locked dependency graph from crates.io instead of depending on a host-specific Debian registry directory.
+
 ## Scope of this delivery and extension seam
 
 This delivery establishes the real Nexus module, source-of-truth model and persistence, live health validation, audit trail, secure provider execution seam, and the full mail/webmail onboarding path used by the current infrastructure.
