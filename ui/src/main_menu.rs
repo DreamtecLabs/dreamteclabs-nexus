@@ -28,7 +28,7 @@ use crate::{
 
 #[path = "nexus/mod.rs"]
 mod nexus;
-use nexus::{NexusHome, NexusInventory, NexusStorage};
+use nexus::{NexusDeployments, NexusHome, NexusInfrastructure, NexusInventory, NexusStorage};
 
 use pwt_macros::builder;
 
@@ -184,6 +184,22 @@ impl Component for PdmMainMenu {
         register_view(
             &mut infrastructure,
             &mut content,
+            "Deploy workload",
+            "infrastructure-deploy",
+            Some("fa fa-plus-square-o"),
+            |_| html! { <NexusInfrastructure/> },
+        );
+        register_view(
+            &mut infrastructure,
+            &mut content,
+            "Deployments",
+            "infrastructure-deployments",
+            Some("fa fa-tasks"),
+            |_| html! { <NexusDeployments/> },
+        );
+        register_view(
+            &mut infrastructure,
+            &mut content,
             "All remotes",
             "remotes",
             Some("fa fa-server"),
@@ -224,13 +240,7 @@ impl Component for PdmMainMenu {
             } else {
                 "fa fa-server"
             }),
-            |_| {
-                Container::new()
-                    .class("pwt-content-spacer")
-                    .class(pwt::css::FlexFit)
-                    .with_child(html! {<RemotesPanel/>})
-                    .into()
-            },
+            |_| html! { <NexusInfrastructure/> },
             infrastructure,
         );
 
