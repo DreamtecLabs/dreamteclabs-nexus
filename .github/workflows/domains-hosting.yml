@@ -49,12 +49,19 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
+          # A prior attempt's "Test and compile" container can be left running
+          # (e.g. cancelled by this workflow's own concurrency group) and keep
+          # writing root-owned files into the bind-mounted workspace after the
+          # job that started it is gone. Stop any such stragglers first, then
+          # delete the workspace contents outright instead of chowning them:
+          # checkout re-clones from scratch either way, so there is nothing to
+          # preserve, and deletion as root sidesteps every edge case a
+          # recursive chown can trip on (partial writes, temp dirs mid-rename).
+          docker ps -q --filter ancestor=debian:trixie | xargs -r docker kill
           docker run --rm \
-            -e HOST_UID="$(id -u)" \
-            -e HOST_GID="$(id -g)" \
             -v "$GITHUB_WORKSPACE:/workspace" \
             debian:trixie \
-            sh -c 'chown -R "$HOST_UID:$HOST_GID" /workspace'
+            find /workspace -mindepth 1 -delete
 
       - name: Checkout
         uses: actions/checkout@v4

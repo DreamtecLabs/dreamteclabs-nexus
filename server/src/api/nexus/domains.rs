@@ -358,7 +358,10 @@ pub fn get_inventory() -> Result<Value, Error> {
 #[api(
     input: {
         properties: {
-            domain: { type: String },
+            domain: {
+                type: String,
+                description: "Fully qualified domain name to validate.",
+            },
         },
     },
     access: {
@@ -386,9 +389,13 @@ pub async fn validate_domain(domain: String) -> Result<Value, Error> {
 #[api(
     input: {
         properties: {
-            domain: { type: String },
+            domain: {
+                type: String,
+                description: "Fully qualified domain name to onboard.",
+            },
             hestia_user: {
                 type: String,
+                description: "Hestia system user that owns the mail domain.",
                 optional: true,
             },
         },
