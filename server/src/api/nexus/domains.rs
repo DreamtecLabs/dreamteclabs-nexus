@@ -107,9 +107,9 @@ fn validate_hestia_user(user: &str) -> Result<(), Error> {
     }
     let bytes = user.as_bytes();
     if !bytes.first().is_some_and(u8::is_ascii_alphanumeric)
-        || !bytes.iter().all(|byte| {
-            byte.is_ascii_alphanumeric() || matches!(*byte, b'.' | b'_' | b'-')
-        })
+        || !bytes
+            .iter()
+            .all(|byte| byte.is_ascii_alphanumeric() || matches!(*byte, b'.' | b'_' | b'-'))
     {
         bail!("invalid Hestia user");
     }
