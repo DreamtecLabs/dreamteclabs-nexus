@@ -133,50 +133,28 @@ pub fn nexus_domains() -> Html {
 
     html! {
         <div class="nexus-domains">
-            <style>{DOMAINS_CSS}</style>
-            <header class="nexus-domains-head">
+            <section class="nexus-domains-hero">
                 <div>
-                    <span class="nexus-domains-eyebrow">{"DreamtecLabs operations"}</span>
-                    <h1>{"Domains & Hosting"}</h1>
-                    <p>{"One operational view for Cloudflare DNS/Tunnel, central DDNS, Hestia mail/webmail and delivery health."}</p>
+                    <span class="nexus-eyebrow">{"Nexus · Domains & Hosting"}</span>
+                    <h1>{"One control plane for DNS, mail and webmail."}</h1>
+                    <p>{"Nexus keeps mail records DDNS-owned and DNS-only, while webmail remains Cloudflare Tunnel-owned. Live checks make the operational state explicit before changes are made."}</p>
                 </div>
-                <div class="nexus-domains-policy">
-                    <span><i class="fa fa-shield"></i>{" mail.* / smtp.* always DNS only"}</span>
-                    <span><i class="fa fa-random"></i>{" webmail.* always Tunnel-managed"}</span>
+                <div class="nexus-domain-policy-card">
+                    <span>{"Ownership policy"}</span>
+                    <strong>{"Fail closed"}</strong>
+                    <small>{"Conflicting MX/TXT records or DDNS-managed webmail stop onboarding instead of being overwritten."}</small>
                 </div>
-            </header>
-
-            <section class="nexus-domain-onboarding">
-                <div class="nexus-domain-onboarding-copy">
-                    <span class="nexus-domains-eyebrow">{"Idempotent workflow"}</span>
-                    <h2>{"Onboard a domain"}</h2>
-                    <p>{"DDNS mail record → Tunnel HTTP/80 → Hestia mail + DKIM + Roundcube → Let's Encrypt → MX/SPF/DKIM/DMARC → Tunnel HTTPS/443 with No TLS Verify → health validation."}</p>
-                </div>
-                <div class="nexus-domain-onboarding-form">
-                    <label>{"Domain"}<input type="text" placeholder="example.com" value={(*onboard_domain).clone()} oninput={domain_input}/></label>
-                    <label>{"Hestia owner"}<input type="text" value={(*hestia_user).clone()} oninput={user_input}/></label>
-                    <button onclick={run_onboarding}><i class="fa fa-magic"></i>{" Run onboarding"}</button>
-                </div>
-                {match onboarding.as_ref() {
-                    Some(Ok(value)) => html! {
-                        <div class="nexus-domain-result ok">
-                            <strong><i class="fa fa-check-circle"></i>{" Onboarding completed"}</strong>
-                            <span>{format!("{} steps executed; final health: {}", value["result"]["steps"].as_array().map(Vec::len).unwrap_or(0), if value["validation"]["healthy"].as_bool().unwrap_or(false) { "healthy" } else { "needs attention" })}</span>
-                        </div>
-                    },
-                    Some(Err(err)) => html! { <div class="nexus-domain-result bad"><strong><i class="fa fa-exclamation-triangle"></i>{" Onboarding failed"}</strong><span>{err}</span></div> },
-                    None => Html::default(),
-                }}
             </section>
 
-            {match inventory.as_ref() {
-                None => html! { <div class="nexus-domains-loading"><i class="fa fa-refresh fa-spin"></i>{" Loading domain inventory…"}</div> },
-                Some(Err(err)) => html! { <div class="nexus-domain-result bad"><strong>{"Inventory unavailable"}</strong><span>{err}</span></div> },
-                Some(Ok(data)) => {
-                    let domains = data.get("domains").and_then(Value::as_array).cloned().unwrap_or_default();
-                    html! {
-                        <>
-                            <div class="nexus-domain-kpis">
+            {
+                match inventory.as_ref() {
+                    None => html! { <div class="nexus-domain-state"><i class="fa fa-circle-o-notch fa-spin"></i>{"Loading domain inventory…"}</div> },
+                    Some(Err(err)) => html! { <div class="nexus-domain-state error"><i class="fa fa-exclamation-triangle"></i>{format!("Unable to load inventory: {err}")}</div> },
+                    Some(Ok(data)) => {
+                        let domains = data.get("domains").and_then(Value::as_array).cloned().unwrap_or_default();
+                        html! {
+                            <>
+                            <div class="nexus-domain-summary-grid">
                                 <div><span>{"Managed domains"}</span><strong>{domains.len()}</strong><small>{"Nexus source of truth"}</small></div>
                                 <div><span>{"Mail relay"}</span><strong>{data["defaults"]["relay_hostname"].as_str().unwrap_or("—")}</strong><small>{data["defaults"]["relay_ipv4"].as_str().unwrap_or("—")}</small></div>
                                 <div><span>{"Hestia"}</span><strong>{data["defaults"]["hestia_host"].as_str().unwrap_or("—")}</strong><small>{"Exim · Dovecot · Roundcube"}</small></div>
@@ -189,7 +167,7 @@ pub fn nexus_domains() -> Html {
                                     {for domains.into_iter().map(|domain| {
                                         let name = domain.get("name").and_then(Value::as_str).unwrap_or("unknown").to_string();
                                         let result = validations.get(&name);
-                                        let is_busy = busy_domain.as_ref().as_ref() == Some(&name);
+                                        let is_busy = (*busy_domain).as_ref() == Some(&name);
                                         let callback = {
                                             let validate_domain = validate_domain.clone();
                                             let name = name.clone();
@@ -204,29 +182,52 @@ pub fn nexus_domains() -> Html {
                                                     {status_badge(bool_value(&domain, "ddns"), "DDNS")}
                                                     {status_badge(bool_value(&domain, "tunnel"), "Tunnel")}
                                                 </span>
-                                                <span class="nexus-domain-health">
-                                                    {check_badge(result, "mail_a", "A")}
+                                                <span class="nexus-domain-checks">
+                                                    {check_badge(result, "mail-a", "A")}
                                                     {check_badge(result, "mx", "MX")}
                                                     {check_badge(result, "spf", "SPF")}
                                                     {check_badge(result, "dkim", "DKIM")}
                                                     {check_badge(result, "dmarc", "DMARC")}
-                                                    {check_badge(result, "smtp_submission", "SMTP")}
-                                                    {check_badge(result, "webmail_tls", "TLS")}
+                                                    {check_badge(result, "smtp-starttls", "SMTP")}
+                                                    {check_badge(result, "imap-tls", "IMAP")}
+                                                    {check_badge(result, "webmail-tls", "Webmail")}
                                                 </span>
-                                                <span><button class="nexus-domain-validate" onclick={callback} disabled={is_busy}>{if is_busy { html!{<><i class="fa fa-refresh fa-spin"></i>{" Checking"}</>} } else { html!{<><i class="fa fa-heartbeat"></i>{" Validate"}</>} }}</button></span>
+                                                <span><button class="nexus-domain-action" onclick={callback} disabled={is_busy}>{if is_busy { "Checking…" } else { "Validate" }}</button></span>
                                             </div>
                                         }
                                     })}
                                 </div>
                             </section>
-                        </>
+                            </>
+                        }
                     }
-                },
-            }}
+                }
+            }
+
+            <section class="nexus-domain-ownership">
+                <div class="nexus-domain-section-title"><div><h2>{"Ownership model"}</h2><p>{"Automation is explicit about which system owns each hostname."}</p></div></div>
+                <div class="nexus-domain-ownership-grid">
+                    <article><i class="fa fa-refresh"></i><span>{"Central DDNS"}</span><strong>{"mail.domain"}</strong><p>{"Dynamic public A record. Always DNS-only. Nexus never writes this A record through Cloudflare API."}</p></article>
+                    <article><i class="fa fa-cloud"></i><span>{"Cloudflare Tunnel"}</span><strong>{"webmail.domain"}</strong><p>{"Proxied Tunnel route. Never placed in the DDNS records file."}</p></article>
+                    <article><i class="fa fa-envelope"></i><span>{"Hestia"}</span><strong>{"Mail services"}</strong><p>{"Exim, Dovecot, Roundcube, DKIM and certificate lifecycle stay on the Hestia host."}</p></article>
+                </div>
+            </section>
+
+            <section class="nexus-domain-onboarding">
+                <div class="nexus-domain-section-title"><div><h2>{"Onboard mail domain"}</h2><p>{"Privileged and idempotent. Existing conflicting ownership is refused instead of silently replaced."}</p></div></div>
+                <div class="nexus-domain-onboarding-form">
+                    <label><span>{"Domain"}</span><input value={(*onboard_domain).clone()} oninput={domain_input} placeholder="example.com" /></label>
+                    <label><span>{"Hestia owner"}</span><input value={(*hestia_user).clone()} oninput={user_input} placeholder="admin" /></label>
+                    <button onclick={run_onboarding}><i class="fa fa-magic"></i>{"Run onboarding"}</button>
+                </div>
+                {
+                    match onboarding.as_ref() {
+                        None => html! {},
+                        Some(Ok(value)) => html! { <div class="nexus-domain-result ok"><strong>{"Onboarding completed."}</strong><span>{value["message"].as_str().unwrap_or("Providers updated and validation executed.")}</span></div> },
+                        Some(Err(err)) => html! { <div class="nexus-domain-result error"><strong>{"Onboarding stopped safely."}</strong><span>{err}</span></div> },
+                    }
+                }
+            </section>
         </div>
     }
 }
-
-const DOMAINS_CSS: &str = r#"
-.nexus-domains{--nx-text:#0f172a;--nx-muted:#64748b;--nx-border:#dbe3ee;--nx-blue:#2563eb;width:100%;height:100%;overflow:auto;background:linear-gradient(180deg,#f8faff,#f5f7fb 240px);color:var(--nx-text);padding:26px 30px 40px;font-family:"Roboto Flex",Roboto,Arial,sans-serif}.nexus-domains *{box-sizing:border-box}.nexus-domains-head{display:flex;justify-content:space-between;gap:28px;align-items:flex-start;margin-bottom:18px}.nexus-domains-eyebrow{display:block;color:#2563eb;font-size:10px;font-weight:780;text-transform:uppercase;letter-spacing:.08em}.nexus-domains-head h1{font-size:25px;margin:4px 0 5px;font-weight:800}.nexus-domains-head p,.nexus-domain-onboarding p,.nexus-domain-section-title p{margin:0;color:#64748b;font-size:10px;line-height:1.55}.nexus-domains-policy{display:flex;flex-direction:column;gap:6px;background:#fff;border:1px solid var(--nx-border);padding:10px 12px;border-radius:10px;box-shadow:0 2px 8px rgba(15,23,42,.04);font-size:9px;color:#334155;white-space:nowrap}.nexus-domains-policy i{color:#2563eb;width:17px}.nexus-domain-onboarding{background:#fff;border:1px solid var(--nx-border);border-radius:13px;box-shadow:0 3px 14px rgba(15,23,42,.05);padding:16px;display:grid;grid-template-columns:minmax(300px,1fr) minmax(360px,1fr);gap:16px;margin-bottom:14px}.nexus-domain-onboarding h2,.nexus-domain-section-title h2{font-size:14px;margin:3px 0 5px}.nexus-domain-onboarding-form{display:grid;grid-template-columns:1.4fr 1fr auto;gap:8px;align-items:end}.nexus-domain-onboarding-form label{font-size:8px;font-weight:700;color:#475569}.nexus-domain-onboarding-form input{display:block;width:100%;height:34px;margin-top:4px;border:1px solid #d8e0eb;border-radius:7px;padding:0 9px;background:#fff;color:#0f172a;font-size:10px}.nexus-domain-onboarding-form button,.nexus-domain-validate{height:34px;border:1px solid #1d4ed8;background:#2563eb;color:#fff;border-radius:7px;padding:0 12px;font-size:9px;font-weight:700;cursor:pointer;white-space:nowrap}.nexus-domain-onboarding-form button i,.nexus-domain-validate i{margin-right:6px}.nexus-domain-result{grid-column:1/-1;border-radius:8px;padding:9px 11px;display:flex;gap:12px;align-items:center;font-size:9px}.nexus-domain-result strong{white-space:nowrap}.nexus-domain-result.ok{background:#ecfdf3;border:1px solid #bbf7d0;color:#166534}.nexus-domain-result.bad{background:#fff7ed;border:1px solid #fed7aa;color:#9a3412}.nexus-domain-kpis{display:grid;grid-template-columns:repeat(4,1fr);gap:10px;margin-bottom:14px}.nexus-domain-kpis>div{background:#fff;border:1px solid var(--nx-border);border-radius:10px;padding:12px 14px;box-shadow:0 2px 8px rgba(15,23,42,.04);display:flex;flex-direction:column}.nexus-domain-kpis span{font-size:8px;color:#64748b;font-weight:700}.nexus-domain-kpis strong{font-size:15px;margin:3px 0;color:#0f172a}.nexus-domain-kpis small{font-size:8px;color:#94a3b8}.nexus-domain-inventory{background:#fff;border:1px solid var(--nx-border);border-radius:13px;box-shadow:0 3px 14px rgba(15,23,42,.05);overflow:hidden}.nexus-domain-section-title{padding:14px 16px;border-bottom:1px solid #e8edf4}.nexus-domain-table{width:100%}.nexus-domain-row{display:grid;grid-template-columns:minmax(150px,.8fr) minmax(250px,1.15fr) minmax(430px,2fr) 90px;align-items:center;gap:12px;min-height:56px;padding:8px 14px;border-bottom:1px solid #eef2f7;font-size:9px}.nexus-domain-row:last-child{border-bottom:0}.nexus-domain-row.header{min-height:34px;background:#f8fafc;color:#64748b;font-size:8px;font-weight:760;text-transform:uppercase;letter-spacing:.04em}.nexus-domain-name{display:flex;flex-direction:column}.nexus-domain-name strong{font-size:10px}.nexus-domain-name small{margin-top:3px;color:#94a3b8;font-size:8px}.nexus-domain-capabilities,.nexus-domain-health{display:flex;gap:5px;flex-wrap:wrap}.nexus-domain-badge,.nexus-domain-check{display:inline-flex;align-items:center;gap:4px;border-radius:999px;padding:4px 7px;border:1px solid #e2e8f0;background:#f8fafc;color:#64748b;font-size:8px}.nexus-domain-badge.ok{background:#eef4ff;border-color:#d8e5ff;color:#1d4ed8}.nexus-domain-check.ok{background:#ecfdf3;border-color:#bbf7d0;color:#15803d}.nexus-domain-check.bad{background:#fef2f2;border-color:#fecaca;color:#b91c1c}.nexus-domain-validate{background:#fff;color:#2563eb;border-color:#bfd3ff}.nexus-domain-validate:hover{background:#f5f8ff}.nexus-domain-validate:disabled{opacity:.55;cursor:wait}.nexus-domains-loading{padding:20px;background:#fff;border:1px solid var(--nx-border);border-radius:10px;color:#64748b;font-size:10px}.nexus-domains-loading i{margin-right:8px}@media(max-width:1200px){.nexus-domain-row{grid-template-columns:150px 220px 1fr 90px}.nexus-domain-onboarding{grid-template-columns:1fr}.nexus-domain-result{grid-column:auto}.nexus-domain-kpis{grid-template-columns:repeat(2,1fr)}}@media(max-width:850px){.nexus-domains{padding:18px 14px 30px}.nexus-domains-head{flex-direction:column}.nexus-domains-policy{white-space:normal}.nexus-domain-onboarding-form{grid-template-columns:1fr}.nexus-domain-row{grid-template-columns:1fr;gap:7px;padding:12px 14px}.nexus-domain-row.header{display:none}.nexus-domain-kpis{grid-template-columns:1fr}}
-"#;
