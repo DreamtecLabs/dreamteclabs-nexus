@@ -1,5 +1,6 @@
 use std::path::Path;
 use std::process::Stdio;
+use std::sync::Mutex;
 use std::time::Duration;
 
 use anyhow::{Context, Error, bail};
@@ -17,6 +18,9 @@ use pdm_buildcfg::configdir;
 const INVENTORY_FILENAME: &str = configdir!("/domains-hosting.json");
 const AUDIT_FILENAME: &str = configdir!("/domains-hosting-audit.log");
 const DEFAULT_HELPER: &str = "/usr/libexec/proxmox/nexus-domains-helper";
+const HELPER_TIMEOUT: Duration = Duration::from_secs(300);
+
+static INVENTORY_WRITE_LOCK: Mutex<()> = Mutex::new(());
 
 #[sortable]
 const SUBDIRS: SubdirMap = &sorted!([
@@ -60,6 +64,58 @@ fn default_inventory() -> Value {
     })
 }
 
+fn normalize_domain(input: &str) -> Result<String, Error> {
+    let domain = input.trim().trim_end_matches('.').to_ascii_lowercase();
+    validate_domain_name(&domain)?;
+    Ok(domain)
+}
+
+fn validate_domain_name(domain: &str) -> Result<(), Error> {
+    if domain.len() > 253 || !domain.contains('.') {
+        bail!("invalid domain");
+    }
+
+    let mut labels = domain.split('.').peekable();
+    let mut last_label = None;
+    while let Some(label) = labels.next() {
+        if label.is_empty() || label.len() > 63 {
+            bail!("invalid domain");
+        }
+        let bytes = label.as_bytes();
+        if !bytes.first().is_some_and(u8::is_ascii_alphanumeric)
+            || !bytes.last().is_some_and(u8::is_ascii_alphanumeric)
+            || !bytes
+                .iter()
+                .all(|byte| byte.is_ascii_alphanumeric() || *byte == b'-')
+        {
+            bail!("invalid domain");
+        }
+        last_label = Some(label);
+    }
+
+    let tld = last_label.context("invalid domain")?;
+    if tld.len() < 2 || !tld.bytes().all(|byte| byte.is_ascii_lowercase()) {
+        bail!("invalid domain");
+    }
+
+    Ok(())
+}
+
+fn validate_hestia_user(user: &str) -> Result<(), Error> {
+    if user.is_empty() || user.len() > 64 {
+        bail!("invalid Hestia user");
+    }
+    let bytes = user.as_bytes();
+    if !bytes.first().is_some_and(u8::is_ascii_alphanumeric)
+        || !bytes.iter().all(|byte| {
+            byte.is_ascii_alphanumeric() || matches!(*byte, b'.' | b'_' | b'-')
+        })
+    {
+        bail!("invalid Hestia user");
+    }
+    Ok(())
+}
+
 fn read_inventory() -> Result<Value, Error> {
     let Some(raw) = proxmox_sys::fs::file_read_optional_string(INVENTORY_FILENAME)? else {
         return Ok(default_inventory());
@@ -95,17 +151,17 @@ fn upsert_mail_domain(inventory: &mut Value, domain: &str) -> Result<bool, Error
     Ok(true)
 }
 
-async fn persist_mail_domain(domain: &str) -> Result<(), Error> {
+fn persist_mail_domain(domain: &str) -> Result<(), Error> {
+    let _guard = INVENTORY_WRITE_LOCK
+        .lock()
+        .map_err(|_| anyhow::anyhow!("domains inventory write lock is poisoned"))?;
     let mut inventory = read_inventory()?;
     upsert_mail_domain(&mut inventory, domain)?;
 
-    let temporary = format!("{INVENTORY_FILENAME}.tmp");
+    let temporary = format!("{INVENTORY_FILENAME}.{}.tmp", std::process::id());
     let contents = serde_json::to_vec_pretty(&inventory)?;
-    tokio::fs::write(&temporary, contents)
-        .await
-        .context("unable to write temporary domains inventory")?;
-    tokio::fs::rename(&temporary, INVENTORY_FILENAME)
-        .await
+    std::fs::write(&temporary, contents).context("unable to write temporary domains inventory")?;
+    std::fs::rename(&temporary, INVENTORY_FILENAME)
         .context("unable to atomically replace domains inventory")?;
     Ok(())
 }
@@ -115,7 +171,8 @@ async fn command_output(program: &str, args: &[&str]) -> Result<String, Error> {
     command
         .args(args)
         .stdout(Stdio::piped())
-        .stderr(Stdio::piped());
+        .stderr(Stdio::piped())
+        .kill_on_drop(true);
     let output = tokio::time::timeout(Duration::from_secs(12), command.output())
         .await
         .with_context(|| format!("{program} timed out"))??;
@@ -168,6 +225,25 @@ fn txt_prefix_count(value: &Value, prefix: &str) -> usize {
         .unwrap_or(0)
 }
 
+fn mx_points_only_to(value: &Value, expected_host: &str) -> bool {
+    let Some(value) = value.get("value").and_then(Value::as_str) else {
+        return false;
+    };
+    let mut lines = value.lines().filter(|line| !line.trim().is_empty());
+    let Some(line) = lines.next() else {
+        return false;
+    };
+    if lines.next().is_some() {
+        return false;
+    }
+    let Some(target) = line.split_whitespace().nth(1) else {
+        return false;
+    };
+    target
+        .trim_end_matches('.')
+        .eq_ignore_ascii_case(expected_host)
+}
+
 async fn openssl_check(host: &str, port: u16, starttls: Option<&str>) -> Value {
     let connect = format!("{host}:{port}");
     let mut args = vec![
@@ -208,10 +284,7 @@ async fn validate_domain_inner(domain: &str) -> Value {
         openssl_check(&webmail, 443, None),
     );
 
-    let mx_ok = mx
-        .get("value")
-        .and_then(Value::as_str)
-        .is_some_and(|value| value.trim_end_matches('.').contains(&mail));
+    let mx_ok = mx_points_only_to(&mx, &mail);
     let spf_count = txt_prefix_count(&spf, "v=spf1");
     let spf_ok = spf_count == 1;
     let dkim_ok = txt_contains(&dkim_txt, "p=");
@@ -295,10 +368,7 @@ pub fn get_inventory() -> Result<Value, Error> {
 )]
 /// Perform live DNS, TLS and mail connectivity checks without changing infrastructure.
 pub async fn validate_domain(domain: String) -> Result<Value, Error> {
-    let domain = domain.trim().trim_end_matches('.').to_ascii_lowercase();
-    if domain.is_empty() || domain.contains('/') || domain.contains(' ') {
-        bail!("invalid domain");
-    }
+    let domain = normalize_domain(&domain)?;
     let result = validate_domain_inner(&domain).await;
     let outcome = if result
         .get("healthy")
@@ -330,10 +400,7 @@ pub async fn validate_domain(domain: String) -> Result<Value, Error> {
 )]
 /// Run the idempotent domain onboarding helper. Secrets are read by the helper from its root-only environment file.
 pub async fn onboard_domain(domain: String, hestia_user: Option<String>) -> Result<Value, Error> {
-    let domain = domain.trim().trim_end_matches('.').to_ascii_lowercase();
-    if domain.is_empty() || domain.contains('/') || domain.contains(' ') {
-        bail!("invalid domain");
-    }
+    let domain = normalize_domain(&domain)?;
 
     let helper =
         std::env::var("NEXUS_DOMAINS_HELPER").unwrap_or_else(|_| DEFAULT_HELPER.to_string());
@@ -342,15 +409,24 @@ pub async fn onboard_domain(domain: String, hestia_user: Option<String>) -> Resu
     }
 
     let user = hestia_user.unwrap_or_else(|| "admin".to_string());
-    let output = Command::new(&helper)
+    validate_hestia_user(&user)?;
+
+    let mut command = Command::new(&helper);
+    command
         .arg("onboard")
         .arg(&domain)
         .arg(&user)
         .stdout(Stdio::piped())
         .stderr(Stdio::piped())
-        .output()
-        .await
-        .context("failed to start domains onboarding helper")?;
+        .kill_on_drop(true);
+
+    let output = match tokio::time::timeout(HELPER_TIMEOUT, command.output()).await {
+        Ok(output) => output.context("failed to start domains onboarding helper")?,
+        Err(_) => {
+            append_audit("onboard", &domain, "failed: helper timed out").await?;
+            bail!("domain onboarding helper timed out");
+        }
+    };
 
     if !output.status.success() {
         let stderr = String::from_utf8_lossy(&output.stderr).trim().to_string();
@@ -362,7 +438,7 @@ pub async fn onboard_domain(domain: String, hestia_user: Option<String>) -> Resu
     let helper_result: Value = serde_json::from_str(&stdout)
         .with_context(|| format!("domains helper returned invalid JSON: {stdout}"))?;
 
-    if let Err(err) = persist_mail_domain(&domain).await {
+    if let Err(err) = persist_mail_domain(&domain) {
         append_audit(
             "onboard",
             &domain,
@@ -406,11 +482,33 @@ mod tests {
     }
 
     #[test]
+    fn domain_and_hestia_user_validation_rejects_shell_like_input() {
+        assert_eq!(normalize_domain("Example.COM.").unwrap(), "example.com");
+        assert!(normalize_domain("example.com;id").is_err());
+        assert!(normalize_domain("-bad.example").is_err());
+        assert!(normalize_domain("localhost").is_err());
+        assert!(validate_hestia_user("admin").is_ok());
+        assert!(validate_hestia_user("ops-user_1").is_ok());
+        assert!(validate_hestia_user("admin';id").is_err());
+        assert!(validate_hestia_user(" bad").is_err());
+    }
+
+    #[test]
     fn spf_duplicate_detection_requires_exactly_one_record() {
         let one = json!({"value":"\"v=spf1 a mx ~all\"\n\"google-site-verification=x\""});
-        let two = json!({"value":"\"v=spf1 a mx ~all\"\n\"v=spf1 ip4:192.0.2.1 ~all\""});
+        let two = json!({"value":"\"v=spf1 a mx ~all\"\n\"V=SPF1 ip4:192.0.2.1 ~all\""});
         assert_eq!(txt_prefix_count(&one, "v=spf1"), 1);
         assert_eq!(txt_prefix_count(&two, "v=spf1"), 2);
+    }
+
+    #[test]
+    fn mx_validation_requires_one_exact_target() {
+        let good = json!({"value":"10 mail.example.com."});
+        let wrong = json!({"value":"10 mail.example.com.evil.invalid."});
+        let duplicate = json!({"value":"10 mail.example.com.\n20 mail.example.com."});
+        assert!(mx_points_only_to(&good, "mail.example.com"));
+        assert!(!mx_points_only_to(&wrong, "mail.example.com"));
+        assert!(!mx_points_only_to(&duplicate, "mail.example.com"));
     }
 
     #[test]
