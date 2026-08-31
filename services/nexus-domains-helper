@@ -19,6 +19,10 @@ WEBMAIL_HTTP_ORIGIN="${NEXUS_WEBMAIL_HTTP_ORIGIN:-http://192.168.0.29:80}"
 WEBMAIL_HTTPS_ORIGIN="${NEXUS_WEBMAIL_HTTPS_ORIGIN:-https://192.168.0.29:443}"
 DMARC_POLICY="${NEXUS_DMARC_POLICY:-p=none}"
 DMARC_RUA="${NEXUS_DMARC_RUA:-}"
+CURL_CONNECT_TIMEOUT="${NEXUS_CURL_CONNECT_TIMEOUT:-10}"
+CURL_MAX_TIME="${NEXUS_CURL_MAX_TIME:-30}"
+SSH_CONNECT_TIMEOUT="${NEXUS_SSH_CONNECT_TIMEOUT:-10}"
+SSH_OPTS=(-o BatchMode=yes -o "ConnectTimeout=${SSH_CONNECT_TIMEOUT}" -o ServerAliveInterval=15 -o ServerAliveCountMax=2)
 
 require_cmd() {
     command -v "$1" >/dev/null 2>&1 || {
@@ -54,6 +58,14 @@ validate_domain() {
     }
 }
 
+validate_hestia_user() {
+    local user="$1"
+    [[ ${#user} -ge 1 && ${#user} -le 64 && "$user" =~ ^[A-Za-z0-9][A-Za-z0-9._-]*$ ]] || {
+        echo "invalid Hestia user" >&2
+        exit 2
+    }
+}
+
 cf_request() {
     local method="$1" path="$2" body="${3:-}"
     [[ -n "${NEXUS_CF_API_TOKEN:-}" ]] || {
@@ -61,7 +73,16 @@ cf_request() {
         exit 3
     }
 
-    local args=(-fsS -X "$method" -H "Authorization: Bearer ${NEXUS_CF_API_TOKEN}" -H "Content-Type: application/json")
+    local args=(
+        -fsS
+        --connect-timeout "$CURL_CONNECT_TIMEOUT"
+        --max-time "$CURL_MAX_TIME"
+        --retry 2
+        --retry-all-errors
+        -X "$method"
+        -H "Authorization: Bearer ${NEXUS_CF_API_TOKEN}"
+        -H "Content-Type: application/json"
+    )
     if [[ -n "$body" ]]; then
         args+=(--data "$body")
     fi
@@ -90,16 +111,18 @@ cf_upsert_single_dns() {
     list="$(cf_request GET "/zones/${zone_id}/dns_records?type=${type}&name=${name}")"
     count="$(jq '.result | length' <<<"$list")"
 
-    if [[ "$type" == "MX" && "$count" -gt 0 ]]; then
+    if [[ "$count" -gt 1 ]]; then
+        echo "multiple ${type} records exist for ${name}; refusing ambiguous update" >&2
+        exit 5
+    fi
+
+    if [[ "$type" == "MX" && "$count" -eq 1 ]]; then
         local conflicts
         conflicts="$(jq -r --arg content "$content" '[.result[] | select((.content | rtrimstr(".")) != ($content | rtrimstr(".")))] | length' <<<"$list")"
         [[ "$conflicts" -eq 0 ]] || {
             echo "conflicting MX record exists for $name; refusing destructive replacement" >&2
             exit 5
         }
-    elif [[ "$count" -gt 1 ]]; then
-        echo "multiple ${type} records exist for ${name}; refusing ambiguous update" >&2
-        exit 5
     fi
 
     record_id="$(jq -r '.result[0].id // empty' <<<"$list")"
@@ -113,14 +136,15 @@ cf_upsert_single_dns() {
 
 cf_upsert_txt_prefix() {
     local zone_id="$1" name="$2" prefix="$3" content="$4"
-    local list matches record_id payload
+    local list matches record_id payload prefix_lower
+    prefix_lower="${prefix,,}"
     list="$(cf_request GET "/zones/${zone_id}/dns_records?type=TXT&name=${name}")"
-    matches="$(jq --arg prefix "$prefix" '[.result[] | select(.content | startswith($prefix))] | length' <<<"$list")"
+    matches="$(jq --arg prefix "$prefix_lower" '[.result[] | select((.content | ascii_downcase) | startswith($prefix))] | length' <<<"$list")"
     [[ "$matches" -le 1 ]] || {
         echo "duplicate TXT records beginning with '$prefix' exist for $name" >&2
         exit 5
     }
-    record_id="$(jq -r --arg prefix "$prefix" '.result[] | select(.content | startswith($prefix)) | .id' <<<"$list" | head -n1)"
+    record_id="$(jq -r --arg prefix "$prefix_lower" '.result[] | select((.content | ascii_downcase) | startswith($prefix)) | .id' <<<"$list" | head -n1)"
     payload="$(jq -nc --arg name "$name" --arg content "$content" '{type:"TXT",name:$name,content:$content,ttl:1,proxied:false}')"
     cf_write_record "$zone_id" "$record_id" "$payload"
 }
@@ -160,39 +184,39 @@ ensure_ddns_record() {
         exit 3
     }
 
-    ssh -o BatchMode=yes "$CLOUDFLARE_SSH_HOST" \
-        "set -eu; touch '$DDNS_RECORDS_FILE'; if awk -F'|' '\$2 == \"$webmail\" {found=1} END {exit !found}' '$DDNS_RECORDS_FILE'; then echo 'webmail hostname is still DDNS-managed: $webmail' >&2; exit 42; fi; grep -Fqx '$line' '$DDNS_RECORDS_FILE' || printf '%s\\n' '$line' >> '$DDNS_RECORDS_FILE'; systemctl start '$DDNS_SERVICE'"
+    ssh "${SSH_OPTS[@]}" "$CLOUDFLARE_SSH_HOST" \
+        "set -eu; test -f '$DDNS_RECORDS_FILE' || { echo 'DDNS records file not found: $DDNS_RECORDS_FILE' >&2; exit 43; }; if awk -F'|' '\$2 == \"$webmail\" {found=1} END {exit !found}' '$DDNS_RECORDS_FILE'; then echo 'webmail hostname is still DDNS-managed: $webmail' >&2; exit 42; fi; grep -Fqx '$line' '$DDNS_RECORDS_FILE' || printf '%s\\n' '$line' >> '$DDNS_RECORDS_FILE'; systemctl start '$DDNS_SERVICE'"
 }
 
 hestia_has_mail_domain() {
     local user="$1" domain="$2"
-    ssh -o BatchMode=yes "$HESTIA_SSH_HOST" "$HESTIA_BIN/v-list-mail-domain '$user' '$domain' json >/dev/null 2>&1"
+    ssh "${SSH_OPTS[@]}" "$HESTIA_SSH_HOST" "$HESTIA_BIN/v-list-mail-domain '$user' '$domain' json >/dev/null 2>&1"
 }
 
 hestia_has_dkim() {
     local user="$1" domain="$2"
-    ssh -o BatchMode=yes "$HESTIA_SSH_HOST" "$HESTIA_BIN/v-list-mail-domain-dkim-dns '$user' '$domain' plain >/dev/null 2>&1"
+    ssh "${SSH_OPTS[@]}" "$HESTIA_SSH_HOST" "$HESTIA_BIN/v-list-mail-domain-dkim-dns '$user' '$domain' plain >/dev/null 2>&1"
 }
 
 hestia_ensure_mail_domain() {
     local user="$1" domain="$2"
     if ! hestia_has_mail_domain "$user" "$domain"; then
-        ssh -o BatchMode=yes "$HESTIA_SSH_HOST" "$HESTIA_BIN/v-add-mail-domain '$user' '$domain'"
-        ssh -o BatchMode=yes "$HESTIA_SSH_HOST" "$HESTIA_BIN/v-add-mail-domain-webmail '$user' '$domain' roundcube"
+        ssh "${SSH_OPTS[@]}" "$HESTIA_SSH_HOST" "$HESTIA_BIN/v-add-mail-domain '$user' '$domain'"
+        ssh "${SSH_OPTS[@]}" "$HESTIA_SSH_HOST" "$HESTIA_BIN/v-add-mail-domain-webmail '$user' '$domain' roundcube"
     fi
     if ! hestia_has_dkim "$user" "$domain"; then
-        ssh -o BatchMode=yes "$HESTIA_SSH_HOST" "$HESTIA_BIN/v-add-mail-domain-dkim '$user' '$domain'"
+        ssh "${SSH_OPTS[@]}" "$HESTIA_SSH_HOST" "$HESTIA_BIN/v-add-mail-domain-dkim '$user' '$domain'"
     fi
 }
 
 hestia_issue_mail_certificate() {
     local user="$1" domain="$2"
-    ssh -o BatchMode=yes "$HESTIA_SSH_HOST" "$HESTIA_BIN/v-add-letsencrypt-domain '$user' '$domain' '' yes"
+    ssh "${SSH_OPTS[@]}" "$HESTIA_SSH_HOST" "$HESTIA_BIN/v-add-letsencrypt-domain '$user' '$domain' '' yes"
 }
 
 hestia_dkim_value() {
     local user="$1" domain="$2" output value
-    output="$(ssh -o BatchMode=yes "$HESTIA_SSH_HOST" "$HESTIA_BIN/v-list-mail-domain-dkim-dns '$user' '$domain' plain")"
+    output="$(ssh "${SSH_OPTS[@]}" "$HESTIA_SSH_HOST" "$HESTIA_BIN/v-list-mail-domain-dkim-dns '$user' '$domain' plain")"
     value="$(awk '$1 == "mail._domainkey" {for (i=5;i<=NF;i++) printf "%s%s", $i, (i<NF?OFS:ORS)}' <<<"$output" | head -n1)"
     value="${value#\"}"
     value="${value%\"}"
@@ -220,6 +244,7 @@ wait_for_mail_a() {
 onboard() {
     local domain="$1" hestia_user="$2"
     validate_domain "$domain"
+    validate_hestia_user "$hestia_user"
 
     local mail_host="mail.${domain}" webmail_host="webmail.${domain}" zone_id public_ip dkim_value dmarc_value
     local tunnel_id="${NEXUS_CF_TUNNEL_ID:-}" steps='[]'
