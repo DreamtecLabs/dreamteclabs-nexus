@@ -10,6 +10,7 @@ on:
       - 'debian/proxmox-datacenter-manager.install'
       - 'docs/nexus-domains-hosting.md'
       - 'tools/nexus/validate-domains-ci.sh'
+      - 'tools/nexus/validate-domains-container.sh'
       - 'ui/src/nexus/domains.rs'
       - 'ui/src/nexus/mod.rs'
       - 'ui/src/main_menu.rs'
@@ -25,6 +26,7 @@ on:
       - 'debian/proxmox-datacenter-manager.install'
       - 'docs/nexus-domains-hosting.md'
       - 'tools/nexus/validate-domains-ci.sh'
+      - 'tools/nexus/validate-domains-container.sh'
       - 'ui/src/nexus/domains.rs'
       - 'ui/src/nexus/mod.rs'
       - 'ui/src/main_menu.rs'
@@ -41,7 +43,7 @@ permissions:
 jobs:
   validate:
     runs-on: self-hosted
-    timeout-minutes: 30
+    timeout-minutes: 45
     steps:
       - name: Recover workspace ownership
         shell: bash
@@ -65,6 +67,18 @@ jobs:
         with:
           components: rustfmt
 
-      - name: Validate Domains & Hosting
+      - name: Validate policy and formatting
         shell: bash
         run: bash tools/nexus/validate-domains-ci.sh
+
+      - name: Test and compile in Debian Trixie
+        shell: bash
+        run: |
+          docker run --rm \
+            --memory=7g \
+            -e HOST_UID="$(id -u)" \
+            -e HOST_GID="$(id -g)" \
+            -v "$GITHUB_WORKSPACE:/workspace" \
+            -w /workspace \
+            debian:trixie \
+            bash tools/nexus/validate-domains-container.sh
