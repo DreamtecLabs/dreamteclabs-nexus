@@ -27,6 +27,17 @@ Components: main
 Signed-By: $keyring
 EOF
 
+# The source package mixes Rust/development dependencies from the Proxmox
+# devel repository with PDM binary packages such as libproxmox-acme-plugins.
+# A clean Debian container therefore needs the public PDM repository as well.
+cat >/etc/apt/sources.list.d/proxmox-pdm.sources <<EOF
+Types: deb
+URIs: http://download.proxmox.com/debian/pdm
+Suites: trixie
+Components: pdm-no-subscription
+Signed-By: $keyring
+EOF
+
 apt-get update
 export DEB_BUILD_PROFILES=nodoc
 mk-build-deps \
