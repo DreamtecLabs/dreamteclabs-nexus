@@ -60,6 +60,13 @@ export CARGO_PROFILE_RELEASE_LTO=thin
 export CARGO_PROFILE_RELEASE_DEBUG=0
 export CARGO_PROFILE_RELEASE_CODEGEN_UNITS=1
 
+# wasm-opt is the peak-memory phase of the PDM UI build. The self-hosted
+# package job is intentionally capped at 7 GiB; Binaryen's default optimizer
+# can exceed that cap after Rust compilation has already succeeded. Keep the
+# production optimization pass, but use the lower-memory optimization level
+# supported by the upstream Makefile instead of letting the kernel kill it.
+export WASM_OPT_FLAGS="-O1"
+
 free -h || true
 make -C ui clean
 make -C ui deb

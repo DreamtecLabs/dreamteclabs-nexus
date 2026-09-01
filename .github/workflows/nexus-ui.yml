@@ -4,6 +4,8 @@ on:
   pull_request:
     paths:
       - 'ui/**'
+      - 'server/src/api/nexus/**'
+      - 'server/src/api/mod.rs'
       - 'tools/nexus/**'
       - 'docs/nexus-frontend-architecture.md'
       - '.github/workflows/nexus-ui.yml'
@@ -12,10 +14,16 @@ on:
       - master
     paths:
       - 'ui/**'
+      - 'server/src/api/nexus/**'
+      - 'server/src/api/mod.rs'
       - 'tools/nexus/**'
       - 'docs/nexus-frontend-architecture.md'
       - '.github/workflows/nexus-ui.yml'
   workflow_dispatch:
+
+concurrency:
+  group: nexus-ui-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
 
 permissions:
   contents: read
@@ -24,8 +32,8 @@ permissions:
 
 jobs:
   boundary:
-    runs-on: self-hosted
-    timeout-minutes: 10
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
     outputs:
       ui_changed: ${{ steps.changes.outputs.ui_changed }}
     steps:
@@ -44,6 +52,7 @@ jobs:
         uses: actions/checkout@v4
         with:
           fetch-depth: 2
+          submodules: recursive
 
       - name: Detect UI changes
         id: changes
@@ -75,8 +84,9 @@ jobs:
           bash -n tools/nexus/build-ui-ci.sh
           bash -n tools/nexus/build-ui-container.sh
           bash -n tools/nexus/deploy-ui.sh
+          bash -n tools/nexus/validate-domains-ci.sh
 
-      - name: Enforce frontend-only boundary
+      - name: Enforce Nexus ownership boundary
         shell: bash
         run: |
           set -euo pipefail
@@ -87,11 +97,18 @@ jobs:
           fi
           printf '%s\n' "$changed"
 
-          forbidden="$(printf '%s\n' "$changed" | grep -E '^(server/|lib/|cli/|pdm-config/|pdm-api/)' || true)"
+          engine_changes="$(printf '%s\n' "$changed" | grep -E '^(server/|lib/|cli/|pdm-config/|pdm-api/)' || true)"
+          forbidden="$(printf '%s\n' "$engine_changes" | grep -Ev '^server/src/api/nexus/|^server/src/api/mod.rs$' || true)"
           if [[ -n "$forbidden" ]]; then
-            echo "Nexus UI changes must not modify PDM engine paths:" >&2
+            echo "Nexus changes must not modify PDM engine paths outside the explicit Nexus backend seam:" >&2
             printf '%s\n' "$forbidden" >&2
             exit 1
+          fi
+
+          api_wiring="$(printf '%s\n' "$engine_changes" | grep '^server/src/api/mod.rs$' || true)"
+          if [[ -n "$api_wiring" ]]; then
+            grep -q '^pub mod nexus;' server/src/api/mod.rs
+            grep -q 'nexus::domains::ROUTER' server/src/api/mod.rs
           fi
 
           if git rev-parse HEAD^1 >/dev/null 2>&1 && ! git diff --quiet HEAD^1 HEAD -- ui/src/lib.rs; then
@@ -106,15 +123,20 @@ jobs:
           test -f ui/src/nexus/mod.rs
           test -f ui/src/nexus/home.rs
           test -f ui/src/nexus/inventory.rs
+          test -f server/src/api/nexus/mod.rs
           grep -q 'mod nexus;' ui/src/main_menu.rs
           grep -q 'NexusHome' ui/src/main_menu.rs
           grep -q 'NexusInventory' ui/src/main_menu.rs
+
+      - name: Validate Domains & Hosting backend
+        shell: bash
+        run: bash tools/nexus/validate-domains-ci.sh
 
   package:
     name: Build PDM UI package
     needs: boundary
     if: needs.boundary.outputs.ui_changed == 'true'
-    runs-on: self-hosted
+    runs-on: ubuntu-24.04
     timeout-minutes: 45
     steps:
       - name: Recover workspace ownership

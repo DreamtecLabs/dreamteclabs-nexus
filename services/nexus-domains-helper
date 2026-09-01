@@ -1,0 +1,311 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+ENV_FILE="${NEXUS_DOMAINS_ENV_FILE:-/etc/proxmox-datacenter-manager/domains-hosting.env}"
+if [[ -r "$ENV_FILE" ]]; then
+    # shellcheck disable=SC1090
+    source "$ENV_FILE"
+fi
+
+CF_API_BASE="${NEXUS_CF_API_BASE:-https://api.cloudflare.com/client/v4}"
+HESTIA_SSH_HOST="${NEXUS_HESTIA_SSH_HOST:-root@192.168.0.29}"
+CLOUDFLARE_SSH_HOST="${NEXUS_CLOUDFLARE_SSH_HOST:-}"
+DDNS_RECORDS_FILE="${NEXUS_DDNS_RECORDS_FILE:-/etc/cloudflare-ddns/records.conf}"
+DDNS_SERVICE="${NEXUS_DDNS_SERVICE:-cloudflare-ddns.service}"
+HESTIA_BIN="${NEXUS_HESTIA_BIN:-/usr/local/hestia/bin}"
+MAIL_RELAY_HOST="${NEXUS_MAIL_RELAY_HOST:-smtp.dreamteclabs.com}"
+MAIL_RELAY_IPV4="${NEXUS_MAIL_RELAY_IPV4:-23.254.215.34}"
+WEBMAIL_HTTP_ORIGIN="${NEXUS_WEBMAIL_HTTP_ORIGIN:-http://192.168.0.29:80}"
+WEBMAIL_HTTPS_ORIGIN="${NEXUS_WEBMAIL_HTTPS_ORIGIN:-https://192.168.0.29:443}"
+DMARC_POLICY="${NEXUS_DMARC_POLICY:-p=none}"
+DMARC_RUA="${NEXUS_DMARC_RUA:-}"
+CURL_CONNECT_TIMEOUT="${NEXUS_CURL_CONNECT_TIMEOUT:-10}"
+CURL_MAX_TIME="${NEXUS_CURL_MAX_TIME:-30}"
+SSH_CONNECT_TIMEOUT="${NEXUS_SSH_CONNECT_TIMEOUT:-10}"
+SSH_OPTS=(-o BatchMode=yes -o "ConnectTimeout=${SSH_CONNECT_TIMEOUT}" -o ServerAliveInterval=15 -o ServerAliveCountMax=2)
+
+require_cmd() {
+    command -v "$1" >/dev/null 2>&1 || {
+        echo "required command not found: $1" >&2
+        exit 2
+    }
+}
+
+for cmd in curl jq ssh dig awk; do
+    require_cmd "$cmd"
+done
+
+validate_domain() {
+    local domain="$1" label
+    [[ ${#domain} -le 253 && "$domain" == *.* ]] || {
+        echo "invalid domain: $domain" >&2
+        exit 2
+    }
+    IFS='.' read -r -a labels <<<"$domain"
+    for label in "${labels[@]}"; do
+        [[ ${#label} -ge 1 && ${#label} -le 63 ]] || {
+            echo "invalid domain label in: $domain" >&2
+            exit 2
+        }
+        [[ "$label" =~ ^[a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?$ ]] || {
+            echo "invalid domain label in: $domain" >&2
+            exit 2
+        }
+    done
+    [[ "${labels[-1]}" =~ ^[a-z]{2,63}$ ]] || {
+        echo "invalid top-level domain: $domain" >&2
+        exit 2
+    }
+}
+
+validate_hestia_user() {
+    local user="$1"
+    [[ ${#user} -ge 1 && ${#user} -le 64 && "$user" =~ ^[A-Za-z0-9][A-Za-z0-9._-]*$ ]] || {
+        echo "invalid Hestia user" >&2
+        exit 2
+    }
+}
+
+cf_request() {
+    local method="$1" path="$2" body="${3:-}"
+    [[ -n "${NEXUS_CF_API_TOKEN:-}" ]] || {
+        echo "NEXUS_CF_API_TOKEN is not configured" >&2
+        exit 3
+    }
+
+    local args=(
+        -fsS
+        --connect-timeout "$CURL_CONNECT_TIMEOUT"
+        --max-time "$CURL_MAX_TIME"
+        --retry 2
+        --retry-all-errors
+        -X "$method"
+        -H "Authorization: Bearer ${NEXUS_CF_API_TOKEN}"
+        -H "Content-Type: application/json"
+    )
+    if [[ -n "$body" ]]; then
+        args+=(--data "$body")
+    fi
+    curl "${args[@]}" "${CF_API_BASE}${path}"
+}
+
+cf_zone_id() {
+    local domain="$1" response
+    response="$(cf_request GET "/zones?name=${domain}&status=active")"
+    jq -er '.result[0].id' <<<"$response"
+}
+
+cf_write_record() {
+    local zone_id="$1" record_id="$2" payload="$3" response
+    if [[ -n "$record_id" ]]; then
+        response="$(cf_request PUT "/zones/${zone_id}/dns_records/${record_id}" "$payload")"
+    else
+        response="$(cf_request POST "/zones/${zone_id}/dns_records" "$payload")"
+    fi
+    jq -e '.success == true' >/dev/null <<<"$response"
+}
+
+cf_upsert_single_dns() {
+    local zone_id="$1" type="$2" name="$3" content="$4" proxied="$5" priority="${6:-}"
+    local list count record_id payload
+    list="$(cf_request GET "/zones/${zone_id}/dns_records?type=${type}&name=${name}")"
+    count="$(jq '.result | length' <<<"$list")"
+
+    if [[ "$count" -gt 1 ]]; then
+        echo "multiple ${type} records exist for ${name}; refusing ambiguous update" >&2
+        exit 5
+    fi
+
+    if [[ "$type" == "MX" && "$count" -eq 1 ]]; then
+        local conflicts
+        conflicts="$(jq -r --arg content "$content" '[.result[] | select((.content | rtrimstr(".")) != ($content | rtrimstr(".")))] | length' <<<"$list")"
+        [[ "$conflicts" -eq 0 ]] || {
+            echo "conflicting MX record exists for $name; refusing destructive replacement" >&2
+            exit 5
+        }
+    fi
+
+    record_id="$(jq -r '.result[0].id // empty' <<<"$list")"
+    if [[ "$type" == "MX" ]]; then
+        payload="$(jq -nc --arg type "$type" --arg name "$name" --arg content "$content" --argjson priority "${priority:-10}" '{type:$type,name:$name,content:$content,priority:$priority,ttl:1,proxied:false}')"
+    else
+        payload="$(jq -nc --arg type "$type" --arg name "$name" --arg content "$content" --argjson proxied "$proxied" '{type:$type,name:$name,content:$content,ttl:1,proxied:$proxied}')"
+    fi
+    cf_write_record "$zone_id" "$record_id" "$payload"
+}
+
+cf_upsert_txt_prefix() {
+    local zone_id="$1" name="$2" prefix="$3" content="$4"
+    local list matches record_id payload prefix_lower
+    prefix_lower="${prefix,,}"
+    list="$(cf_request GET "/zones/${zone_id}/dns_records?type=TXT&name=${name}")"
+    matches="$(jq --arg prefix "$prefix_lower" '[.result[] | select((.content | ascii_downcase) | startswith($prefix))] | length' <<<"$list")"
+    [[ "$matches" -le 1 ]] || {
+        echo "duplicate TXT records beginning with '$prefix' exist for $name" >&2
+        exit 5
+    }
+    record_id="$(jq -r --arg prefix "$prefix_lower" '.result[] | select((.content | ascii_downcase) | startswith($prefix)) | .id' <<<"$list" | head -n1)"
+    payload="$(jq -nc --arg name "$name" --arg content "$content" '{type:"TXT",name:$name,content:$content,ttl:1,proxied:false}')"
+    cf_write_record "$zone_id" "$record_id" "$payload"
+}
+
+cf_upsert_tunnel_ingress() {
+    local hostname="$1" service="$2" no_tls_verify="$3"
+    local account_id="${NEXUS_CF_ACCOUNT_ID:-}" tunnel_id="${NEXUS_CF_TUNNEL_ID:-}"
+    [[ -n "$account_id" && -n "$tunnel_id" ]] || {
+        echo "NEXUS_CF_ACCOUNT_ID and NEXUS_CF_TUNNEL_ID are required" >&2
+        exit 3
+    }
+
+    local response config updated body
+    response="$(cf_request GET "/accounts/${account_id}/cfd_tunnel/${tunnel_id}/configurations")"
+    config="$(jq -c '.result.config // {ingress:[{service:"http_status:404"}]}' <<<"$response")"
+
+    updated="$(jq -c \
+        --arg hostname "$hostname" \
+        --arg service "$service" \
+        --argjson no_tls_verify "$no_tls_verify" '
+        .ingress = (
+          ((.ingress // []) | map(select(.hostname != $hostname))) as $without
+          | ($without | map(select(.hostname != null))) as $named
+          | ($without | map(select(.hostname == null))) as $fallback
+          | $named + [{hostname:$hostname,service:$service,originRequest:{noTLSVerify:$no_tls_verify}}] +
+            (if ($fallback|length)>0 then $fallback else [{service:"http_status:404"}] end)
+        )' <<<"$config")"
+    body="$(jq -nc --argjson config "$updated" '{config:$config}')"
+    response="$(cf_request PUT "/accounts/${account_id}/cfd_tunnel/${tunnel_id}/configurations" "$body")"
+    jq -e '.success == true' >/dev/null <<<"$response"
+}
+
+ensure_ddns_record() {
+    local zone="$1" record="$2" webmail="webmail.${zone}" line="${zone}|${record}|false"
+    [[ -n "$CLOUDFLARE_SSH_HOST" ]] || {
+        echo "NEXUS_CLOUDFLARE_SSH_HOST is required for DDNS management" >&2
+        exit 3
+    }
+
+    ssh "${SSH_OPTS[@]}" "$CLOUDFLARE_SSH_HOST" \
+        "set -eu; test -f '$DDNS_RECORDS_FILE' || { echo 'DDNS records file not found: $DDNS_RECORDS_FILE' >&2; exit 43; }; if awk -F'|' '\$2 == \"$webmail\" {found=1} END {exit !found}' '$DDNS_RECORDS_FILE'; then echo 'webmail hostname is still DDNS-managed: $webmail' >&2; exit 42; fi; grep -Fqx '$line' '$DDNS_RECORDS_FILE' || printf '%s\\n' '$line' >> '$DDNS_RECORDS_FILE'; systemctl start '$DDNS_SERVICE'"
+}
+
+hestia_has_mail_domain() {
+    local user="$1" domain="$2"
+    ssh "${SSH_OPTS[@]}" "$HESTIA_SSH_HOST" "$HESTIA_BIN/v-list-mail-domain '$user' '$domain' json >/dev/null 2>&1"
+}
+
+hestia_has_webmail() {
+    local user="$1" domain="$2" output
+    output="$(ssh "${SSH_OPTS[@]}" "$HESTIA_SSH_HOST" "$HESTIA_BIN/v-list-mail-domain '$user' '$domain' json")" || return 1
+    jq -e --arg domain "$domain" '.[$domain].WEBMAIL == "roundcube"' >/dev/null <<<"$output"
+}
+
+hestia_has_dkim() {
+    local user="$1" domain="$2"
+    ssh "${SSH_OPTS[@]}" "$HESTIA_SSH_HOST" "$HESTIA_BIN/v-list-mail-domain-dkim-dns '$user' '$domain' plain >/dev/null 2>&1"
+}
+
+hestia_ensure_mail_domain() {
+    local user="$1" domain="$2"
+    if ! hestia_has_mail_domain "$user" "$domain"; then
+        ssh "${SSH_OPTS[@]}" "$HESTIA_SSH_HOST" "$HESTIA_BIN/v-add-mail-domain '$user' '$domain'"
+    fi
+    if ! hestia_has_webmail "$user" "$domain"; then
+        ssh "${SSH_OPTS[@]}" "$HESTIA_SSH_HOST" "$HESTIA_BIN/v-add-mail-domain-webmail '$user' '$domain' roundcube"
+    fi
+    if ! hestia_has_dkim "$user" "$domain"; then
+        ssh "${SSH_OPTS[@]}" "$HESTIA_SSH_HOST" "$HESTIA_BIN/v-add-mail-domain-dkim '$user' '$domain'"
+    fi
+}
+
+hestia_issue_mail_certificate() {
+    local user="$1" domain="$2"
+    ssh "${SSH_OPTS[@]}" "$HESTIA_SSH_HOST" "$HESTIA_BIN/v-add-letsencrypt-domain '$user' '$domain' '' yes"
+}
+
+hestia_dkim_value() {
+    local user="$1" domain="$2" output value
+    output="$(ssh "${SSH_OPTS[@]}" "$HESTIA_SSH_HOST" "$HESTIA_BIN/v-list-mail-domain-dkim-dns '$user' '$domain' plain")"
+    value="$(awk '$1 == "mail._domainkey" {for (i=5;i<=NF;i++) printf "%s%s", $i, (i<NF?OFS:ORS)}' <<<"$output" | head -n1)"
+    value="${value#\"}"
+    value="${value%\"}"
+    [[ "$value" == *"p="* ]] || {
+        echo "unable to obtain DKIM public key from Hestia for $domain" >&2
+        exit 4
+    }
+    printf '%s' "$value"
+}
+
+wait_for_mail_a() {
+    local hostname="$1" attempt ip
+    for attempt in {1..20}; do
+        ip="$(dig +short A "$hostname" | head -n1)"
+        if [[ "$ip" =~ ^[0-9]+\.[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
+            printf '%s' "$ip"
+            return 0
+        fi
+        sleep 3
+    done
+    echo "mail A record did not resolve for $hostname" >&2
+    return 1
+}
+
+onboard() {
+    local domain="$1" hestia_user="$2"
+    validate_domain "$domain"
+    validate_hestia_user "$hestia_user"
+
+    local mail_host="mail.${domain}" webmail_host="webmail.${domain}" zone_id public_ip dkim_value dmarc_value
+    local tunnel_id="${NEXUS_CF_TUNNEL_ID:-}" steps='[]'
+    [[ -n "$tunnel_id" ]] || { echo "NEXUS_CF_TUNNEL_ID is required" >&2; exit 3; }
+    local tunnel_target="${tunnel_id}.cfargotunnel.com"
+
+    ensure_ddns_record "$domain" "$mail_host"
+    steps="$(jq -c '. + ["ddns:mail-record"]' <<<"$steps")"
+
+    zone_id="$(cf_zone_id "$domain")"
+    cf_upsert_single_dns "$zone_id" CNAME "$webmail_host" "$tunnel_target" true
+    cf_upsert_tunnel_ingress "$webmail_host" "$WEBMAIL_HTTP_ORIGIN" false
+    steps="$(jq -c '. + ["cloudflare:webmail-http"]' <<<"$steps")"
+
+    hestia_ensure_mail_domain "$hestia_user" "$domain"
+    steps="$(jq -c '. + ["hestia:mail-domain","hestia:dkim","hestia:roundcube"]' <<<"$steps")"
+
+    public_ip="$(wait_for_mail_a "$mail_host")"
+    hestia_issue_mail_certificate "$hestia_user" "$domain"
+    steps="$(jq -c '. + ["hestia:letsencrypt"]' <<<"$steps")"
+
+    cf_upsert_single_dns "$zone_id" MX "$domain" "$mail_host" false 10
+    cf_upsert_txt_prefix "$zone_id" "$domain" "v=spf1" "v=spf1 a mx ip4:${public_ip} ip4:${MAIL_RELAY_IPV4} ~all"
+
+    dkim_value="$(hestia_dkim_value "$hestia_user" "$domain")"
+    cf_upsert_txt_prefix "$zone_id" "mail._domainkey.${domain}" "v=DKIM1" "$dkim_value"
+
+    dmarc_value="v=DMARC1; ${DMARC_POLICY}; adkim=r; aspf=r"
+    if [[ -n "$DMARC_RUA" ]]; then
+        dmarc_value="${dmarc_value}; rua=mailto:${DMARC_RUA#mailto:}"
+    fi
+    cf_upsert_txt_prefix "$zone_id" "_dmarc.${domain}" "v=DMARC1" "$dmarc_value"
+    steps="$(jq -c '. + ["cloudflare:mx","cloudflare:spf","cloudflare:dkim","cloudflare:dmarc"]' <<<"$steps")"
+
+    cf_upsert_tunnel_ingress "$webmail_host" "$WEBMAIL_HTTPS_ORIGIN" true
+    steps="$(jq -c '. + ["cloudflare:webmail-https"]' <<<"$steps")"
+
+    jq -nc \
+        --arg domain "$domain" \
+        --arg mail_host "$mail_host" \
+        --arg webmail_host "$webmail_host" \
+        --arg relay "$MAIL_RELAY_HOST" \
+        --argjson steps "$steps" \
+        '{ok:true,domain:$domain,mail_host:$mail_host,webmail_host:$webmail_host,relay:$relay,steps:$steps}'
+}
+
+case "${1:-}" in
+    onboard)
+        [[ $# -eq 3 ]] || { echo "usage: $0 onboard DOMAIN HESTIA_USER" >&2; exit 2; }
+        onboard "${2,,}" "$3"
+        ;;
+    *)
+        echo "unsupported action: ${1:-}" >&2
+        exit 2
+        ;;
+esac
