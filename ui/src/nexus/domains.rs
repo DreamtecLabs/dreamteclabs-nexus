@@ -7,6 +7,18 @@ use wasm_bindgen_futures::spawn_local;
 use web_sys::HtmlInputElement;
 use yew::prelude::*;
 
+const REQUIRED_CHECKS: [(&str, &str); 9] = [
+    ("mail_a", "A"),
+    ("mx", "MX"),
+    ("spf", "SPF"),
+    ("dkim", "DKIM"),
+    ("dmarc", "DMARC"),
+    ("smtp_submission", "SMTP"),
+    ("imap_tls", "IMAP"),
+    ("webmail_tunnel_dns", "Webmail DNS"),
+    ("webmail_tls", "Webmail TLS"),
+];
+
 fn bool_value(value: &Value, key: &str) -> bool {
     value.get(key).and_then(Value::as_bool).unwrap_or(false)
 }
@@ -20,13 +32,16 @@ fn status_badge(ok: bool, label: &str) -> Html {
     }
 }
 
-fn check_badge(result: Option<&Value>, key: &str, label: &str) -> Html {
-    let ok = result
+fn check_ok(result: Option<&Value>, key: &str) -> Option<bool> {
+    result
         .and_then(|value| value.get("checks"))
         .and_then(|checks| checks.get(key))
         .and_then(|check| check.get("ok"))
-        .and_then(Value::as_bool);
+        .and_then(Value::as_bool)
+}
 
+fn check_badge(result: Option<&Value>, key: &str, label: &str) -> Html {
+    let ok = check_ok(result, key);
     html! {
         <span class={classes!("nexus-domain-check", match ok { Some(true) => "ok", Some(false) => "bad", None => "idle" })}>
             <i class={match ok { Some(true) => "fa fa-check-circle", Some(false) => "fa fa-times-circle", None => "fa fa-circle-o" }}></i>
@@ -35,11 +50,27 @@ fn check_badge(result: Option<&Value>, key: &str, label: &str) -> Html {
     }
 }
 
+fn configured_count(result: Option<&Value>) -> usize {
+    REQUIRED_CHECKS
+        .iter()
+        .filter(|(key, _)| check_ok(result, key) == Some(true))
+        .count()
+}
+
+fn result_healthy(result: Option<&Value>) -> bool {
+    result
+        .and_then(|value| value.get("healthy"))
+        .and_then(Value::as_bool)
+        .unwrap_or(false)
+}
+
 #[function_component(NexusDomains)]
 pub fn nexus_domains() -> Html {
     let inventory = use_state(|| None::<Result<Value, String>>);
     let validations = use_state(BTreeMap::<String, Value>::new);
     let busy_domain = use_state(|| None::<String>);
+    let busy_action = use_state(|| None::<String>);
+    let action_results = use_state(BTreeMap::<String, Result<String, String>>::new);
     let onboard_domain = use_state(String::new);
     let hestia_user = use_state(|| "admin".to_string());
     let onboarding = use_state(|| None::<Result<Value, String>>);
@@ -58,10 +89,13 @@ pub fn nexus_domains() -> Html {
     let validate_domain = {
         let validations = validations.clone();
         let busy_domain = busy_domain.clone();
+        let busy_action = busy_action.clone();
         Callback::from(move |domain: String| {
             let validations = validations.clone();
             let busy_domain = busy_domain.clone();
+            let busy_action = busy_action.clone();
             busy_domain.set(Some(domain.clone()));
+            busy_action.set(Some("validate".to_string()));
             spawn_local(async move {
                 let result: Result<Value, _> =
                     http_post("/domains/validate", Some(json!({"domain": domain.clone()}))).await;
@@ -79,6 +113,61 @@ pub fn nexus_domains() -> Html {
                 }
                 validations.set(next);
                 busy_domain.set(None);
+                busy_action.set(None);
+            });
+        })
+    };
+
+    let reconcile_domain = {
+        let validations = validations.clone();
+        let busy_domain = busy_domain.clone();
+        let busy_action = busy_action.clone();
+        let action_results = action_results.clone();
+        let hestia_user = hestia_user.clone();
+        Callback::from(move |domain: String| {
+            let validations = validations.clone();
+            let busy_domain = busy_domain.clone();
+            let busy_action = busy_action.clone();
+            let action_results = action_results.clone();
+            let user = (*hestia_user).trim().to_string();
+            busy_domain.set(Some(domain.clone()));
+            busy_action.set(Some("reconcile".to_string()));
+            spawn_local(async move {
+                let result: Result<Value, _> = http_post(
+                    "/domains/onboard",
+                    Some(json!({"domain":domain.clone(),"hestia-user":user})),
+                )
+                .await;
+
+                let mut messages = (*action_results).clone();
+                match result {
+                    Ok(value) => {
+                        if let Some(validation) = value.get("validation") {
+                            let mut next = (*validations).clone();
+                            next.insert(domain.clone(), validation.clone());
+                            validations.set(next);
+                        }
+                        let healthy = value
+                            .get("validation")
+                            .and_then(|v| v.get("healthy"))
+                            .and_then(Value::as_bool)
+                            .unwrap_or(false);
+                        messages.insert(
+                            domain.clone(),
+                            Ok(if healthy {
+                                "Configuration reconciled and validated successfully.".to_string()
+                            } else {
+                                "Reconciliation completed, but one or more live checks still need attention.".to_string()
+                            }),
+                        );
+                    }
+                    Err(err) => {
+                        messages.insert(domain.clone(), Err(err.to_string()));
+                    }
+                }
+                action_results.set(messages);
+                busy_domain.set(None);
+                busy_action.set(None);
             });
         })
     };
@@ -87,6 +176,7 @@ pub fn nexus_domains() -> Html {
         let onboard_domain = onboard_domain.clone();
         let hestia_user = hestia_user.clone();
         let onboarding = onboarding.clone();
+        let validations = validations.clone();
         Callback::from(move |_| {
             let domain = (*onboard_domain).trim().to_ascii_lowercase();
             if domain.is_empty() {
@@ -96,12 +186,20 @@ pub fn nexus_domains() -> Html {
             let user = (*hestia_user).trim().to_string();
             onboarding.set(None);
             let onboarding = onboarding.clone();
+            let validations = validations.clone();
             spawn_local(async move {
                 let result: Result<Value, _> = http_post(
                     "/domains/onboard",
-                    Some(json!({"domain":domain,"hestia-user":user})),
+                    Some(json!({"domain":domain.clone(),"hestia-user":user})),
                 )
                 .await;
+                if let Ok(value) = &result {
+                    if let Some(validation) = value.get("validation") {
+                        let mut next = (*validations).clone();
+                        next.insert(domain, validation.clone());
+                        validations.set(next);
+                    }
+                }
                 onboarding.set(Some(result.map_err(|err| err.to_string())));
             });
         })
@@ -137,12 +235,12 @@ pub fn nexus_domains() -> Html {
                 <div>
                     <span class="nexus-eyebrow">{"Nexus · Domains & Hosting"}</span>
                     <h1>{"One control plane for DNS, mail and webmail."}</h1>
-                    <p>{"Nexus keeps mail records DDNS-owned and DNS-only, while webmail remains Cloudflare Tunnel-owned. Live checks make the operational state explicit before changes are made."}</p>
+                    <p>{"Validate the current state, see exactly what is missing, and reconcile incomplete domains with one click. Nexus only creates or updates the components it owns and fails closed on ambiguous conflicts."}</p>
                 </div>
                 <div class="nexus-domain-policy-card">
-                    <span>{"Ownership policy"}</span>
-                    <strong>{"Fail closed"}</strong>
-                    <small>{"Conflicting MX/TXT records or DDNS-managed webmail stop onboarding instead of being overwritten."}</small>
+                    <span>{"Reconciliation policy"}</span>
+                    <strong>{"Idempotent · Fail closed"}</strong>
+                    <small>{"Existing correct configuration is preserved. Conflicting MX/TXT records or DDNS-managed webmail stop repair instead of being overwritten."}</small>
                 </div>
             </section>
 
@@ -158,24 +256,48 @@ pub fn nexus_domains() -> Html {
                                 <div><span>{"Managed domains"}</span><strong>{domains.len()}</strong><small>{"Nexus source of truth"}</small></div>
                                 <div><span>{"Mail relay"}</span><strong>{data["defaults"]["relay_hostname"].as_str().unwrap_or("—")}</strong><small>{data["defaults"]["relay_ipv4"].as_str().unwrap_or("—")}</small></div>
                                 <div><span>{"Hestia"}</span><strong>{data["defaults"]["hestia_host"].as_str().unwrap_or("—")}</strong><small>{"Exim · Dovecot · Roundcube"}</small></div>
-                                <div><span>{"Webmail origin"}</span><strong>{"HTTPS :443"}</strong><small>{"Tunnel · No TLS Verify"}</small></div>
+                                <div><span>{"Repair"}</span><strong>{"One click"}</strong><small>{"Reconcile then validate"}</small></div>
                             </div>
                             <section class="nexus-domain-inventory">
-                                <div class="nexus-domain-section-title"><div><h2>{"Domain inventory"}</h2><p>{"Live validation is read-only and never exposes credentials or provider tokens."}</p></div></div>
+                                <div class="nexus-domain-section-title"><div><h2>{"Domain inventory"}</h2><p>{"Validate is read-only. Fix configuration reconciles missing owned components and immediately validates the result."}</p></div></div>
                                 <div class="nexus-domain-table">
-                                    <div class="nexus-domain-row header"><span>{"Domain"}</span><span>{"Capabilities"}</span><span>{"Health checks"}</span><span>{"Action"}</span></div>
+                                    <div class="nexus-domain-row header"><span>{"Domain"}</span><span>{"Capabilities"}</span><span>{"Configuration"}</span><span>{"Action"}</span></div>
                                     {for domains.into_iter().map(|domain| {
                                         let name = domain.get("name").and_then(Value::as_str).unwrap_or("unknown").to_string();
                                         let result = validations.get(&name);
+                                        let healthy = result_healthy(result);
+                                        let configured = configured_count(result);
                                         let is_busy = (*busy_domain).as_ref() == Some(&name);
-                                        let callback = {
+                                        let validating = is_busy && (*busy_action).as_deref() == Some("validate");
+                                        let reconciling = is_busy && (*busy_action).as_deref() == Some("reconcile");
+                                        let validate_callback = {
                                             let validate_domain = validate_domain.clone();
                                             let name = name.clone();
                                             Callback::from(move |_| validate_domain.emit(name.clone()))
                                         };
+                                        let reconcile_callback = {
+                                            let reconcile_domain = reconcile_domain.clone();
+                                            let name = name.clone();
+                                            Callback::from(move |_| reconcile_domain.emit(name.clone()))
+                                        };
+                                        let message = action_results.get(&name);
                                         html! {
                                             <div class="nexus-domain-row">
-                                                <span class="nexus-domain-name"><strong>{name.clone()}</strong><small>{if result.and_then(|r| r.get("healthy")).and_then(Value::as_bool).unwrap_or(false) { "Healthy" } else if result.is_some() { "Needs attention" } else { "Not checked" }}</small></span>
+                                                <span class="nexus-domain-name">
+                                                    <strong>{name.clone()}</strong>
+                                                    <small>{
+                                                        if result.is_none() { "Not checked".to_string() }
+                                                        else if healthy { "Active · Healthy".to_string() }
+                                                        else { format!("Incomplete · {configured}/{} configured", REQUIRED_CHECKS.len()) }
+                                                    }</small>
+                                                    {
+                                                        match message {
+                                                            Some(Ok(text)) => html! { <small class="ok">{text}</small> },
+                                                            Some(Err(text)) => html! { <small class="error">{format!("Repair stopped safely: {text}")}</small> },
+                                                            None => html! {},
+                                                        }
+                                                    }
+                                                </span>
                                                 <span class="nexus-domain-capabilities">
                                                     {status_badge(bool_value(&domain, "mail"), "Mail")}
                                                     {status_badge(bool_value(&domain, "webmail"), "Webmail")}
@@ -183,16 +305,17 @@ pub fn nexus_domains() -> Html {
                                                     {status_badge(bool_value(&domain, "tunnel"), "Tunnel")}
                                                 </span>
                                                 <span class="nexus-domain-checks">
-                                                    {check_badge(result, "mail-a", "A")}
-                                                    {check_badge(result, "mx", "MX")}
-                                                    {check_badge(result, "spf", "SPF")}
-                                                    {check_badge(result, "dkim", "DKIM")}
-                                                    {check_badge(result, "dmarc", "DMARC")}
-                                                    {check_badge(result, "smtp-starttls", "SMTP")}
-                                                    {check_badge(result, "imap-tls", "IMAP")}
-                                                    {check_badge(result, "webmail-tls", "Webmail")}
+                                                    {for REQUIRED_CHECKS.iter().map(|(key, label)| check_badge(result, key, label))}
                                                 </span>
-                                                <span><button class="nexus-domain-action" onclick={callback} disabled={is_busy}>{if is_busy { "Checking…" } else { "Validate" }}</button></span>
+                                                <span>
+                                                    {
+                                                        if result.is_some() && !healthy {
+                                                            html! { <button class="nexus-domain-action" onclick={reconcile_callback} disabled={is_busy}><i class="fa fa-magic"></i>{if reconciling { "Fixing…" } else { "Fix configuration" }}</button> }
+                                                        } else {
+                                                            html! { <button class="nexus-domain-action" onclick={validate_callback} disabled={is_busy}>{if validating { "Checking…" } else if healthy { "Revalidate" } else { "Validate" }}</button> }
+                                                        }
+                                                    }
+                                                </span>
                                             </div>
                                         }
                                     })}
@@ -205,26 +328,29 @@ pub fn nexus_domains() -> Html {
             }
 
             <section class="nexus-domain-ownership">
-                <div class="nexus-domain-section-title"><div><h2>{"Ownership model"}</h2><p>{"Automation is explicit about which system owns each hostname."}</p></div></div>
+                <div class="nexus-domain-section-title"><div><h2>{"Ownership model"}</h2><p>{"Reconciliation changes only the systems Nexus explicitly owns."}</p></div></div>
                 <div class="nexus-domain-ownership-grid">
-                    <article><i class="fa fa-refresh"></i><span>{"Central DDNS"}</span><strong>{"mail.domain"}</strong><p>{"Dynamic public A record. Always DNS-only. Nexus never writes this A record through Cloudflare API."}</p></article>
+                    <article><i class="fa fa-refresh"></i><span>{"Central DDNS"}</span><strong>{"mail.domain"}</strong><p>{"Dynamic public A record. Always DNS-only. Nexus never writes this A record through the Cloudflare API."}</p></article>
                     <article><i class="fa fa-cloud"></i><span>{"Cloudflare Tunnel"}</span><strong>{"webmail.domain"}</strong><p>{"Proxied Tunnel route. Never placed in the DDNS records file."}</p></article>
-                    <article><i class="fa fa-envelope"></i><span>{"Hestia"}</span><strong>{"Mail services"}</strong><p>{"Exim, Dovecot, Roundcube, DKIM and certificate lifecycle stay on the Hestia host."}</p></article>
+                    <article><i class="fa fa-envelope"></i><span>{"Hestia"}</span><strong>{"Mail services"}</strong><p>{"Mail domain, Roundcube, DKIM and certificate lifecycle remain on the Hestia host."}</p></article>
                 </div>
             </section>
 
             <section class="nexus-domain-onboarding">
-                <div class="nexus-domain-section-title"><div><h2>{"Onboard mail domain"}</h2><p>{"Privileged and idempotent. Existing conflicting ownership is refused instead of silently replaced."}</p></div></div>
+                <div class="nexus-domain-section-title"><div><h2>{"Add or complete a mail domain"}</h2><p>{"The same idempotent reconciler handles brand-new domains and domains that were only partially configured."}</p></div></div>
                 <div class="nexus-domain-onboarding-form">
                     <label><span>{"Domain"}</span><input value={(*onboard_domain).clone()} oninput={domain_input} placeholder="example.com" /></label>
                     <label><span>{"Hestia owner"}</span><input value={(*hestia_user).clone()} oninput={user_input} placeholder="admin" /></label>
-                    <button onclick={run_onboarding}><i class="fa fa-magic"></i>{"Run onboarding"}</button>
+                    <button onclick={run_onboarding}><i class="fa fa-magic"></i>{"Complete setup"}</button>
                 </div>
                 {
                     match onboarding.as_ref() {
                         None => html! {},
-                        Some(Ok(value)) => html! { <div class="nexus-domain-result ok"><strong>{"Onboarding completed."}</strong><span>{value["message"].as_str().unwrap_or("Providers updated and validation executed.")}</span></div> },
-                        Some(Err(err)) => html! { <div class="nexus-domain-result error"><strong>{"Onboarding stopped safely."}</strong><span>{err}</span></div> },
+                        Some(Ok(value)) => {
+                            let healthy = value.get("validation").and_then(|v| v.get("healthy")).and_then(Value::as_bool).unwrap_or(false);
+                            html! { <div class={classes!("nexus-domain-result", if healthy { "ok" } else { "error" })}><strong>{if healthy { "Setup completed and validated." } else { "Setup completed, but live validation still needs attention." }}</strong><span>{"The domain was reconciled using the same ownership and conflict-safety policy as one-click repair."}</span></div> }
+                        },
+                        Some(Err(err)) => html! { <div class="nexus-domain-result error"><strong>{"Setup stopped safely."}</strong><span>{err}</span></div> },
                     }
                 }
             </section>
