@@ -19,6 +19,18 @@ if grep -Eq 'cf_upsert_single_dns .* A .*mail_host' services/nexus-domains-helpe
     exit 1
 fi
 
+# Cloudflare failures must be actionable in the UI: validate credentials before
+# any provider mutation and preserve the HTTP status plus Cloudflare error body.
+grep -q '^validate_cloudflare_config() {' services/nexus-domains-helper
+grep -q 'validate_cloudflare_config' services/nexus-domains-helper
+grep -q 'NEXUS_CF_ACCOUNT_ID must be a 32-character Cloudflare account ID' services/nexus-domains-helper
+grep -q 'NEXUS_CF_TUNNEL_ID must be a Cloudflare tunnel UUID' services/nexus-domains-helper
+grep -q 'Cloudflare API .* failed with HTTP' services/nexus-domains-helper
+if grep -q -- '-fsS' services/nexus-domains-helper; then
+    echo 'Cloudflare requests must not hide API error bodies with curl -f' >&2
+    exit 1
+fi
+
 # With set -u, values referenced by later assignments in the same local builtin
 # are expanded before the earlier local variables exist. Keep DDNS inputs and
 # derived values in separate declarations.
