@@ -22,12 +22,19 @@ fi
 # Cloudflare failures must be actionable in the UI: validate credentials before
 # any provider mutation and preserve the HTTP status plus Cloudflare error body.
 grep -q '^validate_cloudflare_config() {' services/nexus-domains-helper
-grep -q 'validate_cloudflare_config' services/nexus-domains-helper
 grep -q 'NEXUS_CF_ACCOUNT_ID must be a 32-character Cloudflare account ID' services/nexus-domains-helper
 grep -q 'NEXUS_CF_TUNNEL_ID must be a Cloudflare tunnel UUID' services/nexus-domains-helper
 grep -q 'Cloudflare API .* failed with HTTP' services/nexus-domains-helper
+grep -q -- '--retry-all-errors' services/nexus-domains-helper
 if grep -q -- '-fsS' services/nexus-domains-helper; then
     echo 'Cloudflare requests must not hide API error bodies with curl -f' >&2
+    exit 1
+fi
+
+validation_call_line="$(grep -nE '^[[:space:]]+validate_cloudflare_config$' services/nexus-domains-helper | head -n1 | cut -d: -f1)"
+first_mutation_line="$(grep -nE '^[[:space:]]+ensure_ddns_record ' services/nexus-domains-helper | head -n1 | cut -d: -f1)"
+if [[ -z "$validation_call_line" || -z "$first_mutation_line" || "$validation_call_line" -ge "$first_mutation_line" ]]; then
+    echo 'Cloudflare configuration must be validated in onboard() before the first provider mutation' >&2
     exit 1
 fi
 
