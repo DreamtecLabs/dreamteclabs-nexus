@@ -41,6 +41,23 @@ if grep -Fq 'local zone="$1" record="$2" webmail="webmail.${zone}"' services/nex
     exit 1
 fi
 
+# Reconciliation retries belong to the API process so its timeout owns the
+# active helper directly. The helper remains a single idempotent pass and emits
+# step-aware diagnostics; configuration/policy conflicts remain fail-closed.
+grep -q '^const HELPER_RECONCILE_ATTEMPTS:' server/src/api/nexus/domains.rs
+grep -q '^const HELPER_RETRY_DELAY:' server/src/api/nexus/domains.rs
+grep -q '^fn helper_exit_code_is_retryable' server/src/api/nexus/domains.rs
+grep -q 'onboard-retry' server/src/api/nexus/domains.rs
+grep -Fq 'Some(3) | Some(5) | Some(42) | Some(43)' server/src/api/nexus/domains.rs
+grep -q 'reconcile step.*failed' services/nexus-domains-helper
+grep -q 'BASH_SUBSHELL == 0' services/nexus-domains-helper
+grep -q 'trap - ERR' services/nexus-domains-helper
+grep -q 'trap reconcile_error ERR' services/nexus-domains-helper
+if grep -q 'onboard-once' services/nexus-domains-helper; then
+    echo 'Domains helper must not spawn a nested reconciliation process' >&2
+    exit 1
+fi
+
 # The proxmox API schema exposes the Rust hestia_user argument with its
 # underscore intact. A kebab-case JSON key is rejected before the helper runs.
 grep -q '"hestia_user":user' ui/src/nexus/domains.rs

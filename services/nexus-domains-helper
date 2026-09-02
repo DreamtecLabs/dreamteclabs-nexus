@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-set -euo pipefail
+set -Eeuo pipefail
 
 ENV_FILE="${NEXUS_DOMAINS_ENV_FILE:-/etc/proxmox-datacenter-manager/domains-hosting.env}"
 if [[ -r "$ENV_FILE" ]]; then
@@ -111,10 +111,16 @@ cf_request() {
         args+=(--data "$body")
     fi
 
+    # Transport failures are intentionally captured here so their curl details
+    # can be preserved. Temporarily mask the reconciliation ERR trap and restore
+    # it immediately afterwards; the returned failure is still attributed to the
+    # active reconciliation step by the caller.
+    trap - ERR
     set +e
     http_code="$(curl "${args[@]}" "${CF_API_BASE}${path}" 2>"$stderr_file")"
     curl_status=$?
     set -e
+    trap reconcile_error ERR
 
     if [[ $curl_status -ne 0 ]]; then
         message="$(tr '\n' ' ' <"$stderr_file" | sed 's/[[:space:]]*$//')"
@@ -306,6 +312,14 @@ wait_for_mail_a() {
     return 1
 }
 
+reconcile_error() {
+    local rc=$?
+    if (( BASH_SUBSHELL == 0 )); then
+        echo "reconcile step '${RECONCILE_STEP:-unknown}' failed (rc=${rc})" >&2
+    fi
+    return "$rc"
+}
+
 onboard() {
     local domain="$1" hestia_user="$2"
     validate_domain "$domain"
@@ -316,21 +330,26 @@ onboard() {
     local tunnel_id="${NEXUS_CF_TUNNEL_ID}" steps='[]'
     local tunnel_target="${tunnel_id}.cfargotunnel.com"
 
+    RECONCILE_STEP="ddns:mail-record"
     ensure_ddns_record "$domain" "$mail_host"
     steps="$(jq -c '. + ["ddns:mail-record"]' <<<"$steps")"
 
+    RECONCILE_STEP="cloudflare:webmail-http"
     zone_id="$(cf_zone_id "$domain")"
     cf_upsert_single_dns "$zone_id" CNAME "$webmail_host" "$tunnel_target" true
     cf_upsert_tunnel_ingress "$webmail_host" "$WEBMAIL_HTTP_ORIGIN" false
     steps="$(jq -c '. + ["cloudflare:webmail-http"]' <<<"$steps")"
 
+    RECONCILE_STEP="hestia:mail-domain"
     hestia_ensure_mail_domain "$hestia_user" "$domain"
     steps="$(jq -c '. + ["hestia:mail-domain","hestia:dkim","hestia:roundcube"]' <<<"$steps")"
 
+    RECONCILE_STEP="hestia:letsencrypt"
     public_ip="$(wait_for_mail_a "$mail_host")"
     hestia_issue_mail_certificate "$hestia_user" "$domain"
     steps="$(jq -c '. + ["hestia:letsencrypt"]' <<<"$steps")"
 
+    RECONCILE_STEP="cloudflare:mail-dns"
     cf_upsert_single_dns "$zone_id" MX "$domain" "$mail_host" false 10
     cf_upsert_txt_prefix "$zone_id" "$domain" "v=spf1" "v=spf1 a mx ip4:${public_ip} ip4:${MAIL_RELAY_IPV4} ~all"
 
@@ -344,9 +363,11 @@ onboard() {
     cf_upsert_txt_prefix "$zone_id" "_dmarc.${domain}" "v=DMARC1" "$dmarc_value"
     steps="$(jq -c '. + ["cloudflare:mx","cloudflare:spf","cloudflare:dkim","cloudflare:dmarc"]' <<<"$steps")"
 
+    RECONCILE_STEP="cloudflare:webmail-https"
     cf_upsert_tunnel_ingress "$webmail_host" "$WEBMAIL_HTTPS_ORIGIN" true
     steps="$(jq -c '. + ["cloudflare:webmail-https"]' <<<"$steps")"
 
+    RECONCILE_STEP="complete"
     jq -nc \
         --arg domain "$domain" \
         --arg mail_host "$mail_host" \
@@ -359,6 +380,7 @@ onboard() {
 case "${1:-}" in
     onboard)
         [[ $# -eq 3 ]] || { echo "usage: $0 onboard DOMAIN HESTIA_USER" >&2; exit 2; }
+        trap reconcile_error ERR
         onboard "${2,,}" "$3"
         ;;
     *)
