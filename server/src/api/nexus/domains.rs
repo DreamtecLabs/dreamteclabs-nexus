@@ -19,6 +19,8 @@ const INVENTORY_FILENAME: &str = configdir!("/domains-hosting.json");
 const AUDIT_FILENAME: &str = configdir!("/domains-hosting-audit.log");
 const DEFAULT_HELPER: &str = "/usr/libexec/proxmox/nexus-domains-helper";
 const HELPER_TIMEOUT: Duration = Duration::from_secs(300);
+const HELPER_RECONCILE_ATTEMPTS: usize = 3;
+const HELPER_RETRY_DELAY: Duration = Duration::from_secs(3);
 
 static INVENTORY_WRITE_LOCK: Mutex<()> = Mutex::new(());
 
@@ -164,6 +166,25 @@ fn persist_mail_domain(domain: &str) -> Result<(), Error> {
     std::fs::rename(&temporary, INVENTORY_FILENAME)
         .context("unable to atomically replace domains inventory")?;
     Ok(())
+}
+
+fn helper_exit_code_is_retryable(code: Option<i32>) -> bool {
+    !matches!(code, Some(3 | 5 | 42 | 43))
+}
+
+fn helper_failure_detail(stdout: &[u8], stderr: &[u8], code: Option<i32>) -> String {
+    let stderr = String::from_utf8_lossy(stderr).trim().to_string();
+    if !stderr.is_empty() {
+        return stderr;
+    }
+    let stdout = String::from_utf8_lossy(stdout).trim().to_string();
+    if !stdout.is_empty() {
+        return stdout;
+    }
+    match code {
+        Some(code) => format!("helper exited with code {code} without diagnostic output"),
+        None => "helper terminated without diagnostic output".to_string(),
+    }
 }
 
 async fn command_output(program: &str, args: &[&str]) -> Result<String, Error> {
@@ -418,32 +439,75 @@ pub async fn onboard_domain(domain: String, hestia_user: Option<String>) -> Resu
     let user = hestia_user.unwrap_or_else(|| "admin".to_string());
     validate_hestia_user(&user)?;
 
-    let mut command = Command::new(&helper);
-    command
-        .arg("onboard")
-        .arg(&domain)
-        .arg(&user)
-        .stdout(Stdio::piped())
-        .stderr(Stdio::piped())
-        .kill_on_drop(true);
+    let mut helper_result = None;
+    let mut last_failure = String::new();
 
-    let output = match tokio::time::timeout(HELPER_TIMEOUT, command.output()).await {
-        Ok(output) => output.context("failed to start domains onboarding helper")?,
-        Err(_) => {
-            append_audit("onboard", &domain, "failed: helper timed out").await?;
-            bail!("domain onboarding helper timed out");
+    for attempt in 1..=HELPER_RECONCILE_ATTEMPTS {
+        let mut command = Command::new(&helper);
+        command
+            .arg("onboard")
+            .arg(&domain)
+            .arg(&user)
+            .stdout(Stdio::piped())
+            .stderr(Stdio::piped())
+            .kill_on_drop(true);
+
+        let output = match tokio::time::timeout(HELPER_TIMEOUT, command.output()).await {
+            Ok(output) => output.context("failed to start domains onboarding helper")?,
+            Err(_) => {
+                last_failure = format!(
+                    "helper timed out on attempt {attempt}/{HELPER_RECONCILE_ATTEMPTS}"
+                );
+                if attempt < HELPER_RECONCILE_ATTEMPTS {
+                    tokio::time::sleep(HELPER_RETRY_DELAY).await;
+                    continue;
+                }
+                append_audit("onboard", &domain, &format!("failed: {last_failure}")).await?;
+                bail!("domain onboarding failed: {last_failure}");
+            }
+        };
+
+        if output.status.success() {
+            let stdout = String::from_utf8_lossy(&output.stdout).trim().to_string();
+            helper_result = Some(
+                serde_json::from_str(&stdout)
+                    .with_context(|| format!("domains helper returned invalid JSON: {stdout}"))?,
+            );
+            if attempt > 1 {
+                append_audit(
+                    "onboard-retry",
+                    &domain,
+                    &format!("recovered on attempt {attempt}/{HELPER_RECONCILE_ATTEMPTS}"),
+                )
+                .await?;
+            }
+            break;
         }
-    };
 
-    if !output.status.success() {
-        let stderr = String::from_utf8_lossy(&output.stderr).trim().to_string();
-        append_audit("onboard", &domain, &format!("failed: {stderr}")).await?;
-        bail!("domain onboarding failed: {stderr}");
+        let code = output.status.code();
+        last_failure = helper_failure_detail(&output.stdout, &output.stderr, code);
+        let retryable = helper_exit_code_is_retryable(code);
+
+        if retryable && attempt < HELPER_RECONCILE_ATTEMPTS {
+            append_audit(
+                "onboard-retry",
+                &domain,
+                &format!(
+                    "attempt {attempt}/{HELPER_RECONCILE_ATTEMPTS} failed; retrying: {last_failure}"
+                ),
+            )
+            .await?;
+            tokio::time::sleep(HELPER_RETRY_DELAY).await;
+            continue;
+        }
+
+        append_audit("onboard", &domain, &format!("failed: {last_failure}")).await?;
+        bail!("domain onboarding failed: {last_failure}");
     }
 
-    let stdout = String::from_utf8_lossy(&output.stdout).trim().to_string();
-    let helper_result: Value = serde_json::from_str(&stdout)
-        .with_context(|| format!("domains helper returned invalid JSON: {stdout}"))?;
+    let helper_result = helper_result.context(format!(
+        "domain onboarding failed after {HELPER_RECONCILE_ATTEMPTS} attempts: {last_failure}"
+    ))?;
 
     if let Err(err) = persist_mail_domain(&domain) {
         append_audit(
@@ -530,5 +594,15 @@ mod tests {
         assert_eq!(domains[0]["webmail"], true);
         assert_eq!(domains[0]["ddns"], true);
         assert_eq!(domains[0]["tunnel"], true);
+    }
+
+    #[test]
+    fn retry_policy_keeps_configuration_conflicts_fail_closed() {
+        assert!(helper_exit_code_is_retryable(Some(1)));
+        assert!(helper_exit_code_is_retryable(None));
+        assert!(!helper_exit_code_is_retryable(Some(3)));
+        assert!(!helper_exit_code_is_retryable(Some(5)));
+        assert!(!helper_exit_code_is_retryable(Some(42)));
+        assert!(!helper_exit_code_is_retryable(Some(43)));
     }
 }
