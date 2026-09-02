@@ -439,7 +439,7 @@ pub async fn onboard_domain(domain: String, hestia_user: Option<String>) -> Resu
     let user = hestia_user.unwrap_or_else(|| "admin".to_string());
     validate_hestia_user(&user)?;
 
-    let mut helper_result = None;
+    let mut helper_result: Option<Value> = None;
     let mut last_failure = String::new();
 
     for attempt in 1..=HELPER_RECONCILE_ATTEMPTS {
