@@ -19,4 +19,14 @@ if grep -Eq 'cf_upsert_single_dns .* A .*mail_host' services/nexus-domains-helpe
     exit 1
 fi
 
+# A compiled Yew component can still render as unstyled HTML if its stylesheet
+# is never wired into the SCSS bundle. Keep the Domains surface and its import
+# coupled so this regression is caught before packaging.
+test -f ui/css/nexus-domains.scss
+grep -q '^@import "nexus-domains";' ui/css/pdm.scss
+grep -q '^\.nexus-domains {' ui/css/nexus-domains.scss
+grep -q '^\.nexus-domain-table {' ui/css/nexus-domains.scss
+grep -q '^\.nexus-domain-row {' ui/css/nexus-domains.scss
+grep -q '^\.nexus-domain-action,' ui/css/nexus-domains.scss
+
 cargo fmt --all -- --check
