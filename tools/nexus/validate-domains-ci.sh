@@ -50,6 +50,9 @@ grep -q '^fn helper_exit_code_is_retryable' server/src/api/nexus/domains.rs
 grep -q 'onboard-retry' server/src/api/nexus/domains.rs
 grep -Fq 'Some(3) | Some(5) | Some(42) | Some(43)' server/src/api/nexus/domains.rs
 grep -q 'reconcile step.*failed' services/nexus-domains-helper
+grep -q 'BASH_SUBSHELL == 0' services/nexus-domains-helper
+grep -q 'trap - ERR' services/nexus-domains-helper
+grep -q 'trap reconcile_error ERR' services/nexus-domains-helper
 if grep -q 'onboard-once' services/nexus-domains-helper; then
     echo 'Domains helper must not spawn a nested reconciliation process' >&2
     exit 1
