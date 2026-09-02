@@ -19,6 +19,16 @@ if grep -Eq 'cf_upsert_single_dns .* A .*mail_host' services/nexus-domains-helpe
     exit 1
 fi
 
+# With set -u, values referenced by later assignments in the same local builtin
+# are expanded before the earlier local variables exist. Keep DDNS inputs and
+# derived values in separate declarations.
+grep -Fq 'local zone="$1" record="$2"' services/nexus-domains-helper
+grep -Fq 'local webmail="webmail.${zone}" line="${zone}|${record}|false"' services/nexus-domains-helper
+if grep -Fq 'local zone="$1" record="$2" webmail="webmail.${zone}"' services/nexus-domains-helper; then
+    echo 'DDNS derived locals must not share the declaration with zone/record under set -u' >&2
+    exit 1
+fi
+
 # The proxmox API schema exposes the Rust hestia_user argument with its
 # underscore intact. A kebab-case JSON key is rejected before the helper runs.
 grep -q '"hestia_user":user' ui/src/nexus/domains.rs
