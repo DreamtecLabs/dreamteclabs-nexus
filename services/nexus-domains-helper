@@ -178,7 +178,8 @@ cf_upsert_tunnel_ingress() {
 }
 
 ensure_ddns_record() {
-    local zone="$1" record="$2" webmail="webmail.${zone}" line="${zone}|${record}|false"
+    local zone="$1" record="$2"
+    local webmail="webmail.${zone}" line="${zone}|${record}|false"
     [[ -n "$CLOUDFLARE_SSH_HOST" ]] || {
         echo "NEXUS_CLOUDFLARE_SSH_HOST is required for DDNS management" >&2
         exit 3
