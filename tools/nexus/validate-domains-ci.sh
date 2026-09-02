@@ -29,6 +29,17 @@ if grep -Fq 'local zone="$1" record="$2" webmail="webmail.${zone}"' services/nex
     exit 1
 fi
 
+# Reconciliation is intentionally idempotent. A transient provider/SSH/DNS
+# failure must retry the entire sequence, while policy/configuration conflicts
+# remain fail-closed and diagnostic output identifies the failed step.
+grep -q '^RECONCILE_ATTEMPTS=' services/nexus-domains-helper
+grep -q '^retryable_reconcile_rc() {' services/nexus-domains-helper
+grep -q '^onboard_once() {' services/nexus-domains-helper
+grep -q '^onboard() {' services/nexus-domains-helper
+grep -q 'domain reconciliation attempt .* retrying idempotently' services/nexus-domains-helper
+grep -q 'reconcile step.*failed' services/nexus-domains-helper
+grep -q '3|5|42|43' services/nexus-domains-helper
+
 # The proxmox API schema exposes the Rust hestia_user argument with its
 # underscore intact. A kebab-case JSON key is rejected before the helper runs.
 grep -q '"hestia_user":user' ui/src/nexus/domains.rs
