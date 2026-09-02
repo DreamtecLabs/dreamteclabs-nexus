@@ -55,6 +55,12 @@ export CARGO_BUILD_JOBS=1
 export CARGO_INCREMENTAL=0
 export MAKEFLAGS=-j1
 
+# GitHub runner workspaces can retain target/ between checkouts. Cargo normally
+# fingerprints source changes correctly, but a rapid checkout can preserve a
+# same-resolution mtime and reuse a stale server test binary. Always invalidate
+# the server package itself while keeping dependency artifacts cached.
+cargo clean -p server
+
 # Keep the repository's Debian Cargo source replacement intact. The installed
 # Proxmox/Rust build dependencies populate /usr/share/cargo/registry, including
 # internal crates such as pbs-api-types that are intentionally not on crates.io.
