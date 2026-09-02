@@ -169,7 +169,7 @@ fn persist_mail_domain(domain: &str) -> Result<(), Error> {
 }
 
 fn helper_exit_code_is_retryable(code: Option<i32>) -> bool {
-    !matches!(code, Some(3 | 5 | 42 | 43))
+    !matches!(code, Some(3) | Some(5) | Some(42) | Some(43))
 }
 
 fn helper_failure_detail(stdout: &[u8], stderr: &[u8], code: Option<i32>) -> String {
