@@ -99,8 +99,13 @@ cf_request() {
         -sS
         --connect-timeout "$CURL_CONNECT_TIMEOUT"
         --max-time "$CURL_MAX_TIME"
-        --retry 2
-        --retry-all-errors
+    )
+    case "$method" in
+        GET|PUT)
+            args+=(--retry 2 --retry-all-errors)
+            ;;
+    esac
+    args+=(
         -o "$response_file"
         -w '%{http_code}'
         -X "$method"
