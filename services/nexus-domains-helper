@@ -111,10 +111,16 @@ cf_request() {
         args+=(--data "$body")
     fi
 
+    # Transport failures are intentionally captured here so their curl details
+    # can be preserved. Temporarily mask the reconciliation ERR trap and restore
+    # it immediately afterwards; the returned failure is still attributed to the
+    # active reconciliation step by the caller.
+    trap - ERR
     set +e
     http_code="$(curl "${args[@]}" "${CF_API_BASE}${path}" 2>"$stderr_file")"
     curl_status=$?
     set -e
+    trap reconcile_error ERR
 
     if [[ $curl_status -ne 0 ]]; then
         message="$(tr '\n' ' ' <"$stderr_file" | sed 's/[[:space:]]*$//')"
@@ -308,8 +314,10 @@ wait_for_mail_a() {
 
 reconcile_error() {
     local rc=$?
-    echo "reconcile step '${RECONCILE_STEP:-unknown}' failed (rc=${rc})" >&2
-    exit "$rc"
+    if (( BASH_SUBSHELL == 0 )); then
+        echo "reconcile step '${RECONCILE_STEP:-unknown}' failed (rc=${rc})" >&2
+    fi
+    return "$rc"
 }
 
 onboard() {
