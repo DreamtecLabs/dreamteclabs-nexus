@@ -1,4 +1,5 @@
 @import "nexus";
+@import "nexus-domains";
 
 // pwt's datatable styles every td and td > div with `white-space: nowrap; overflow: hidden;
 // text-overflow: ellipsis`, which clips long Issuer/Subject/SAN values in a KVGrid that uses the
