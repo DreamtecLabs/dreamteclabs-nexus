@@ -66,19 +66,44 @@ validate_hestia_user() {
     }
 }
 
-cf_request() {
-    local method="$1" path="$2" body="${3:-}"
-    [[ -n "${NEXUS_CF_API_TOKEN:-}" ]] || {
+validate_cloudflare_config() {
+    local token="${NEXUS_CF_API_TOKEN:-}"
+    local account_id="${NEXUS_CF_ACCOUNT_ID:-}"
+    local tunnel_id="${NEXUS_CF_TUNNEL_ID:-}"
+
+    [[ -n "$token" ]] || {
         echo "NEXUS_CF_API_TOKEN is not configured" >&2
         exit 3
     }
+    [[ ! "$token" =~ ^(SEU_|YOUR_|PLACEHOLDER) ]] || {
+        echo "NEXUS_CF_API_TOKEN still contains a placeholder value" >&2
+        exit 3
+    }
+    [[ "$account_id" =~ ^[0-9a-fA-F]{32}$ ]] || {
+        echo "NEXUS_CF_ACCOUNT_ID must be a 32-character Cloudflare account ID" >&2
+        exit 3
+    }
+    [[ "$tunnel_id" =~ ^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$ ]] || {
+        echo "NEXUS_CF_TUNNEL_ID must be a Cloudflare tunnel UUID" >&2
+        exit 3
+    }
+}
+
+cf_request() {
+    local method="$1" path="$2" body="${3:-}"
+    local response_file stderr_file http_code curl_status message
+    response_file="$(mktemp)"
+    stderr_file="$(mktemp)"
+    trap 'rm -f "$response_file" "$stderr_file"' RETURN
 
     local args=(
-        -fsS
+        -sS
         --connect-timeout "$CURL_CONNECT_TIMEOUT"
         --max-time "$CURL_MAX_TIME"
         --retry 2
-        --retry-all-errors
+        --retry-connrefused
+        -o "$response_file"
+        -w '%{http_code}'
         -X "$method"
         -H "Authorization: Bearer ${NEXUS_CF_API_TOKEN}"
         -H "Content-Type: application/json"
@@ -86,13 +111,39 @@ cf_request() {
     if [[ -n "$body" ]]; then
         args+=(--data "$body")
     fi
-    curl "${args[@]}" "${CF_API_BASE}${path}"
+
+    set +e
+    http_code="$(curl "${args[@]}" "${CF_API_BASE}${path}" 2>"$stderr_file")"
+    curl_status=$?
+    set -e
+
+    if [[ $curl_status -ne 0 ]]; then
+        message="$(tr '\n' ' ' <"$stderr_file" | sed 's/[[:space:]]*$//')"
+        [[ -n "$message" ]] || message="curl exited with status ${curl_status}"
+        echo "Cloudflare API transport failure for ${method} ${path}: ${message}" >&2
+        return 1
+    fi
+
+    if [[ ! "$http_code" =~ ^2[0-9][0-9]$ ]]; then
+        message="$(jq -r '[.errors[]? | ((.code // "unknown")|tostring) + ": " + (.message // "unknown error")] | join("; ")' "$response_file" 2>/dev/null || true)"
+        [[ -n "$message" ]] || message="$(tr '\n' ' ' <"$response_file" | sed 's/[[:space:]]*$//' | cut -c1-500)"
+        [[ -n "$message" ]] || message="no response body"
+        echo "Cloudflare API ${method} ${path} failed with HTTP ${http_code}: ${message}" >&2
+        return 1
+    fi
+
+    cat "$response_file"
 }
 
 cf_zone_id() {
-    local domain="$1" response
+    local domain="$1" response zone_id
     response="$(cf_request GET "/zones?name=${domain}&status=active")"
-    jq -er '.result[0].id' <<<"$response"
+    zone_id="$(jq -r '.result[0].id // empty' <<<"$response")"
+    [[ -n "$zone_id" ]] || {
+        echo "Cloudflare has no active zone for ${domain}" >&2
+        return 1
+    }
+    printf '%s' "$zone_id"
 }
 
 cf_write_record() {
@@ -102,7 +153,10 @@ cf_write_record() {
     else
         response="$(cf_request POST "/zones/${zone_id}/dns_records" "$payload")"
     fi
-    jq -e '.success == true' >/dev/null <<<"$response"
+    jq -e '.success == true' >/dev/null <<<"$response" || {
+        echo "Cloudflare DNS write returned success=false" >&2
+        return 1
+    }
 }
 
 cf_upsert_single_dns() {
@@ -152,10 +206,6 @@ cf_upsert_txt_prefix() {
 cf_upsert_tunnel_ingress() {
     local hostname="$1" service="$2" no_tls_verify="$3"
     local account_id="${NEXUS_CF_ACCOUNT_ID:-}" tunnel_id="${NEXUS_CF_TUNNEL_ID:-}"
-    [[ -n "$account_id" && -n "$tunnel_id" ]] || {
-        echo "NEXUS_CF_ACCOUNT_ID and NEXUS_CF_TUNNEL_ID are required" >&2
-        exit 3
-    }
 
     local response config updated body
     response="$(cf_request GET "/accounts/${account_id}/cfd_tunnel/${tunnel_id}/configurations")"
@@ -174,7 +224,10 @@ cf_upsert_tunnel_ingress() {
         )' <<<"$config")"
     body="$(jq -nc --argjson config "$updated" '{config:$config}')"
     response="$(cf_request PUT "/accounts/${account_id}/cfd_tunnel/${tunnel_id}/configurations" "$body")"
-    jq -e '.success == true' >/dev/null <<<"$response"
+    jq -e '.success == true' >/dev/null <<<"$response" || {
+        echo "Cloudflare tunnel configuration returned success=false" >&2
+        return 1
+    }
 }
 
 ensure_ddns_record() {
@@ -254,10 +307,10 @@ onboard() {
     local domain="$1" hestia_user="$2"
     validate_domain "$domain"
     validate_hestia_user "$hestia_user"
+    validate_cloudflare_config
 
     local mail_host="mail.${domain}" webmail_host="webmail.${domain}" zone_id public_ip dkim_value dmarc_value
-    local tunnel_id="${NEXUS_CF_TUNNEL_ID:-}" steps='[]'
-    [[ -n "$tunnel_id" ]] || { echo "NEXUS_CF_TUNNEL_ID is required" >&2; exit 3; }
+    local tunnel_id="${NEXUS_CF_TUNNEL_ID}" steps='[]'
     local tunnel_target="${tunnel_id}.cfargotunnel.com"
 
     ensure_ddns_record "$domain" "$mail_host"
