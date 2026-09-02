@@ -135,7 +135,7 @@ pub fn nexus_domains() -> Html {
             spawn_local(async move {
                 let result: Result<Value, _> = http_post(
                     "/domains/onboard",
-                    Some(json!({"domain":domain.clone(),"hestia-user":user})),
+                    Some(json!({"domain":domain.clone(),"hestia_user":user})),
                 )
                 .await;
 
@@ -190,7 +190,7 @@ pub fn nexus_domains() -> Html {
             spawn_local(async move {
                 let result: Result<Value, _> = http_post(
                     "/domains/onboard",
-                    Some(json!({"domain":domain.clone(),"hestia-user":user})),
+                    Some(json!({"domain":domain.clone(),"hestia_user":user})),
                 )
                 .await;
                 if let Ok(value) = &result {

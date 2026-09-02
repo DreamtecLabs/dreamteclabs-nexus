@@ -19,6 +19,14 @@ if grep -Eq 'cf_upsert_single_dns .* A .*mail_host' services/nexus-domains-helpe
     exit 1
 fi
 
+# The proxmox API schema exposes the Rust hestia_user argument with its
+# underscore intact. A kebab-case JSON key is rejected before the helper runs.
+grep -q '"hestia_user":user' ui/src/nexus/domains.rs
+if grep -q '"hestia-user":user' ui/src/nexus/domains.rs; then
+    echo 'Domains UI must send the API parameter as hestia_user' >&2
+    exit 1
+fi
+
 # A compiled Yew component can still render as unstyled HTML if its stylesheet
 # is never wired into the SCSS bundle. Keep the Domains surface and its import
 # coupled so this regression is caught before packaging.
