@@ -455,9 +455,8 @@ pub async fn onboard_domain(domain: String, hestia_user: Option<String>) -> Resu
         let output = match tokio::time::timeout(HELPER_TIMEOUT, command.output()).await {
             Ok(output) => output.context("failed to start domains onboarding helper")?,
             Err(_) => {
-                last_failure = format!(
-                    "helper timed out on attempt {attempt}/{HELPER_RECONCILE_ATTEMPTS}"
-                );
+                last_failure =
+                    format!("helper timed out on attempt {attempt}/{HELPER_RECONCILE_ATTEMPTS}");
                 if attempt < HELPER_RECONCILE_ATTEMPTS {
                     tokio::time::sleep(HELPER_RETRY_DELAY).await;
                     continue;
