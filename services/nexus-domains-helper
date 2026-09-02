@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-set -euo pipefail
+set -Eeuo pipefail
 
 ENV_FILE="${NEXUS_DOMAINS_ENV_FILE:-/etc/proxmox-datacenter-manager/domains-hosting.env}"
 if [[ -r "$ENV_FILE" ]]; then
@@ -22,6 +22,8 @@ DMARC_RUA="${NEXUS_DMARC_RUA:-}"
 CURL_CONNECT_TIMEOUT="${NEXUS_CURL_CONNECT_TIMEOUT:-10}"
 CURL_MAX_TIME="${NEXUS_CURL_MAX_TIME:-30}"
 SSH_CONNECT_TIMEOUT="${NEXUS_SSH_CONNECT_TIMEOUT:-10}"
+RECONCILE_ATTEMPTS="${NEXUS_DOMAINS_RECONCILE_ATTEMPTS:-3}"
+RECONCILE_RETRY_DELAY="${NEXUS_DOMAINS_RECONCILE_RETRY_DELAY:-3}"
 SSH_OPTS=(-o BatchMode=yes -o "ConnectTimeout=${SSH_CONNECT_TIMEOUT}" -o ServerAliveInterval=15 -o ServerAliveCountMax=2)
 
 require_cmd() {
@@ -250,7 +252,13 @@ wait_for_mail_a() {
     return 1
 }
 
-onboard() {
+reconcile_error() {
+    local rc=$?
+    echo "reconcile step '${RECONCILE_STEP:-unknown}' failed (rc=${rc})" >&2
+    exit "$rc"
+}
+
+onboard_once() {
     local domain="$1" hestia_user="$2"
     validate_domain "$domain"
     validate_hestia_user "$hestia_user"
@@ -260,21 +268,26 @@ onboard() {
     [[ -n "$tunnel_id" ]] || { echo "NEXUS_CF_TUNNEL_ID is required" >&2; exit 3; }
     local tunnel_target="${tunnel_id}.cfargotunnel.com"
 
+    RECONCILE_STEP="ddns:mail-record"
     ensure_ddns_record "$domain" "$mail_host"
     steps="$(jq -c '. + ["ddns:mail-record"]' <<<"$steps")"
 
+    RECONCILE_STEP="cloudflare:webmail-http"
     zone_id="$(cf_zone_id "$domain")"
     cf_upsert_single_dns "$zone_id" CNAME "$webmail_host" "$tunnel_target" true
     cf_upsert_tunnel_ingress "$webmail_host" "$WEBMAIL_HTTP_ORIGIN" false
     steps="$(jq -c '. + ["cloudflare:webmail-http"]' <<<"$steps")"
 
+    RECONCILE_STEP="hestia:mail-domain"
     hestia_ensure_mail_domain "$hestia_user" "$domain"
     steps="$(jq -c '. + ["hestia:mail-domain","hestia:dkim","hestia:roundcube"]' <<<"$steps")"
 
+    RECONCILE_STEP="hestia:letsencrypt"
     public_ip="$(wait_for_mail_a "$mail_host")"
     hestia_issue_mail_certificate "$hestia_user" "$domain"
     steps="$(jq -c '. + ["hestia:letsencrypt"]' <<<"$steps")"
 
+    RECONCILE_STEP="cloudflare:mail-dns"
     cf_upsert_single_dns "$zone_id" MX "$domain" "$mail_host" false 10
     cf_upsert_txt_prefix "$zone_id" "$domain" "v=spf1" "v=spf1 a mx ip4:${public_ip} ip4:${MAIL_RELAY_IPV4} ~all"
 
@@ -288,9 +301,11 @@ onboard() {
     cf_upsert_txt_prefix "$zone_id" "_dmarc.${domain}" "v=DMARC1" "$dmarc_value"
     steps="$(jq -c '. + ["cloudflare:mx","cloudflare:spf","cloudflare:dkim","cloudflare:dmarc"]' <<<"$steps")"
 
+    RECONCILE_STEP="cloudflare:webmail-https"
     cf_upsert_tunnel_ingress "$webmail_host" "$WEBMAIL_HTTPS_ORIGIN" true
     steps="$(jq -c '. + ["cloudflare:webmail-https"]' <<<"$steps")"
 
+    RECONCILE_STEP="complete"
     jq -nc \
         --arg domain "$domain" \
         --arg mail_host "$mail_host" \
@@ -300,10 +315,69 @@ onboard() {
         '{ok:true,domain:$domain,mail_host:$mail_host,webmail_host:$webmail_host,relay:$relay,steps:$steps}'
 }
 
+retryable_reconcile_rc() {
+    local rc="$1"
+    case "$rc" in
+        3|5|42|43) return 1 ;;
+        *) return 0 ;;
+    esac
+}
+
+onboard() {
+    local domain="$1" hestia_user="$2" attempt rc output err_file last_error
+    validate_domain "$domain"
+    validate_hestia_user "$hestia_user"
+    [[ "$RECONCILE_ATTEMPTS" =~ ^[1-9][0-9]*$ ]] || {
+        echo "NEXUS_DOMAINS_RECONCILE_ATTEMPTS must be a positive integer" >&2
+        exit 3
+    }
+    [[ "$RECONCILE_RETRY_DELAY" =~ ^[0-9]+$ ]] || {
+        echo "NEXUS_DOMAINS_RECONCILE_RETRY_DELAY must be a non-negative integer" >&2
+        exit 3
+    }
+
+    err_file="$(mktemp)"
+    trap 'rm -f "$err_file"' RETURN
+
+    for ((attempt=1; attempt<=RECONCILE_ATTEMPTS; attempt++)); do
+        : >"$err_file"
+        if output="$($0 onboard-once "$domain" "$hestia_user" 2>"$err_file")"; then
+            if [[ "$attempt" -gt 1 ]]; then
+                echo "domain reconciliation recovered on attempt ${attempt}/${RECONCILE_ATTEMPTS}" >&2
+            fi
+            printf '%s\n' "$output"
+            rm -f "$err_file"
+            trap - RETURN
+            return 0
+        else
+            rc=$?
+        fi
+
+        last_error="$(tail -n 3 "$err_file" | tr '\n' ' ' | sed 's/[[:space:]]\+/ /g; s/[[:space:]]$//')"
+        [[ -n "$last_error" ]] || last_error="no diagnostic output"
+
+        if ! retryable_reconcile_rc "$rc" || [[ "$attempt" -ge "$RECONCILE_ATTEMPTS" ]]; then
+            echo "domain reconciliation failed on attempt ${attempt}/${RECONCILE_ATTEMPTS} (rc=${rc}): ${last_error}" >&2
+            cat "$err_file" >&2
+            rm -f "$err_file"
+            trap - RETURN
+            return "$rc"
+        fi
+
+        echo "domain reconciliation attempt ${attempt}/${RECONCILE_ATTEMPTS} failed (rc=${rc}); retrying idempotently: ${last_error}" >&2
+        sleep "$RECONCILE_RETRY_DELAY"
+    done
+}
+
 case "${1:-}" in
     onboard)
         [[ $# -eq 3 ]] || { echo "usage: $0 onboard DOMAIN HESTIA_USER" >&2; exit 2; }
         onboard "${2,,}" "$3"
+        ;;
+    onboard-once)
+        [[ $# -eq 3 ]] || { echo "usage: $0 onboard-once DOMAIN HESTIA_USER" >&2; exit 2; }
+        trap reconcile_error ERR
+        onboard_once "${2,,}" "$3"
         ;;
     *)
         echo "unsupported action: ${1:-}" >&2
