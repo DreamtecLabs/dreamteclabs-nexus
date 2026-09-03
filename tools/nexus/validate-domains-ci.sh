@@ -58,8 +58,24 @@ if grep -q 'onboard-once' services/nexus-domains-helper; then
     exit 1
 fi
 
-# The proxmox API schema exposes the Rust hestia_user argument with its
-# underscore intact. A kebab-case JSON key is rejected before the helper runs.
+# Existing configurations are a policy decision, never an implicit destructive
+# repair. Validation must surface the decision, adoption must persist a baseline,
+# and destructive replacement must require the explicit migrate action.
+grep -q 'API_METHOD_ADOPT_EXISTING_DOMAIN' server/src/api/nexus/domains.rs
+grep -q 'configuration_mode' server/src/api/nexus/domains.rs
+grep -q 'adopted_checks' server/src/api/nexus/domains.rs
+grep -q 'decision_required' server/src/api/nexus/domains.rs
+grep -q 'replace_existing' server/src/api/nexus/domains.rs
+grep -q 'helper_action = if replace_existing { "migrate" } else { "onboard" }' server/src/api/nexus/domains.rs
+grep -q '^cf_delete_record() {' services/nexus-domains-helper
+grep -q '^    migrate)' services/nexus-domains-helper
+grep -q 'refusing destructive replacement' services/nexus-domains-helper
+grep -q '"/domains/adopt"' ui/src/nexus/domains.rs
+grep -q '"replace_existing":true' ui/src/nexus/domains.rs
+grep -q 'Keep existing' ui/src/nexus/domains.rs
+grep -q 'Use Nexus standard' ui/src/nexus/domains.rs
+
+# The proxmox API schema exposes Rust arguments with their underscores intact.
 grep -q '"hestia_user":user' ui/src/nexus/domains.rs
 if grep -q '"hestia-user":user' ui/src/nexus/domains.rs; then
     echo 'Domains UI must send the API parameter as hestia_user' >&2
@@ -75,5 +91,6 @@ grep -q '^\.nexus-domains {' ui/css/nexus-domains.scss
 grep -q '^\.nexus-domain-table {' ui/css/nexus-domains.scss
 grep -q '^\.nexus-domain-row {' ui/css/nexus-domains.scss
 grep -q '^\.nexus-domain-action,' ui/css/nexus-domains.scss
+grep -q '^\.nexus-domain-choice {' ui/css/nexus-domains.scss
 
 cargo fmt --all -- --check
