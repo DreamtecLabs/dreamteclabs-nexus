@@ -32,13 +32,7 @@ const REQUIRED_CHECK_KEYS: [&str; 9] = [
     "webmail_tunnel_dns",
     "webmail_tls",
 ];
-const ADOPTABLE_DNS_CHECKS: [&str; 5] = [
-    "mx",
-    "spf",
-    "dkim",
-    "dmarc",
-    "webmail_tunnel_dns",
-];
+const ADOPTABLE_DNS_CHECKS: [&str; 5] = ["mx", "spf", "dkim", "dmarc", "webmail_tunnel_dns"];
 
 static INVENTORY_WRITE_LOCK: Mutex<()> = Mutex::new(());
 
@@ -538,18 +532,7 @@ async fn validate_domain_raw(domain: &str) -> Value {
     let dmarc = format!("_dmarc.{domain}");
     let dkim = format!("mail._domainkey.{domain}");
 
-    let (
-        mail_a,
-        webmail_a,
-        webmail_cname,
-        mx,
-        spf,
-        dkim_txt,
-        dmarc_txt,
-        smtp,
-        imap,
-        webmail_tls,
-    ) = tokio::join!(
+    let (mail_a, webmail_a, webmail_cname, mx, spf, dkim_txt, dmarc_txt, smtp, imap, webmail_tls) = tokio::join!(
         dig("A", &mail),
         dig("A", &webmail),
         dig("CNAME", &webmail),
@@ -567,21 +550,15 @@ async fn validate_domain_raw(domain: &str) -> Value {
     let spf_ok = spf_count == 1;
     let dkim_ok = txt_contains(&dkim_txt, "p=");
     let dmarc_ok = txt_prefix_count(&dmarc_txt, "v=dmarc1") == 1;
-    let webmail_resolves = webmail_a.get("ok").and_then(Value::as_bool).unwrap_or(false)
+    let webmail_resolves = webmail_a
+        .get("ok")
+        .and_then(Value::as_bool)
+        .unwrap_or(false)
         || webmail_cname
             .get("ok")
             .and_then(Value::as_bool)
             .unwrap_or(false);
     let webmail_ok = webmail_resolves && webmail_cname_is_nexus(&webmail_cname);
-    let webmail_detail = if webmail_cname
-        .get("ok")
-        .and_then(Value::as_bool)
-        .unwrap_or(false)
-    {
-        webmail_cname
-    } else {
-        webmail_a
-    };
 
     let healthy = mail_a.get("ok").and_then(Value::as_bool).unwrap_or(false)
         && webmail_ok
@@ -601,7 +578,7 @@ async fn validate_domain_raw(domain: &str) -> Value {
         "healthy": healthy,
         "checks": {
             "mail_a": mail_a,
-            "webmail_tunnel_dns": {"ok":webmail_ok,"detail":webmail_detail},
+            "webmail_tunnel_dns": {"ok":webmail_ok,"detail":webmail_cname,"resolved":webmail_a},
             "mx": {"ok":mx_ok,"detail":mx},
             "spf": {"ok":spf_ok,"count":spf_count,"detail":spf},
             "dkim": {"ok":dkim_ok,"detail":dkim_txt},
@@ -915,7 +892,11 @@ mod tests {
         let inventory = default_inventory();
         let domains = inventory["domains"].as_array().unwrap();
         assert!(domains.iter().any(|domain| domain["name"] == "mundoleo.co"));
-        assert!(domains.iter().any(|domain| domain["name"] == "kinpilot.app"));
+        assert!(
+            domains
+                .iter()
+                .any(|domain| domain["name"] == "kinpilot.app")
+        );
     }
 
     #[test]
@@ -950,8 +931,12 @@ mod tests {
 
     #[test]
     fn webmail_cname_detects_non_nexus_target() {
-        assert!(webmail_cname_is_nexus(&json!({"value":"abc.cfargotunnel.com."})));
-        assert!(!webmail_cname_is_nexus(&json!({"value":"external.example.net."})));
+        assert!(webmail_cname_is_nexus(
+            &json!({"value":"abc.cfargotunnel.com."})
+        ));
+        assert!(!webmail_cname_is_nexus(
+            &json!({"value":"external.example.net."})
+        ));
         assert!(webmail_cname_is_nexus(&json!({"value":""})));
     }
 
