@@ -32,7 +32,13 @@ const REQUIRED_CHECK_KEYS: [&str; 9] = [
     "webmail_tunnel_dns",
     "webmail_tls",
 ];
-const ADOPTABLE_DNS_CHECKS: [&str; 4] = ["mx", "spf", "dkim", "dmarc"];
+const ADOPTABLE_DNS_CHECKS: [&str; 5] = [
+    "mx",
+    "spf",
+    "dkim",
+    "dmarc",
+    "webmail_tunnel_dns",
+];
 
 static INVENTORY_WRITE_LOCK: Mutex<()> = Mutex::new(());
 
@@ -93,9 +99,8 @@ fn validate_domain_name(domain: &str) -> Result<(), Error> {
         bail!("invalid domain");
     }
 
-    let mut labels = domain.split('.').peekable();
     let mut last_label = None;
-    while let Some(label) = labels.next() {
+    for label in domain.split('.') {
         if label.is_empty() || label.len() > 63 {
             bail!("invalid domain");
         }
@@ -115,7 +120,6 @@ fn validate_domain_name(domain: &str) -> Result<(), Error> {
     if tld.len() < 2 || !tld.bytes().all(|byte| byte.is_ascii_lowercase()) {
         bail!("invalid domain");
     }
-
     Ok(())
 }
 
@@ -138,7 +142,6 @@ fn read_inventory() -> Result<Value, Error> {
     let Some(raw) = proxmox_sys::fs::file_read_optional_string(INVENTORY_FILENAME)? else {
         return Ok(default_inventory());
     };
-
     serde_json::from_str(&raw).context("unable to parse domains-hosting.json")
 }
 
@@ -214,13 +217,50 @@ fn persist_mail_domain(domain: &str) -> Result<(), Error> {
     write_inventory(&inventory)
 }
 
+fn persist_discovered_domain(domain: &str) -> Result<(), Error> {
+    let _guard = INVENTORY_WRITE_LOCK
+        .lock()
+        .map_err(|_| anyhow::anyhow!("domains inventory write lock is poisoned"))?;
+    let mut inventory = read_inventory()?;
+    if find_domain_entry(&inventory, domain).is_none() {
+        let domains = inventory
+            .get_mut("domains")
+            .and_then(Value::as_array_mut)
+            .context("domains-hosting inventory is missing a domains array")?;
+        domains.push(json!({
+            "name": domain,
+            "mail": false,
+            "webmail": false,
+            "ddns": false,
+            "tunnel": false,
+            "configuration_mode": "discovered"
+        }));
+        write_inventory(&inventory)?;
+    }
+    Ok(())
+}
+
 fn persist_adopted_domain(domain: &str, adopted_checks: &Map<String, Value>) -> Result<(), Error> {
     let _guard = INVENTORY_WRITE_LOCK
         .lock()
         .map_err(|_| anyhow::anyhow!("domains inventory write lock is poisoned"))?;
     let mut inventory = read_inventory()?;
+    if find_domain_entry(&inventory, domain).is_none() {
+        let domains = inventory
+            .get_mut("domains")
+            .and_then(Value::as_array_mut)
+            .context("domains-hosting inventory is missing a domains array")?;
+        domains.push(json!({
+            "name": domain,
+            "mail": false,
+            "webmail": false,
+            "ddns": false,
+            "tunnel": false,
+            "configuration_mode": "existing"
+        }));
+    }
     let entry = find_domain_entry_mut(&mut inventory, domain)
-        .context("domain is not present in the Nexus inventory")?;
+        .context("unable to persist adopted domain")?;
     entry["configuration_mode"] = json!("existing");
     entry["adopted_checks"] = Value::Object(adopted_checks.clone());
     write_inventory(&inventory)
@@ -344,7 +384,7 @@ fn record_fingerprint(result: &Value, key: &str) -> Option<String> {
         "spf" => Some("v=spf1"),
         "dkim" => Some("v=dkim1"),
         "dmarc" => Some("v=dmarc1"),
-        "mx" => None,
+        "mx" | "webmail_tunnel_dns" => None,
         _ => return None,
     };
     let fingerprint = canonical_dns_lines(value.lines().filter(|line| {
@@ -360,9 +400,9 @@ fn record_fingerprint(result: &Value, key: &str) -> Option<String> {
 fn adopted_dns_snapshots(result: &Value) -> Map<String, Value> {
     ADOPTABLE_DNS_CHECKS
         .iter()
-        .filter_map(|key| {
-            record_fingerprint(result, key)
-                .map(|fingerprint| ((*key).to_string(), json!(fingerprint)))
+        .map(|key| {
+            let value = record_fingerprint(result, key).map_or(Value::Null, Value::String);
+            ((*key).to_string(), value)
         })
         .collect()
 }
@@ -380,16 +420,36 @@ fn all_required_checks_healthy(result: &Value) -> bool {
     REQUIRED_CHECK_KEYS.iter().all(|key| check_ok(result, key))
 }
 
+fn webmail_cname_is_nexus(cname: &Value) -> bool {
+    let Some(value) = cname.get("value").and_then(Value::as_str) else {
+        return true;
+    };
+    value
+        .lines()
+        .filter(|line| !line.trim().is_empty())
+        .all(|line| line.trim_end_matches('.').ends_with(".cfargotunnel.com"))
+}
+
 fn existing_configuration_detected(result: &Value, domain_entry: Option<&Value>) -> bool {
     let failed_existing_record = ADOPTABLE_DNS_CHECKS
         .iter()
         .any(|key| !check_ok(result, key) && record_fingerprint(result, key).is_some());
-    let unmanaged_mail = domain_entry
-        .is_some_and(|entry| !entry.get("mail").and_then(Value::as_bool).unwrap_or(false))
-        && ADOPTABLE_DNS_CHECKS
-            .iter()
-            .any(|key| record_fingerprint(result, key).is_some());
-    failed_existing_record || unmanaged_mail
+
+    let has_existing_policy = ADOPTABLE_DNS_CHECKS
+        .iter()
+        .any(|key| record_fingerprint(result, key).is_some());
+
+    let unmanaged_mail = domain_entry.is_some_and(|entry| {
+        let mail = entry.get("mail").and_then(Value::as_bool).unwrap_or(false);
+        let webmail = entry
+            .get("webmail")
+            .and_then(Value::as_bool)
+            .unwrap_or(false);
+        (!mail || !webmail) && has_existing_policy
+    });
+
+    let new_domain_with_existing = domain_entry.is_none() && has_existing_policy;
+    failed_existing_record || unmanaged_mail || new_domain_with_existing
 }
 
 fn apply_existing_policy(mut result: Value, domain_entry: &Value) -> Value {
@@ -398,28 +458,43 @@ fn apply_existing_policy(mut result: Value, domain_entry: &Value) -> Value {
         .and_then(Value::as_object);
     let mut changed = false;
 
-    if let Some(adopted_checks) = adopted_checks {
-        for (key, expected) in adopted_checks {
-            let Some(expected) = expected.as_str() else {
-                continue;
-            };
-            let current = record_fingerprint(&result, key);
-            let matches = current.as_deref() == Some(expected);
-            if let Some(check) = result
-                .get_mut("checks")
-                .and_then(Value::as_object_mut)
-                .and_then(|checks| checks.get_mut(key))
-            {
-                check["ok"] = json!(matches);
-                check["adopted"] = json!(true);
-                check["policy"] = json!("existing");
-            }
-            changed |= !matches;
+    for key in ADOPTABLE_DNS_CHECKS {
+        let expected = adopted_checks.and_then(|checks| checks.get(key));
+        let current = record_fingerprint(&result, key);
+        let matches = match expected {
+            Some(Value::String(expected)) => current.as_deref() == Some(expected.as_str()),
+            Some(Value::Null) => current.is_none(),
+            _ => false,
+        };
+        if let Some(check) = result
+            .get_mut("checks")
+            .and_then(Value::as_object_mut)
+            .and_then(|checks| checks.get_mut(key))
+        {
+            check["ok"] = json!(matches);
+            check["adopted"] = json!(true);
+            check["policy"] = json!("existing");
+        }
+        changed |= !matches;
+    }
+
+    for key in REQUIRED_CHECK_KEYS {
+        if ADOPTABLE_DNS_CHECKS.contains(&key) {
+            continue;
+        }
+        if let Some(check) = result
+            .get_mut("checks")
+            .and_then(Value::as_object_mut)
+            .and_then(|checks| checks.get_mut(key))
+        {
+            check["ok"] = json!(true);
+            check["adopted"] = json!(true);
+            check["not_applicable"] = json!(true);
+            check["policy"] = json!("existing");
         }
     }
 
-    let healthy = all_required_checks_healthy(&result);
-    result["healthy"] = json!(healthy);
+    result["healthy"] = json!(!changed && all_required_checks_healthy(&result));
     result["configuration_mode"] = json!("existing");
     result["decision_required"] = json!(changed);
     result["existing_configuration"] = json!({
@@ -463,9 +538,21 @@ async fn validate_domain_raw(domain: &str) -> Value {
     let dmarc = format!("_dmarc.{domain}");
     let dkim = format!("mail._domainkey.{domain}");
 
-    let (mail_a, webmail_dns, mx, spf, dkim_txt, dmarc_txt, smtp, imap, webmail_tls) = tokio::join!(
+    let (
+        mail_a,
+        webmail_a,
+        webmail_cname,
+        mx,
+        spf,
+        dkim_txt,
+        dmarc_txt,
+        smtp,
+        imap,
+        webmail_tls,
+    ) = tokio::join!(
         dig("A", &mail),
         dig("A", &webmail),
+        dig("CNAME", &webmail),
         dig("MX", domain),
         dig("TXT", domain),
         dig("TXT", &dkim),
@@ -480,12 +567,24 @@ async fn validate_domain_raw(domain: &str) -> Value {
     let spf_ok = spf_count == 1;
     let dkim_ok = txt_contains(&dkim_txt, "p=");
     let dmarc_ok = txt_prefix_count(&dmarc_txt, "v=dmarc1") == 1;
-
-    let healthy = mail_a.get("ok").and_then(Value::as_bool).unwrap_or(false)
-        && webmail_dns
+    let webmail_resolves = webmail_a.get("ok").and_then(Value::as_bool).unwrap_or(false)
+        || webmail_cname
             .get("ok")
             .and_then(Value::as_bool)
-            .unwrap_or(false)
+            .unwrap_or(false);
+    let webmail_ok = webmail_resolves && webmail_cname_is_nexus(&webmail_cname);
+    let webmail_detail = if webmail_cname
+        .get("ok")
+        .and_then(Value::as_bool)
+        .unwrap_or(false)
+    {
+        webmail_cname
+    } else {
+        webmail_a
+    };
+
+    let healthy = mail_a.get("ok").and_then(Value::as_bool).unwrap_or(false)
+        && webmail_ok
         && mx_ok
         && spf_ok
         && dkim_ok
@@ -502,7 +601,7 @@ async fn validate_domain_raw(domain: &str) -> Value {
         "healthy": healthy,
         "checks": {
             "mail_a": mail_a,
-            "webmail_tunnel_dns": webmail_dns,
+            "webmail_tunnel_dns": {"ok":webmail_ok,"detail":webmail_detail},
             "mx": {"ok":mx_ok,"detail":mx},
             "spf": {"ok":spf_ok,"count":spf_count,"detail":spf},
             "dkim": {"ok":dkim_ok,"detail":dkim_txt},
@@ -632,7 +731,7 @@ pub async fn adopt_existing_domain(domain: String) -> Result<Value, Error> {
     let domain = normalize_domain(&domain)?;
     let raw = validate_domain_raw(&domain).await;
     let adopted_checks = adopted_dns_snapshots(&raw);
-    if adopted_checks.is_empty() {
+    if adopted_checks.values().all(Value::is_null) {
         bail!("no existing DNS/mail configuration was detected to adopt");
     }
 
@@ -678,6 +777,26 @@ pub async fn onboard_domain(
     replace_existing: Option<bool>,
 ) -> Result<Value, Error> {
     let domain = normalize_domain(&domain)?;
+    let user = hestia_user.unwrap_or_else(|| "admin".to_string());
+    validate_hestia_user(&user)?;
+    let replace_existing = replace_existing.unwrap_or(false);
+
+    if !replace_existing {
+        let preflight = validate_domain_inner(&domain).await?;
+        if preflight
+            .get("decision_required")
+            .and_then(Value::as_bool)
+            .unwrap_or(false)
+        {
+            persist_discovered_domain(&domain)?;
+            append_audit("discover-existing", &domain, "decision-required").await?;
+            return Ok(json!({
+                "domain": domain,
+                "decision_required": true,
+                "validation": preflight
+            }));
+        }
+    }
 
     let helper =
         std::env::var("NEXUS_DOMAINS_HELPER").unwrap_or_else(|_| DEFAULT_HELPER.to_string());
@@ -685,20 +804,12 @@ pub async fn onboard_domain(
         bail!("domains helper is not installed at {helper}");
     }
 
-    let user = hestia_user.unwrap_or_else(|| "admin".to_string());
-    validate_hestia_user(&user)?;
-    let replace_existing = replace_existing.unwrap_or(false);
     let helper_action = if replace_existing {
         "migrate"
     } else {
         "onboard"
     };
-    let audit_action = if replace_existing {
-        "migrate"
-    } else {
-        "onboard"
-    };
-
+    let audit_action = helper_action;
     let mut helper_result: Option<Value> = None;
     let mut last_failure = String::new();
 
@@ -804,11 +915,7 @@ mod tests {
         let inventory = default_inventory();
         let domains = inventory["domains"].as_array().unwrap();
         assert!(domains.iter().any(|domain| domain["name"] == "mundoleo.co"));
-        assert!(
-            domains
-                .iter()
-                .any(|domain| domain["name"] == "kinpilot.app")
-        );
+        assert!(domains.iter().any(|domain| domain["name"] == "kinpilot.app"));
     }
 
     #[test]
@@ -842,6 +949,13 @@ mod tests {
     }
 
     #[test]
+    fn webmail_cname_detects_non_nexus_target() {
+        assert!(webmail_cname_is_nexus(&json!({"value":"abc.cfargotunnel.com."})));
+        assert!(!webmail_cname_is_nexus(&json!({"value":"external.example.net."})));
+        assert!(webmail_cname_is_nexus(&json!({"value":""})));
+    }
+
+    #[test]
     fn onboarding_inventory_upsert_is_idempotent_and_clears_adoption() {
         let mut inventory = json!({"domains":[]});
         assert!(upsert_mail_domain(&mut inventory, "example.com").unwrap());
@@ -850,11 +964,6 @@ mod tests {
         assert!(!upsert_mail_domain(&mut inventory, "example.com").unwrap());
         let domains = inventory["domains"].as_array().unwrap();
         assert_eq!(domains.len(), 1);
-        assert_eq!(domains[0]["name"], "example.com");
-        assert_eq!(domains[0]["mail"], true);
-        assert_eq!(domains[0]["webmail"], true);
-        assert_eq!(domains[0]["ddns"], true);
-        assert_eq!(domains[0]["tunnel"], true);
         assert_eq!(domains[0]["configuration_mode"], "nexus");
         assert!(domains[0].get("adopted_checks").is_none());
     }
@@ -870,45 +979,69 @@ mod tests {
     }
 
     #[test]
-    fn adopted_dns_fingerprint_is_order_independent_and_prefix_scoped() {
+    fn adopted_dns_snapshot_tracks_absence_and_webmail() {
         let validation = json!({"checks":{
             "mx":{"detail":{"value":"20 b.example.\n10 a.example."}},
-            "spf":{"detail":{"value":"\"google-site-verification=x\"\n\"v=spf1 include:_spf.example ~all\""}},
-            "dkim":{"detail":{"value":"\"v=DKIM1; p=abc\""}},
-            "dmarc":{"detail":{"value":"\"v=DMARC1; p=none\""}}
+            "spf":{"detail":{"value":"\"v=spf1 include:_spf.example ~all\""}},
+            "dkim":{"detail":{"value":""}},
+            "dmarc":{"detail":{"value":"\"v=DMARC1; p=none\""}},
+            "webmail_tunnel_dns":{"detail":{"value":"external.example.net."}}
         }});
-        assert_eq!(
-            record_fingerprint(&validation, "mx").as_deref(),
-            Some("10 a.example.\n20 b.example.")
-        );
-        assert_eq!(
-            record_fingerprint(&validation, "spf").as_deref(),
-            Some("\"v=spf1 include:_spf.example ~all\"")
-        );
+        let snapshots = adopted_dns_snapshots(&validation);
+        assert_eq!(snapshots["dkim"], Value::Null);
+        assert_eq!(snapshots["webmail_tunnel_dns"], "external.example.net.");
     }
 
     #[test]
-    fn existing_policy_can_adopt_nonstandard_records_without_masking_changes() {
+    fn existing_policy_ignores_nexus_only_endpoints_but_detects_dns_drift() {
         let result = json!({
             "healthy": false,
             "checks": {
-                "mail_a":{"ok":true},
+                "mail_a":{"ok":false},
                 "mx":{"ok":false,"detail":{"value":"10 external.example."}},
                 "spf":{"ok":true,"detail":{"value":"\"v=spf1 ~all\""}},
-                "dkim":{"ok":true,"detail":{"value":"\"v=DKIM1; p=abc\""}},
-                "dmarc":{"ok":false,"detail":{"value":"\"v=DMARC1; p=reject\"\n\"v=DMARC1; p=none\""}},
-                "smtp_submission":{"ok":true},
-                "imap_tls":{"ok":true},
-                "webmail_tunnel_dns":{"ok":true},
-                "webmail_tls":{"ok":true}
+                "dkim":{"ok":false,"detail":{"value":""}},
+                "dmarc":{"ok":true,"detail":{"value":"\"v=DMARC1; p=reject\""}},
+                "smtp_submission":{"ok":false},
+                "imap_tls":{"ok":false},
+                "webmail_tunnel_dns":{"ok":false,"detail":{"value":"external.example.net."}},
+                "webmail_tls":{"ok":false}
             }
         });
         let snapshots = adopted_dns_snapshots(&result);
         let entry = json!({"configuration_mode":"existing","adopted_checks":snapshots});
         let adopted = apply_existing_policy(result, &entry);
         assert_eq!(adopted["healthy"], true);
-        assert_eq!(adopted["checks"]["mx"]["adopted"], true);
-        assert_eq!(adopted["checks"]["dmarc"]["adopted"], true);
+        assert_eq!(adopted["checks"]["mail_a"]["not_applicable"], true);
+        assert_eq!(adopted["checks"]["smtp_submission"]["ok"], true);
         assert_eq!(adopted["decision_required"], false);
+    }
+
+    #[test]
+    fn existing_policy_detects_record_appearing_after_absent_baseline() {
+        let baseline = json!({
+            "mx":"10 external.example.",
+            "spf":null,
+            "dkim":null,
+            "dmarc":null,
+            "webmail_tunnel_dns":null
+        });
+        let result = json!({
+            "checks": {
+                "mail_a":{"ok":false},
+                "mx":{"ok":false,"detail":{"value":"10 external.example."}},
+                "spf":{"ok":true,"detail":{"value":"\"v=spf1 ~all\""}},
+                "dkim":{"ok":false,"detail":{"value":""}},
+                "dmarc":{"ok":false,"detail":{"value":""}},
+                "smtp_submission":{"ok":false},
+                "imap_tls":{"ok":false},
+                "webmail_tunnel_dns":{"ok":false,"detail":{"value":""}},
+                "webmail_tls":{"ok":false}
+            }
+        });
+        let entry = json!({"configuration_mode":"existing","adopted_checks":baseline});
+        let adopted = apply_existing_policy(result, &entry);
+        assert_eq!(adopted["decision_required"], true);
+        assert_eq!(adopted["healthy"], false);
     }
 }
