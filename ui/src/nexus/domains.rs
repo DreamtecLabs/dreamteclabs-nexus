@@ -49,10 +49,22 @@ fn check_adopted(result: Option<&Value>, key: &str) -> bool {
         .unwrap_or(false)
 }
 
+fn check_not_applicable(result: Option<&Value>, key: &str) -> bool {
+    result
+        .and_then(|value| value.get("checks"))
+        .and_then(|checks| checks.get(key))
+        .and_then(|check| check.get("not_applicable"))
+        .and_then(Value::as_bool)
+        .unwrap_or(false)
+}
+
 fn check_badge(result: Option<&Value>, key: &str, label: &str) -> Html {
     let ok = check_ok(result, key);
     let adopted = check_adopted(result, key);
-    let title = if adopted {
+    let not_applicable = check_not_applicable(result, key);
+    let title = if not_applicable {
+        "Not applicable to the adopted external configuration"
+    } else if adopted {
         "Existing configuration kept and monitored"
     } else {
         ""
@@ -64,7 +76,7 @@ fn check_badge(result: Option<&Value>, key: &str, label: &str) -> Html {
             adopted.then_some("adopted")
         )}>
             <i class={match ok { Some(true) => "fa fa-check-circle", Some(false) => "fa fa-times-circle", None => "fa fa-circle-o" }}></i>
-            {label}
+            {if not_applicable { format!("{label} · N/A") } else { label.to_string() }}
         </span>
     }
 }
@@ -105,7 +117,11 @@ fn existing_record_labels(result: Option<&Value>) -> String {
     else {
         return String::new();
     };
-    let mut labels: Vec<String> = records.keys().map(|key| key.to_ascii_uppercase()).collect();
+    let mut labels: Vec<String> = records
+        .iter()
+        .filter(|(_, value)| !value.is_null())
+        .map(|(key, _)| key.to_ascii_uppercase())
+        .collect();
     labels.sort();
     labels.join(", ")
 }
@@ -193,6 +209,10 @@ pub fn nexus_domains() -> Html {
                             next.insert(domain.clone(), validation.clone());
                             validations.set(next);
                         }
+                        let needs_decision = value
+                            .get("decision_required")
+                            .and_then(Value::as_bool)
+                            .unwrap_or(false);
                         let healthy = value
                             .get("validation")
                             .and_then(|v| v.get("healthy"))
@@ -200,10 +220,14 @@ pub fn nexus_domains() -> Html {
                             .unwrap_or(false);
                         messages.insert(
                             domain.clone(),
-                            Ok(if healthy {
+                            Ok(if needs_decision {
+                                "Existing configuration detected. Choose whether to keep it or use the Nexus standard."
+                                    .to_string()
+                            } else if healthy {
                                 "Configuration reconciled and validated successfully.".to_string()
                             } else {
-                                "Reconciliation completed, but one or more live checks still need attention.".to_string()
+                                "Reconciliation completed, but one or more live checks still need attention."
+                                    .to_string()
                             }),
                         );
                     }
@@ -219,11 +243,13 @@ pub fn nexus_domains() -> Html {
     };
 
     let adopt_existing = {
+        let inventory = inventory.clone();
         let validations = validations.clone();
         let busy_domain = busy_domain.clone();
         let busy_action = busy_action.clone();
         let action_results = action_results.clone();
         Callback::from(move |domain: String| {
+            let inventory = inventory.clone();
             let validations = validations.clone();
             let busy_domain = busy_domain.clone();
             let busy_action = busy_action.clone();
@@ -241,6 +267,8 @@ pub fn nexus_domains() -> Html {
                             next.insert(domain.clone(), validation.clone());
                             validations.set(next);
                         }
+                        let refreshed: Result<Value, _> = http_get("/domains", None).await;
+                        inventory.set(Some(refreshed.map_err(|err| err.to_string())));
                         messages.insert(
                             domain.clone(),
                             Ok("Existing configuration kept as the monitored policy.".to_string()),
@@ -319,6 +347,7 @@ pub fn nexus_domains() -> Html {
     };
 
     let run_onboarding = {
+        let inventory = inventory.clone();
         let onboard_domain = onboard_domain.clone();
         let hestia_user = hestia_user.clone();
         let onboarding = onboarding.clone();
@@ -331,6 +360,7 @@ pub fn nexus_domains() -> Html {
             }
             let user = (*hestia_user).trim().to_string();
             onboarding.set(None);
+            let inventory = inventory.clone();
             let onboarding = onboarding.clone();
             let validations = validations.clone();
             spawn_local(async move {
@@ -342,9 +372,11 @@ pub fn nexus_domains() -> Html {
                 if let Ok(value) = &result {
                     if let Some(validation) = value.get("validation") {
                         let mut next = (*validations).clone();
-                        next.insert(domain, validation.clone());
+                        next.insert(domain.clone(), validation.clone());
                         validations.set(next);
                     }
+                    let refreshed: Result<Value, _> = http_get("/domains", None).await;
+                    inventory.set(Some(refreshed.map_err(|err| err.to_string())));
                 }
                 onboarding.set(Some(result.map_err(|err| err.to_string())));
             });
@@ -526,8 +558,14 @@ pub fn nexus_domains() -> Html {
                     match onboarding.as_ref() {
                         None => html! {},
                         Some(Ok(value)) => {
+                            let needs_decision = value.get("decision_required").and_then(Value::as_bool).unwrap_or(false)
+                                || value.get("validation").and_then(|v| v.get("decision_required")).and_then(Value::as_bool).unwrap_or(false);
                             let healthy = value.get("validation").and_then(|v| v.get("healthy")).and_then(Value::as_bool).unwrap_or(false);
-                            html! { <div class={classes!("nexus-domain-result", if healthy { "ok" } else { "error" })}><strong>{if healthy { "Setup completed and validated." } else { "Setup completed, but live validation still needs attention." }}</strong><span>{"The domain was reconciled using the same ownership and conflict-safety policy as one-click repair."}</span></div> }
+                            if needs_decision {
+                                html! { <div class="nexus-domain-result decision"><strong>{"Existing configuration detected."}</strong><span>{"Nothing was changed. The domain is now listed above so you can choose Keep existing or Use Nexus standard."}</span></div> }
+                            } else {
+                                html! { <div class={classes!("nexus-domain-result", if healthy { "ok" } else { "error" })}><strong>{if healthy { "Setup completed and validated." } else { "Setup completed, but live validation still needs attention." }}</strong><span>{"The domain was reconciled using the same ownership and conflict-safety policy as one-click repair."}</span></div> }
+                            }
                         },
                         Some(Err(err)) => html! { <div class="nexus-domain-result error"><strong>{"Setup stopped safely."}</strong><span>{err}</span></div> },
                     }
