@@ -52,6 +52,12 @@ apt-get install -y --no-install-recommends \
 
 git submodule update --init --recursive
 
+# Keep Rust build output outside the generated Debian source tree. GitHub
+# Actions restores this directory between runs, avoiding a full dependency
+# rebuild for every UI change while still rebuilding changed Nexus sources.
+export CARGO_TARGET_DIR="${CARGO_TARGET_DIR:-/workspace/.cache/ui-target}"
+mkdir -p "$CARGO_TARGET_DIR"
+
 export DEB_BUILD_OPTIONS=parallel=1
 export CARGO_BUILD_JOBS=1
 export CARGO_INCREMENTAL=0
@@ -68,7 +74,9 @@ export CARGO_PROFILE_RELEASE_CODEGEN_UNITS=1
 export WASM_OPT_FLAGS="-O1"
 
 free -h || true
-make -C ui clean
+# Do not run `make clean` here: it calls `cargo clean` and would erase the
+# restored cross-run Cargo cache. Checkout already starts from a clean source
+# tree; generated Debian build directories are recreated by the package target.
 make -C ui deb
 
 package="$(find ui -maxdepth 1 -type f -name 'proxmox-datacenter-manager-ui_*.deb' -printf '%T@ %p\n' | sort -nr | head -n1 | cut -d' ' -f2-)"
