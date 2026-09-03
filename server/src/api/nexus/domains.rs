@@ -38,7 +38,10 @@ static INVENTORY_WRITE_LOCK: Mutex<()> = Mutex::new(());
 
 #[sortable]
 const SUBDIRS: SubdirMap = &sorted!([
-    ("adopt", &Router::new().post(&API_METHOD_ADOPT_EXISTING_DOMAIN)),
+    (
+        "adopt",
+        &Router::new().post(&API_METHOD_ADOPT_EXISTING_DOMAIN)
+    ),
     ("onboard", &Router::new().post(&API_METHOD_ONBOARD_DOMAIN)),
     ("validate", &Router::new().post(&API_METHOD_VALIDATE_DOMAIN)),
 ]);
@@ -358,7 +361,8 @@ fn adopted_dns_snapshots(result: &Value) -> Map<String, Value> {
     ADOPTABLE_DNS_CHECKS
         .iter()
         .filter_map(|key| {
-            record_fingerprint(result, key).map(|fingerprint| ((*key).to_string(), json!(fingerprint)))
+            record_fingerprint(result, key)
+                .map(|fingerprint| ((*key).to_string(), json!(fingerprint)))
         })
         .collect()
 }
@@ -684,8 +688,16 @@ pub async fn onboard_domain(
     let user = hestia_user.unwrap_or_else(|| "admin".to_string());
     validate_hestia_user(&user)?;
     let replace_existing = replace_existing.unwrap_or(false);
-    let helper_action = if replace_existing { "migrate" } else { "onboard" };
-    let audit_action = if replace_existing { "migrate" } else { "onboard" };
+    let helper_action = if replace_existing {
+        "migrate"
+    } else {
+        "onboard"
+    };
+    let audit_action = if replace_existing {
+        "migrate"
+    } else {
+        "onboard"
+    };
 
     let mut helper_result: Option<Value> = None;
     let mut last_failure = String::new();
