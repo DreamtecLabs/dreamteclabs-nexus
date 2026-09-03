@@ -19,11 +19,12 @@ UI_DEB:=$(wildcard $(PACKAGE)-ui_*_$(DEB_HOST_ARCH).deb)
 DSC=$(PACKAGE)_$(DEB_VERSION).dsc
 
 CARGO ?= cargo
+CARGO_TARGET_DIR ?= target
 ifeq ($(BUILD_MODE), release)
 CARGO_BUILD_ARGS += --release
-COMPILEDIR := target/release
+COMPILEDIR := $(CARGO_TARGET_DIR)/release
 else
-COMPILEDIR := target/debug
+COMPILEDIR := $(CARGO_TARGET_DIR)/debug
 endif
 
 COMPLETION_DIR := cli/completions
@@ -77,12 +78,6 @@ install: $(COMPILED_BINS) $(SHELL_COMPLETION_FILES)
 	install -dm755 $(DESTDIR)$(LIBEXECDIR)/proxmox
 	$(foreach i,$(SERVICE_BIN) $(INTERNAL_SERVICE_BIN), \
 	    install -m755 $(COMPILEDIR)/$(i) $(DESTDIR)$(LIBEXECDIR)/proxmox/ ;)
-	install -dm755 $(DESTDIR)$(BASHCOMPDIR)
-	$(foreach i,$(BASH_COMPLETIONS), \
-	    install -m644 $(COMPLETION_DIR)/$(i) $(DESTDIR)$(BASHCOMPDIR)/ ;)
-	install -dm755 $(DESTDIR)$(ZSHCOMPDIR)
-	$(foreach i,$(ZSH_COMPLETIONS), \
-	    install -m644 $(COMPLETION_DIR)/$(i) $(DESTDIR)$(ZSHCOMPDIR)/ ;)
 	make -C services install
 	$(MAKE) -C docs install
 
@@ -178,4 +173,3 @@ test:
 tidy:
 	$(CARGO) fmt
 	$(MAKE) -C $(UI_DIR) tidy
-
