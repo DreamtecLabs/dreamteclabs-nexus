@@ -78,6 +78,12 @@ install: $(COMPILED_BINS) $(SHELL_COMPLETION_FILES)
 	install -dm755 $(DESTDIR)$(LIBEXECDIR)/proxmox
 	$(foreach i,$(SERVICE_BIN) $(INTERNAL_SERVICE_BIN), \
 	    install -m755 $(COMPILEDIR)/$(i) $(DESTDIR)$(LIBEXECDIR)/proxmox/ ;)
+	install -dm755 $(DESTDIR)$(BASHCOMPDIR)
+	$(foreach i,$(BASH_COMPLETIONS), \
+	    install -m644 $(COMPLETION_DIR)/$(i) $(DESTDIR)$(BASHCOMPDIR)/ ;)
+	install -dm755 $(DESTDIR)$(ZSHCOMPDIR)
+	$(foreach i,$(ZSH_COMPLETIONS), \
+	    install -m644 $(COMPLETION_DIR)/$(i) $(DESTDIR)$(ZSHCOMPDIR)/ ;)
 	make -C services install
 	$(MAKE) -C docs install
 
