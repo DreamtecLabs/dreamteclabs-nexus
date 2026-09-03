@@ -202,8 +202,8 @@
 
 .nexus-domain-row {
     display: grid;
-    grid-template-columns: minmax(190px, 1.15fr) minmax(230px, 1.25fr) minmax(460px, 2.4fr) minmax(135px, .7fr);
-    min-width: 1050px;
+    grid-template-columns: minmax(190px, 1.15fr) minmax(230px, 1.25fr) minmax(460px, 2.4fr) minmax(155px, .8fr);
+    min-width: 1070px;
     align-items: center;
     gap: 14px;
     padding: 12px 14px;
@@ -218,6 +218,10 @@
 
 .nexus-domain-row:not(.header):hover {
     background: color-mix(in srgb, var(--pwt-color) 3%, var(--pwt-color-background));
+}
+
+.nexus-domain-row.decision {
+    background: color-mix(in srgb, #f59e0b 5%, var(--pwt-color-background));
 }
 
 .nexus-domain-row.header {
@@ -258,6 +262,11 @@
     color: #dc2626;
 }
 
+.nexus-domain-name small.decision-note {
+    color: #b45309;
+    font-weight: 620;
+}
+
 .nexus-domain-capabilities,
 .nexus-domain-checks {
     display: flex;
@@ -290,6 +299,10 @@
     color: #15803d;
 }
 
+.nexus-domain-check.ok.adopted {
+    border-style: dashed;
+}
+
 .nexus-domain-check.bad {
     border-color: #fecaca;
     background: #fff1f2;
@@ -320,6 +333,23 @@
     cursor: pointer;
     transition: filter .12s ease, transform .12s ease;
     white-space: nowrap;
+}
+
+.nexus-domain-action.secondary {
+    border-color: var(--pwt-color-border);
+    background: var(--pwt-color-background);
+    color: var(--pwt-color);
+}
+
+.nexus-domain-choice {
+    display: flex;
+    flex-direction: column;
+    align-items: stretch;
+    gap: 6px;
+}
+
+.nexus-domain-choice .nexus-domain-action {
+    width: 100%;
 }
 
 .nexus-domain-action:hover,

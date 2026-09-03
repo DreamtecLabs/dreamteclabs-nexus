@@ -111,10 +111,6 @@ cf_request() {
         args+=(--data "$body")
     fi
 
-    # Transport failures are intentionally captured here so their curl details
-    # can be preserved. Temporarily mask the reconciliation ERR trap and restore
-    # it immediately afterwards; the returned failure is still attributed to the
-    # active reconciliation step by the caller.
     trap - ERR
     set +e
     http_code="$(curl "${args[@]}" "${CF_API_BASE}${path}" 2>"$stderr_file")"
@@ -168,24 +164,39 @@ cf_write_record() {
     }
 }
 
+cf_delete_record() {
+    local zone_id="$1" record_id="$2" response
+    response="$(cf_request DELETE "/zones/${zone_id}/dns_records/${record_id}")"
+    jq -e '.success == true' >/dev/null <<<"$response" || {
+        echo "Cloudflare DNS delete returned success=false" >&2
+        return 1
+    }
+}
+
 cf_upsert_single_dns() {
-    local zone_id="$1" type="$2" name="$3" content="$4" proxied="$5" priority="${6:-}"
-    local list count record_id payload
+    local zone_id="$1" type="$2" name="$3" content="$4" proxied="$5" priority="${6:-}" replace_existing="${7:-false}"
+    local list count record_id payload conflicts
     list="$(cf_request GET "/zones/${zone_id}/dns_records?type=${type}&name=${name}")"
     count="$(jq '.result | length' <<<"$list")"
 
     if [[ "$count" -gt 1 ]]; then
-        echo "multiple ${type} records exist for ${name}; refusing ambiguous update" >&2
-        exit 5
+        if [[ "$replace_existing" != "true" ]]; then
+            echo "multiple ${type} records exist for ${name}; refusing ambiguous update" >&2
+            exit 5
+        fi
+        while IFS= read -r record_id; do
+            [[ -n "$record_id" ]] && cf_delete_record "$zone_id" "$record_id"
+        done < <(jq -r '.result[].id' <<<"$list")
+        list='{"result":[]}'
+        count=0
     fi
 
-    if [[ "$type" == "MX" && "$count" -eq 1 ]]; then
-        local conflicts
+    if [[ "$count" -eq 1 ]]; then
         conflicts="$(jq -r --arg content "$content" '[.result[] | select((.content | rtrimstr(".")) != ($content | rtrimstr(".")))] | length' <<<"$list")"
-        [[ "$conflicts" -eq 0 ]] || {
-            echo "conflicting MX record exists for $name; refusing destructive replacement" >&2
+        if [[ "$conflicts" -ne 0 && "$replace_existing" != "true" ]]; then
+            echo "conflicting ${type} record exists for $name; refusing destructive replacement" >&2
             exit 5
-        }
+        fi
     fi
 
     record_id="$(jq -r '.result[0].id // empty' <<<"$list")"
@@ -198,15 +209,32 @@ cf_upsert_single_dns() {
 }
 
 cf_upsert_txt_prefix() {
-    local zone_id="$1" name="$2" prefix="$3" content="$4"
-    local list matches record_id payload prefix_lower
+    local zone_id="$1" name="$2" prefix="$3" content="$4" replace_existing="${5:-false}"
+    local list matches record_id payload prefix_lower conflicts
     prefix_lower="${prefix,,}"
     list="$(cf_request GET "/zones/${zone_id}/dns_records?type=TXT&name=${name}")"
     matches="$(jq --arg prefix "$prefix_lower" '[.result[] | select((.content | ascii_downcase) | startswith($prefix))] | length' <<<"$list")"
-    [[ "$matches" -le 1 ]] || {
-        echo "duplicate TXT records beginning with '$prefix' exist for $name" >&2
-        exit 5
-    }
+
+    if [[ "$matches" -gt 1 ]]; then
+        if [[ "$replace_existing" != "true" ]]; then
+            echo "duplicate TXT records beginning with '$prefix' exist for $name" >&2
+            exit 5
+        fi
+        while IFS= read -r record_id; do
+            [[ -n "$record_id" ]] && cf_delete_record "$zone_id" "$record_id"
+        done < <(jq -r --arg prefix "$prefix_lower" '.result[] | select((.content | ascii_downcase) | startswith($prefix)) | .id' <<<"$list")
+        list='{"result":[]}'
+        matches=0
+    fi
+
+    if [[ "$matches" -eq 1 ]]; then
+        conflicts="$(jq -r --arg prefix "$prefix_lower" --arg content "$content" '[.result[] | select((.content | ascii_downcase) | startswith($prefix)) | select(.content != $content)] | length' <<<"$list")"
+        if [[ "$conflicts" -ne 0 && "$replace_existing" != "true" ]]; then
+            echo "conflicting TXT record beginning with '$prefix' exists for $name; refusing destructive replacement" >&2
+            exit 5
+        fi
+    fi
+
     record_id="$(jq -r --arg prefix "$prefix_lower" '.result[] | select((.content | ascii_downcase) | startswith($prefix)) | .id' <<<"$list" | head -n1)"
     payload="$(jq -nc --arg name "$name" --arg content "$content" '{type:"TXT",name:$name,content:$content,ttl:1,proxied:false}')"
     cf_write_record "$zone_id" "$record_id" "$payload"
@@ -321,7 +349,7 @@ reconcile_error() {
 }
 
 onboard() {
-    local domain="$1" hestia_user="$2"
+    local domain="$1" hestia_user="$2" replace_existing="${3:-false}"
     validate_domain "$domain"
     validate_hestia_user "$hestia_user"
     validate_cloudflare_config
@@ -336,7 +364,7 @@ onboard() {
 
     RECONCILE_STEP="cloudflare:webmail-http"
     zone_id="$(cf_zone_id "$domain")"
-    cf_upsert_single_dns "$zone_id" CNAME "$webmail_host" "$tunnel_target" true
+    cf_upsert_single_dns "$zone_id" CNAME "$webmail_host" "$tunnel_target" true "" "$replace_existing"
     cf_upsert_tunnel_ingress "$webmail_host" "$WEBMAIL_HTTP_ORIGIN" false
     steps="$(jq -c '. + ["cloudflare:webmail-http"]' <<<"$steps")"
 
@@ -350,17 +378,17 @@ onboard() {
     steps="$(jq -c '. + ["hestia:letsencrypt"]' <<<"$steps")"
 
     RECONCILE_STEP="cloudflare:mail-dns"
-    cf_upsert_single_dns "$zone_id" MX "$domain" "$mail_host" false 10
-    cf_upsert_txt_prefix "$zone_id" "$domain" "v=spf1" "v=spf1 a mx ip4:${public_ip} ip4:${MAIL_RELAY_IPV4} ~all"
+    cf_upsert_single_dns "$zone_id" MX "$domain" "$mail_host" false 10 "$replace_existing"
+    cf_upsert_txt_prefix "$zone_id" "$domain" "v=spf1" "v=spf1 a mx ip4:${public_ip} ip4:${MAIL_RELAY_IPV4} ~all" "$replace_existing"
 
     dkim_value="$(hestia_dkim_value "$hestia_user" "$domain")"
-    cf_upsert_txt_prefix "$zone_id" "mail._domainkey.${domain}" "v=DKIM1" "$dkim_value"
+    cf_upsert_txt_prefix "$zone_id" "mail._domainkey.${domain}" "v=DKIM1" "$dkim_value" "$replace_existing"
 
     dmarc_value="v=DMARC1; ${DMARC_POLICY}; adkim=r; aspf=r"
     if [[ -n "$DMARC_RUA" ]]; then
         dmarc_value="${dmarc_value}; rua=mailto:${DMARC_RUA#mailto:}"
     fi
-    cf_upsert_txt_prefix "$zone_id" "_dmarc.${domain}" "v=DMARC1" "$dmarc_value"
+    cf_upsert_txt_prefix "$zone_id" "_dmarc.${domain}" "v=DMARC1" "$dmarc_value" "$replace_existing"
     steps="$(jq -c '. + ["cloudflare:mx","cloudflare:spf","cloudflare:dkim","cloudflare:dmarc"]' <<<"$steps")"
 
     RECONCILE_STEP="cloudflare:webmail-https"
@@ -373,15 +401,21 @@ onboard() {
         --arg mail_host "$mail_host" \
         --arg webmail_host "$webmail_host" \
         --arg relay "$MAIL_RELAY_HOST" \
+        --argjson replaced_existing "$replace_existing" \
         --argjson steps "$steps" \
-        '{ok:true,domain:$domain,mail_host:$mail_host,webmail_host:$webmail_host,relay:$relay,steps:$steps}'
+        '{ok:true,domain:$domain,mail_host:$mail_host,webmail_host:$webmail_host,relay:$relay,replaced_existing:$replaced_existing,steps:$steps}'
 }
 
 case "${1:-}" in
     onboard)
         [[ $# -eq 3 ]] || { echo "usage: $0 onboard DOMAIN HESTIA_USER" >&2; exit 2; }
         trap reconcile_error ERR
-        onboard "${2,,}" "$3"
+        onboard "${2,,}" "$3" false
+        ;;
+    migrate)
+        [[ $# -eq 3 ]] || { echo "usage: $0 migrate DOMAIN HESTIA_USER" >&2; exit 2; }
+        trap reconcile_error ERR
+        onboard "${2,,}" "$3" true
         ;;
     *)
         echo "unsupported action: ${1:-}" >&2
