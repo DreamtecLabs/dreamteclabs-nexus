@@ -11,6 +11,7 @@ on:
       - 'docs/nexus-domains-hosting.md'
       - 'tools/nexus/validate-domains-ci.sh'
       - 'tools/nexus/validate-domains-container.sh'
+      - 'tools/nexus/build-backend-container.sh'
       - 'ui/src/nexus/domains.rs'
       - 'ui/src/nexus/mod.rs'
       - 'ui/src/main_menu.rs'
@@ -27,6 +28,7 @@ on:
       - 'docs/nexus-domains-hosting.md'
       - 'tools/nexus/validate-domains-ci.sh'
       - 'tools/nexus/validate-domains-container.sh'
+      - 'tools/nexus/build-backend-container.sh'
       - 'ui/src/nexus/domains.rs'
       - 'ui/src/nexus/mod.rs'
       - 'ui/src/main_menu.rs'
@@ -64,6 +66,15 @@ jobs:
           fetch-depth: 2
           submodules: recursive
 
+      - name: Restore Domains Cargo cache
+        uses: actions/cache@v4
+        with:
+          path: .cache/domains-target
+          key: domains-cargo-${{ runner.os }}-${{ hashFiles('Cargo.lock', 'Cargo.toml', 'debian/control') }}-${{ github.ref_name }}
+          restore-keys: |
+            domains-cargo-${{ runner.os }}-${{ hashFiles('Cargo.lock', 'Cargo.toml', 'debian/control') }}-
+            domains-cargo-${{ runner.os }}-
+
       - name: Install Rust stable
         uses: dtolnay/rust-toolchain@stable
         with:
@@ -84,6 +95,7 @@ jobs:
             --memory=7g \
             -e HOST_UID="$(id -u)" \
             -e HOST_GID="$(id -g)" \
+            -e CARGO_TARGET_DIR=/workspace/.cache/domains-target \
             -v "$GITHUB_WORKSPACE:/workspace" \
             -w /workspace \
             debian:trixie \
@@ -128,3 +140,69 @@ jobs:
       - name: Fail when Domains & Hosting validation fails
         if: steps.domains_build.outcome == 'failure'
         run: exit 1
+
+  package-backend:
+    name: Build PDM backend package
+    needs: validate
+    if: github.event_name == 'push' || github.event_name == 'workflow_dispatch'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 60
+    steps:
+      - name: Recover workspace ownership
+        shell: bash
+        run: |
+          set -euo pipefail
+          docker run --rm \
+            -e HOST_UID="$(id -u)" \
+            -e HOST_GID="$(id -g)" \
+            -v "$GITHUB_WORKSPACE:/workspace" \
+            debian:trixie \
+            sh -c 'chown -R "$HOST_UID:$HOST_GID" /workspace'
+
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          clean: true
+          fetch-depth: 2
+          submodules: recursive
+
+      - name: Restore backend Cargo cache
+        uses: actions/cache@v4
+        with:
+          path: .cache/backend-target
+          key: backend-cargo-${{ runner.os }}-${{ hashFiles('Cargo.lock', 'Cargo.toml', 'debian/control') }}-${{ github.ref_name }}
+          restore-keys: |
+            backend-cargo-${{ runner.os }}-${{ hashFiles('Cargo.lock', 'Cargo.toml', 'debian/control') }}-
+            backend-cargo-${{ runner.os }}-
+
+      - name: Build backend package in Debian Trixie
+        shell: bash
+        run: |
+          docker run --rm \
+            --memory=7g \
+            -e HOST_UID="$(id -u)" \
+            -e HOST_GID="$(id -g)" \
+            -e CARGO_TARGET_DIR=/workspace/.cache/backend-target \
+            -v "$GITHUB_WORKSPACE:/workspace" \
+            -w /workspace \
+            debian:trixie \
+            bash tools/nexus/build-backend-container.sh
+
+      - name: Validate backend artifact provenance
+        shell: bash
+        run: |
+          set -euo pipefail
+          test "$(cat artifacts/backend/BUILD_COMMIT)" = "$GITHUB_SHA"
+          (cd artifacts/backend && sha256sum --check SHA256SUMS)
+          dpkg-deb --info artifacts/backend/proxmox-datacenter-manager_*.deb >/dev/null
+
+      - name: Upload commit-addressed backend package
+        uses: actions/upload-artifact@v4
+        with:
+          name: nexus-pdm-backend-${{ github.sha }}
+          path: |
+            artifacts/backend/*.deb
+            artifacts/backend/SHA256SUMS
+            artifacts/backend/BUILD_COMMIT
+          if-no-files-found: error
+          retention-days: 30
