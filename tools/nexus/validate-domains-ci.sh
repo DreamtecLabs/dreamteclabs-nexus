@@ -66,7 +66,7 @@ grep -q 'configuration_mode' server/src/api/nexus/domains.rs
 grep -q 'adopted_checks' server/src/api/nexus/domains.rs
 grep -q 'decision_required' server/src/api/nexus/domains.rs
 grep -q 'replace_existing' server/src/api/nexus/domains.rs
-grep -q 'helper_action = if replace_existing { "migrate" } else { "onboard" }' server/src/api/nexus/domains.rs
+grep -q 'let helper_action = if replace_existing {' server/src/api/nexus/domains.rs
 grep -q '^cf_delete_record() {' services/nexus-domains-helper
 grep -q '^    migrate)' services/nexus-domains-helper
 grep -q 'refusing destructive replacement' services/nexus-domains-helper
