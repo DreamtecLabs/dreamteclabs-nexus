@@ -50,12 +50,13 @@ git submodule update --init --recursive
 
 export CARGO_TARGET_DIR="${CARGO_TARGET_DIR:-/workspace/.cache/backend-target}"
 mkdir -p "$CARGO_TARGET_DIR"
-# dpkg-buildpackage may execute build steps as an unprivileged build user when
-# the container itself runs as root. The bind-mounted checkout and Cargo cache
-# therefore need to be writable by that build user; otherwise Cargo fails at
-# target/.cargo-lock before compilation starts.
-chmod a+rwx /workspace
-chmod -R a+rwX "$CARGO_TARGET_DIR"
+# dpkg-buildpackage/dh-cargo execute build steps as an unprivileged build user
+# even though this CI container starts as root. Those steps write not only to
+# Cargo's target directory, but also to the copied Debian build tree (including
+# debian/cargo_home and generated build files). Make the complete bind-mounted
+# workspace writable before creating that build tree; ownership is restored to
+# the host runner by the EXIT trap above.
+chmod -R a+rwX /workspace
 export CARGO_BUILD_JOBS=1
 export CARGO_INCREMENTAL=0
 export MAKEFLAGS=-j1
