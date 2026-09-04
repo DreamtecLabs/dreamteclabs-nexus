@@ -64,5 +64,5 @@ export MAKEFLAGS=-j1
 # Keep the repository's Debian Cargo source replacement intact. The installed
 # Proxmox/Rust build dependencies populate /usr/share/cargo/registry, including
 # internal crates such as pbs-api-types that are intentionally not on crates.io.
-cargo test -p server api::nexus::domains::tests --lib
+cargo test -p server api::nexus --lib
 cargo check -p server
