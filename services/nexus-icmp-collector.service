@@ -1,0 +1,16 @@
+[Unit]
+Description=DreamtecLabs Nexus ICMP OpenTelemetry Collector
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+ExecStart=/usr/bin/otelcol-contrib --config=/etc/proxmox-datacenter-manager/nexus-icmp-collector.yaml
+Restart=on-failure
+RestartSec=5s
+NoNewPrivileges=true
+AmbientCapabilities=CAP_NET_RAW
+CapabilityBoundingSet=CAP_NET_RAW
+
+[Install]
+WantedBy=multi-user.target

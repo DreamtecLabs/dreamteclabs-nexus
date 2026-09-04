@@ -8,9 +8,11 @@
 mod domains;
 mod home;
 mod inventory;
+mod monitoring;
 mod storage;
 
 pub use domains::NexusDomains;
 pub use home::NexusHome;
 pub use inventory::NexusInventory;
+pub use monitoring::NexusMonitoring;
 pub use storage::NexusStorage;

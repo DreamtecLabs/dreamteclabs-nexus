@@ -1,0 +1,64 @@
+name: Nexus Monitoring
+
+on:
+  pull_request:
+    paths:
+      - 'server/src/api/nexus/monitoring/**'
+      - 'server/src/api/nexus/mod.rs'
+      - 'server/src/api/mod.rs'
+      - 'ui/src/nexus/monitoring.rs'
+      - 'ui/src/nexus/mod.rs'
+      - 'ui/src/main_menu.rs'
+      - 'services/nexus-icmp-collector.service'
+      - 'services/Makefile'
+      - 'debian/proxmox-datacenter-manager.install'
+      - 'docs/nexus-monitoring.md'
+      - 'tools/nexus/validate-monitoring-ci.sh'
+      - 'tools/nexus/validate-domains-container.sh'
+      - 'tools/nexus/build-backend-container.sh'
+      - '.github/workflows/monitoring.yml'
+  push:
+    branches:
+      - master
+    paths:
+      - 'server/src/api/nexus/monitoring/**'
+      - 'server/src/api/nexus/mod.rs'
+      - 'server/src/api/mod.rs'
+      - 'ui/src/nexus/monitoring.rs'
+      - 'ui/src/nexus/mod.rs'
+      - 'ui/src/main_menu.rs'
+      - 'services/nexus-icmp-collector.service'
+      - 'services/Makefile'
+      - 'debian/proxmox-datacenter-manager.install'
+      - 'docs/nexus-monitoring.md'
+      - 'tools/nexus/validate-monitoring-ci.sh'
+      - 'tools/nexus/validate-domains-container.sh'
+      - 'tools/nexus/build-backend-container.sh'
+      - '.github/workflows/monitoring.yml'
+  workflow_dispatch:
+
+concurrency:
+  group: nexus-monitoring-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  validate:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 2
+          submodules: recursive
+
+      - name: Install Rust stable
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          components: rustfmt
+
+      - name: Validate Monitoring ownership and formatting
+        run: bash tools/nexus/validate-monitoring-ci.sh

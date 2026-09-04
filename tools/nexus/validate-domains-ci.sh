@@ -6,6 +6,7 @@ cd "$repo_root"
 
 bash -n services/nexus-domains-helper
 bash -n tools/nexus/validate-domains-container.sh
+bash -n tools/nexus/validate-monitoring-ci.sh
 
 grep -q 'forbid_webmail_ddns' server/src/api/nexus/domains.rs
 grep -q 'forbid_mail_proxy' server/src/api/nexus/domains.rs
@@ -93,4 +94,4 @@ grep -q '^\.nexus-domain-row {' ui/css/nexus-domains.scss
 grep -q '^\.nexus-domain-action,' ui/css/nexus-domains.scss
 grep -q '^\.nexus-domain-choice {' ui/css/nexus-domains.scss
 
-cargo fmt --all -- --check
+bash tools/nexus/validate-monitoring-ci.sh

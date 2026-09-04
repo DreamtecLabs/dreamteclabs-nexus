@@ -29,6 +29,7 @@ const SUBDIRS: SubdirMap = &sorted!([
     ("ceph", &ceph::ROUTER),
     ("config", &config::ROUTER),
     ("domains", &nexus::domains::ROUTER),
+    ("monitoring", &nexus::monitoring::ROUTER),
     ("ping", &Router::new().get(&API_METHOD_PING)),
     ("pve", &pve::ROUTER),
     ("pbs", &pbs::ROUTER),
