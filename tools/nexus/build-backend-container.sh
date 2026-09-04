@@ -48,15 +48,18 @@ mk-build-deps \
 git config --global --add safe.directory /workspace
 git submodule update --init --recursive
 
+# Keep package installation privileged, but run the actual Debian/Rust build as
+# one consistent unprivileged user. dh-cargo writes to both CARGO_TARGET_DIR and
+# the copied Debian source tree (for example debian/cargo_home), so switching
+# ownership once is more reliable and safer than making the workspace world
+# writable and then depending on which helper creates each directory.
+build_user=nexus-build
+if ! id -u "$build_user" >/dev/null 2>&1; then
+    useradd --system --home-dir /nonexistent --shell /usr/sbin/nologin "$build_user"
+fi
 export CARGO_TARGET_DIR="${CARGO_TARGET_DIR:-/workspace/.cache/backend-target}"
 mkdir -p "$CARGO_TARGET_DIR"
-# dpkg-buildpackage/dh-cargo execute build steps as an unprivileged build user
-# even though this CI container starts as root. Those steps write not only to
-# Cargo's target directory, but also to the copied Debian build tree (including
-# debian/cargo_home and generated build files). Make the complete bind-mounted
-# workspace writable before creating that build tree; ownership is restored to
-# the host runner by the EXIT trap above.
-chmod -R a+rwX /workspace
+chown -R "$build_user:$build_user" /workspace
 export CARGO_BUILD_JOBS=1
 export CARGO_INCREMENTAL=0
 export MAKEFLAGS=-j1
@@ -66,7 +69,13 @@ export MAKEFLAGS=-j1
 # the package first, then validate the artifact itself instead of accepting an
 # unverified partial build.
 set +e
-make deb-api
+runuser -u "$build_user" -- env \
+    DEB_BUILD_PROFILES="$DEB_BUILD_PROFILES" \
+    CARGO_TARGET_DIR="$CARGO_TARGET_DIR" \
+    CARGO_BUILD_JOBS="$CARGO_BUILD_JOBS" \
+    CARGO_INCREMENTAL="$CARGO_INCREMENTAL" \
+    MAKEFLAGS="$MAKEFLAGS" \
+    make deb-api
 build_status=$?
 set -e
 
