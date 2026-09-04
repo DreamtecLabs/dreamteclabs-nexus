@@ -22,12 +22,27 @@ fi
 # Cloudflare failures must be actionable in the UI: validate credentials before
 # any provider mutation and preserve the HTTP status plus Cloudflare error body.
 grep -q '^validate_cloudflare_config() {' services/nexus-domains-helper
-grep -q 'validate_cloudflare_config' services/nexus-domains-helper
 grep -q 'NEXUS_CF_ACCOUNT_ID must be a 32-character Cloudflare account ID' services/nexus-domains-helper
 grep -q 'NEXUS_CF_TUNNEL_ID must be a Cloudflare tunnel UUID' services/nexus-domains-helper
 grep -q 'Cloudflare API .* failed with HTTP' services/nexus-domains-helper
 if grep -q -- '-fsS' services/nexus-domains-helper; then
     echo 'Cloudflare requests must not hide API error bodies with curl -f' >&2
+    exit 1
+fi
+
+retry_case="$(awk '/^[[:space:]]+case "\$method" in$/ {capture=1} capture {print} capture && /^[[:space:]]+esac$/ {exit}' services/nexus-domains-helper)"
+grep -Fq 'GET|PUT)' <<<"$retry_case"
+grep -Fq -- '--retry-all-errors' <<<"$retry_case"
+if grep -Fq 'POST' <<<"$retry_case"; then
+    echo 'Non-idempotent Cloudflare POST writes must not use automatic retries' >&2
+    exit 1
+fi
+
+onboard_block="$(awk '/^onboard\(\) \{$/ {capture=1} capture {print} capture && /^}$/ {exit}' services/nexus-domains-helper)"
+validation_call_line="$(grep -nE '^[[:space:]]+validate_cloudflare_config$' <<<"$onboard_block" | head -n1 | cut -d: -f1 || true)"
+first_mutation_line="$(grep -nE '^[[:space:]]+ensure_ddns_record ' <<<"$onboard_block" | head -n1 | cut -d: -f1 || true)"
+if [[ -z "$validation_call_line" || -z "$first_mutation_line" || "$validation_call_line" -ge "$first_mutation_line" ]]; then
+    echo 'Cloudflare configuration must be validated in onboard() before the first provider mutation' >&2
     exit 1
 fi
 
