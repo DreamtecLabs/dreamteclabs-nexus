@@ -144,7 +144,6 @@ jobs:
   package-backend:
     name: Build PDM backend package
     needs: validate
-    if: github.event_name == 'push' || github.event_name == 'workflow_dispatch'
     runs-on: ubuntu-24.04
     timeout-minutes: 60
     steps:
@@ -241,6 +240,7 @@ jobs:
           dpkg-deb --info artifacts/backend/proxmox-datacenter-manager_*.deb >/dev/null
 
       - name: Upload commit-addressed backend package
+        if: github.event_name == 'push' || github.event_name == 'workflow_dispatch'
         uses: actions/upload-artifact@v4
         with:
           name: nexus-pdm-backend-${{ github.sha }}
