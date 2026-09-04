@@ -6,12 +6,12 @@ cd "$repo_root"
 
 grep -q 'pub mod monitoring;' server/src/api/nexus/mod.rs
 grep -q 'nexus::monitoring::ROUTER' server/src/api/mod.rs
-grep -q 'API_METHOD_SIGNOZ_STATUS' server/src/api/nexus/monitoring.rs
-grep -q 'NEXUS_SIGNOZ_API_KEY' server/src/api/nexus/monitoring.rs
-grep -q 'SIGNOZ-API-KEY' server/src/api/nexus/monitoring.rs
-grep -q 'icmpcheck/' server/src/api/nexus/monitoring.rs
-grep -q 'nexus.device.id' server/src/api/nexus/monitoring.rs
-grep -q 'maintenance' server/src/api/nexus/monitoring.rs
+grep -q 'API_METHOD_SIGNOZ_STATUS' server/src/api/nexus/monitoring/mod.rs
+grep -q 'NEXUS_SIGNOZ_API_KEY' server/src/api/nexus/monitoring/signoz.rs
+grep -q 'SIGNOZ-API-KEY' server/src/api/nexus/monitoring/signoz.rs
+grep -q 'icmpcheck/' server/src/api/nexus/monitoring/collector.rs
+grep -q 'nexus.device.id' server/src/api/nexus/monitoring/collector.rs
+grep -q 'maintenance' server/src/api/nexus/monitoring/store.rs
 grep -q 'NexusMonitoring' ui/src/nexus/mod.rs
 grep -q '"Monitoring"' ui/src/main_menu.rs
 grep -q '"/monitoring/device"' ui/src/nexus/monitoring.rs
