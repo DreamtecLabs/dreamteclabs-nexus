@@ -6,15 +6,14 @@ on:
       - 'server/src/api/nexus/**'
       - 'server/src/api/mod.rs'
       - 'services/nexus-domains-helper'
+      - 'services/nexus-icmp-collector.service'
       - 'services/Makefile'
       - 'debian/proxmox-datacenter-manager.install'
       - 'docs/nexus-domains-hosting.md'
+      - 'docs/nexus-monitoring.md'
+      - 'docs/Makefile'
       - 'tools/nexus/validate-domains-ci.sh'
-      - 'tools/nexus/validate-domains-container.sh'
       - 'tools/nexus/build-backend-container.sh'
-      - 'ui/src/nexus/domains.rs'
-      - 'ui/src/nexus/mod.rs'
-      - 'ui/src/main_menu.rs'
       - '.github/workflows/domains-hosting.yml'
   push:
     branches:
@@ -23,15 +22,14 @@ on:
       - 'server/src/api/nexus/**'
       - 'server/src/api/mod.rs'
       - 'services/nexus-domains-helper'
+      - 'services/nexus-icmp-collector.service'
       - 'services/Makefile'
       - 'debian/proxmox-datacenter-manager.install'
       - 'docs/nexus-domains-hosting.md'
+      - 'docs/nexus-monitoring.md'
+      - 'docs/Makefile'
       - 'tools/nexus/validate-domains-ci.sh'
-      - 'tools/nexus/validate-domains-container.sh'
       - 'tools/nexus/build-backend-container.sh'
-      - 'ui/src/nexus/domains.rs'
-      - 'ui/src/nexus/mod.rs'
-      - 'ui/src/main_menu.rs'
       - '.github/workflows/domains-hosting.yml'
   workflow_dispatch:
 
@@ -45,9 +43,10 @@ permissions:
   pull-requests: write
 
 jobs:
-  validate:
+  package-backend:
+    name: Validate and build PDM backend package
     runs-on: ubuntu-24.04
-    timeout-minutes: 45
+    timeout-minutes: 60
     steps:
       - name: Recover workspace ownership
         shell: bash
@@ -63,17 +62,9 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v4
         with:
+          clean: true
           fetch-depth: 2
           submodules: recursive
-
-      - name: Restore Domains Cargo cache
-        uses: actions/cache@v4
-        with:
-          path: .cache/domains-target
-          key: domains-cargo-${{ runner.os }}-${{ hashFiles('Cargo.lock', 'Cargo.toml', 'debian/control') }}-${{ github.ref_name }}
-          restore-keys: |
-            domains-cargo-${{ runner.os }}-${{ hashFiles('Cargo.lock', 'Cargo.toml', 'debian/control') }}-
-            domains-cargo-${{ runner.os }}-
 
       - name: Install Rust stable
         uses: dtolnay/rust-toolchain@stable
@@ -84,8 +75,17 @@ jobs:
         shell: bash
         run: bash tools/nexus/validate-domains-ci.sh
 
-      - name: Test and compile in Debian Trixie
-        id: domains_build
+      - name: Restore backend Cargo cache
+        uses: actions/cache@v4
+        with:
+          path: .cache/backend-target
+          key: backend-cargo-${{ runner.os }}-${{ hashFiles('Cargo.lock', 'Cargo.toml', 'debian/control') }}-${{ github.ref_name }}
+          restore-keys: |
+            backend-cargo-${{ runner.os }}-${{ hashFiles('Cargo.lock', 'Cargo.toml', 'debian/control') }}-
+            backend-cargo-${{ runner.os }}-
+
+      - name: Build backend package in Debian Trixie
+        id: backend_build
         continue-on-error: true
         shell: bash
         run: |
@@ -95,25 +95,25 @@ jobs:
             --memory=7g \
             -e HOST_UID="$(id -u)" \
             -e HOST_GID="$(id -g)" \
-            -e CARGO_TARGET_DIR=/workspace/.cache/domains-target \
+            -e CARGO_TARGET_DIR=/workspace/.cache/backend-target \
             -v "$GITHUB_WORKSPACE:/workspace" \
             -w /workspace \
             debian:trixie \
-            bash tools/nexus/validate-domains-container.sh 2>&1 | tee artifacts/domains-build.log
+            bash tools/nexus/build-backend-container.sh 2>&1 | tee artifacts/backend-build.log
 
-      - name: Publish Domains & Hosting failure diagnostics
-        if: steps.domains_build.outcome == 'failure' && github.event_name == 'pull_request'
+      - name: Publish backend package failure diagnostics
+        if: steps.backend_build.outcome == 'failure' && github.event_name == 'pull_request'
         uses: actions/github-script@v7
         with:
           script: |
             const fs = require('fs');
-            const log = fs.readFileSync('artifacts/domains-build.log', 'utf8');
+            const log = fs.readFileSync('artifacts/backend-build.log', 'utf8');
             const lines = log.split(/\r?\n/);
-            const errorStart = lines.findLastIndex(line => /(^|\s)(error(\[E\d+\])?:|error: could not compile|failed to|make(\[\d+\])?: \*\*\*|Killed)/i.test(line));
-            const start = errorStart >= 0 ? Math.max(0, errorStart - 45) : Math.max(0, lines.length - 160);
-            const excerpt = lines.slice(start, Math.min(lines.length, start + 160)).join('\n').slice(-50000);
-            const marker = '<!-- domains-hosting-build-diagnostics -->';
-            const body = `${marker}\n### Domains & Hosting build diagnostics\n\nCommit: \`${context.sha}\`\n\n\`\`\`text\n${excerpt}\n\`\`\``;
+            const errorStart = lines.findLastIndex(line => /(^|\s)(error(\[E\d+\])?:|error: could not compile|failed to|make(\[\d+\])?: \*\*\*|Killed|Backend package was not produced)/i.test(line));
+            const start = errorStart >= 0 ? Math.max(0, errorStart - 60) : Math.max(0, lines.length - 200);
+            const excerpt = lines.slice(start, Math.min(lines.length, start + 200)).join('\n').slice(-50000);
+            const marker = '<!-- backend-package-build-diagnostics -->';
+            const body = `${marker}\n### Backend package build diagnostics\n\nCommit: \`${context.sha}\`\n\n\`\`\`text\n${excerpt}\n\`\`\``;
             const { data: comments } = await github.rest.issues.listComments({
               owner: context.repo.owner,
               repo: context.repo.repo,
@@ -137,55 +137,9 @@ jobs:
               });
             }
 
-      - name: Fail when Domains & Hosting validation fails
-        if: steps.domains_build.outcome == 'failure'
+      - name: Fail when backend package build fails
+        if: steps.backend_build.outcome == 'failure'
         run: exit 1
-
-  package-backend:
-    name: Build PDM backend package
-    needs: validate
-    runs-on: ubuntu-24.04
-    timeout-minutes: 60
-    steps:
-      - name: Recover workspace ownership
-        shell: bash
-        run: |
-          set -euo pipefail
-          docker run --rm \
-            -e HOST_UID="$(id -u)" \
-            -e HOST_GID="$(id -g)" \
-            -v "$GITHUB_WORKSPACE:/workspace" \
-            debian:trixie \
-            sh -c 'chown -R "$HOST_UID:$HOST_GID" /workspace'
-
-      - name: Checkout
-        uses: actions/checkout@v4
-        with:
-          clean: true
-          fetch-depth: 2
-          submodules: recursive
-
-      - name: Restore backend Cargo cache
-        uses: actions/cache@v4
-        with:
-          path: .cache/backend-target
-          key: backend-cargo-${{ runner.os }}-${{ hashFiles('Cargo.lock', 'Cargo.toml', 'debian/control') }}-${{ github.ref_name }}
-          restore-keys: |
-            backend-cargo-${{ runner.os }}-${{ hashFiles('Cargo.lock', 'Cargo.toml', 'debian/control') }}-
-            backend-cargo-${{ runner.os }}-
-
-      - name: Build backend package in Debian Trixie
-        shell: bash
-        run: |
-          docker run --rm \
-            --memory=7g \
-            -e HOST_UID="$(id -u)" \
-            -e HOST_GID="$(id -g)" \
-            -e CARGO_TARGET_DIR=/workspace/.cache/backend-target \
-            -v "$GITHUB_WORKSPACE:/workspace" \
-            -w /workspace \
-            debian:trixie \
-            bash tools/nexus/build-backend-container.sh
 
       - name: Validate backend artifact provenance
         shell: bash
@@ -196,6 +150,7 @@ jobs:
           dpkg-deb --info artifacts/backend/proxmox-datacenter-manager_*.deb >/dev/null
 
       - name: Upload commit-addressed backend package
+        if: github.event_name == 'push' || github.event_name == 'workflow_dispatch'
         uses: actions/upload-artifact@v4
         with:
           name: nexus-pdm-backend-${{ github.sha }}
