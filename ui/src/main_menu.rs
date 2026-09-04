@@ -28,7 +28,7 @@ use crate::{
 
 #[path = "nexus/mod.rs"]
 mod nexus;
-use nexus::{NexusDomains, NexusHome, NexusInventory, NexusStorage};
+use nexus::{NexusDomains, NexusHome, NexusInventory, NexusMonitoring, NexusStorage};
 
 use pwt_macros::builder;
 
@@ -306,6 +306,15 @@ impl Component for PdmMainMenu {
             "domains-hosting",
             Some("fa fa-globe"),
             |_| html! { <NexusDomains/> },
+        );
+
+        register_view(
+            &mut menu,
+            &mut content,
+            "Monitoring",
+            "monitoring",
+            Some("fa fa-heartbeat"),
+            |_| html! { <NexusMonitoring/> },
         );
 
         register_view(
