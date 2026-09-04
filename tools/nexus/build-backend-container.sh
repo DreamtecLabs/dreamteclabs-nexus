@@ -9,27 +9,28 @@ if [[ -z "${HOST_UID:-}" || -z "${HOST_GID:-}" ]]; then
 fi
 trap 'chown -R "${HOST_UID}:${HOST_GID}" /workspace' EXIT
 
-apt-get update
-apt-get install -y --no-install-recommends \
-    build-essential \
-    ca-certificates \
-    curl \
-    devscripts \
-    equivs \
-    git \
-    gnupg \
-    lintian
+if [[ "${NEXUS_BACKEND_BUILDER_READY:-0}" != "1" ]]; then
+    apt-get update
+    apt-get install -y --no-install-recommends \
+        build-essential \
+        ca-certificates \
+        curl \
+        devscripts \
+        equivs \
+        git \
+        gnupg \
+        lintian
 
-keyring=/usr/share/keyrings/proxmox-archive-keyring.gpg
-curl -fsSL https://enterprise.proxmox.com/debian/proxmox-archive-keyring-trixie.gpg -o "$keyring"
-cat >/etc/apt/sources.list.d/proxmox-devel.sources <<EOF
+    keyring=/usr/share/keyrings/proxmox-archive-keyring.gpg
+    curl -fsSL https://enterprise.proxmox.com/debian/proxmox-archive-keyring-trixie.gpg -o "$keyring"
+    cat >/etc/apt/sources.list.d/proxmox-devel.sources <<EOF
 Types: deb
 URIs: http://download.proxmox.com/debian/devel/
 Suites: trixie
 Components: main
 Signed-By: $keyring
 EOF
-cat >/etc/apt/sources.list.d/proxmox-pdm.sources <<EOF
+    cat >/etc/apt/sources.list.d/proxmox-pdm.sources <<EOF
 Types: deb
 URIs: http://download.proxmox.com/debian/pdm
 Suites: trixie
@@ -37,15 +38,19 @@ Components: pdm-no-subscription
 Signed-By: $keyring
 EOF
 
-apt-get update
-export DEB_BUILD_PROFILES=nodoc
-mk-build-deps \
-    --build-dep \
-    --build-profiles nodoc \
-    --install \
-    --remove \
-    --tool 'apt-get -y --no-install-recommends' \
-    debian/control
+    apt-get update
+    export DEB_BUILD_PROFILES=nodoc
+    mk-build-deps \
+        --build-dep \
+        --build-profiles nodoc \
+        --install \
+        --remove \
+        --tool 'apt-get -y --no-install-recommends' \
+        debian/control
+else
+    export DEB_BUILD_PROFILES="${DEB_BUILD_PROFILES:-nodoc}"
+    echo "Using cached Nexus backend builder dependencies"
+fi
 
 git config --global --add safe.directory /workspace
 git submodule update --init --recursive
