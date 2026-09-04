@@ -146,7 +146,10 @@ mod tests {
     #[test]
     fn collection_count_supports_current_and_wrapped_shapes() {
         assert_eq!(count_collection(&json!([1, 2]), &["data"]), Some(2));
-        assert_eq!(count_collection(&json!({"data": [1, 2, 3]}), &["data"]), Some(3));
+        assert_eq!(
+            count_collection(&json!({"data": [1, 2, 3]}), &["data"]),
+            Some(3)
+        );
         assert_eq!(count_collection(&json!({"rules": []}), &["rules"]), Some(0));
         assert_eq!(count_collection(&json!({"data": {}}), &["data"]), None);
     }
