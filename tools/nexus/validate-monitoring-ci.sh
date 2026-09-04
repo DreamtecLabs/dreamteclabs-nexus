@@ -17,7 +17,7 @@ grep -q 'const RULES_PATH: &str = "/api/v2/rules"' server/src/api/nexus/monitori
 grep -q 'const DOWNTIME_PATH: &str = "/api/v1/downtime_schedules"' server/src/api/nexus/monitoring/signoz.rs
 grep -q 'Method::POST, DOWNTIME_PATH' server/src/api/nexus/monitoring/signoz.rs
 grep -q 'Method::DELETE' server/src/api/nexus/monitoring/signoz.rs
-grep -q 'icmpcheck/' server/src/api/nexus/monitoring/collector.rs
+grep -q 'icmp_check/' server/src/api/nexus/monitoring/collector.rs
 grep -q 'nexus.device.id' server/src/api/nexus/monitoring/collector.rs
 grep -q 'maintenance' server/src/api/nexus/monitoring/store.rs
 grep -q 'NexusMonitoring' ui/src/nexus/mod.rs
