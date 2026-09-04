@@ -21,12 +21,13 @@ MAN5_PAGES := \
 SPHINXOPTS    =
 SPHINXBUILD   = sphinx-build
 BUILDDIR      = output
+CARGO_TARGET_DIR ?= ../target
 
 ifeq ($(BUILD_MODE), release)
-COMPILEDIR := ../target/release
+COMPILEDIR := $(CARGO_TARGET_DIR)/release
 SPHINXOPTS    += -t release
 else
-COMPILEDIR := ../target/debug
+COMPILEDIR := $(CARGO_TARGET_DIR)/debug
 SPHINXOPTS    += -t devbuild
 endif
 
