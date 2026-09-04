@@ -12,6 +12,9 @@ use super::store::{DEFAULT_OTLP_ENDPOINT, enabled_devices};
 const COLLECTOR_CONFIG_FILENAME: &str = configdir!("/nexus-icmp-collector.yaml");
 const COLLECTOR_BINARY: &str = "/usr/bin/otelcol-contrib";
 const COLLECTOR_SERVICE: &str = "nexus-icmp-collector.service";
+const BLACKBOX_BINARY: &str = "/usr/bin/prometheus-blackbox-exporter";
+const BLACKBOX_SERVICE: &str = "nexus-blackbox-exporter.service";
+const BLACKBOX_ENDPOINT: &str = "127.0.0.1:9116";
 
 fn yaml_quote(value: &str) -> String {
     format!("'{}'", value.replace('\'', "''"))
@@ -56,8 +59,10 @@ fn collector_config(inventory: &Value) -> Result<String, Error> {
         let site = device.get("site").and_then(Value::as_str).unwrap_or("home");
 
         receivers.push_str(&format!(
-            "  icmpcheck/{id}:\n    collection_interval: {interval}\n    targets:\n      - host: {}\n        ping_count: 3\n        ping_interval: 1s\n        ping_timeout: 5s\n",
-            yaml_quote(address)
+            "  prometheus/{id}:\n    config:\n      scrape_configs:\n        - job_name: {}\n          scrape_interval: {interval}\n          scrape_timeout: 10s\n          metrics_path: /probe\n          params:\n            module: [icmp]\n          static_configs:\n            - targets:\n                - {}\n          relabel_configs:\n            - source_labels: [__address__]\n              target_label: __param_target\n            - source_labels: [__param_target]\n              target_label: instance\n            - target_label: __address__\n              replacement: {}\n",
+            yaml_quote(&format!("nexus-icmp-{id}")),
+            yaml_quote(address),
+            yaml_quote(BLACKBOX_ENDPOINT),
         ));
         processors.push_str(&format!(
             "  resource/{id}:\n    attributes:\n      - key: nexus.device.id\n        value: {}\n        action: upsert\n      - key: nexus.device.name\n        value: {}\n        action: upsert\n      - key: nexus.resource.type\n        value: {}\n        action: upsert\n      - key: nexus.site\n        value: {}\n        action: upsert\n      - key: nexus.monitoring.profile\n        value: 'icmp'\n        action: upsert\n  batch/{id}: {{}}\n",
@@ -67,7 +72,7 @@ fn collector_config(inventory: &Value) -> Result<String, Error> {
             yaml_quote(site),
         ));
         pipelines.push_str(&format!(
-            "    metrics/{id}:\n      receivers: [icmpcheck/{id}]\n      processors: [resource/{id}, batch/{id}]\n      exporters: [otlp]\n"
+            "    metrics/{id}:\n      receivers: [prometheus/{id}]\n      processors: [resource/{id}, batch/{id}]\n      exporters: [otlp]\n"
         ));
     }
 
@@ -97,22 +102,32 @@ async fn command_success(program: &str, args: &[&str]) -> Result<(), Error> {
     )
 }
 
+async fn disable_service(service: &str) {
+    let _ = Command::new("/usr/bin/systemctl")
+        .args(["disable", "--now", service])
+        .output()
+        .await;
+}
+
 pub(super) async fn reconcile(inventory: &Value) -> Result<Value, Error> {
     let active_targets = enabled_devices(inventory).len();
     if active_targets == 0 {
-        let _ = Command::new("/usr/bin/systemctl")
-            .args(["disable", "--now", COLLECTOR_SERVICE])
-            .output()
-            .await;
+        disable_service(COLLECTOR_SERVICE).await;
+        disable_service(BLACKBOX_SERVICE).await;
+        let _ = tokio::fs::remove_file(COLLECTOR_CONFIG_FILENAME).await;
         return Ok(json!({
             "active_targets": 0,
             "service": "disabled",
+            "prober_service": "disabled",
             "config": COLLECTOR_CONFIG_FILENAME
         }));
     }
 
     if !Path::new(COLLECTOR_BINARY).exists() {
         bail!("OpenTelemetry Collector Contrib is not installed at {COLLECTOR_BINARY}");
+    }
+    if !Path::new(BLACKBOX_BINARY).exists() {
+        bail!("Prometheus Blackbox Exporter is not installed at {BLACKBOX_BINARY}");
     }
 
     let config = collector_config(inventory)?;
@@ -124,33 +139,42 @@ pub(super) async fn reconcile(inventory: &Value) -> Result<Value, Error> {
     let config_arg = format!("--config={temporary}");
     if let Err(err) = command_success(COLLECTOR_BINARY, &["validate", &config_arg]).await {
         let _ = tokio::fs::remove_file(&temporary).await;
-        return Err(err.context("generated ICMP collector configuration is invalid"));
+        bail!("generated ICMP collector configuration is invalid: {err:#}");
     }
 
     tokio::fs::rename(&temporary, COLLECTOR_CONFIG_FILENAME)
         .await
         .context("unable to atomically replace ICMP collector configuration")?;
     command_success("/usr/bin/systemctl", &["daemon-reload"]).await?;
+    command_success("/usr/bin/systemctl", &["enable", BLACKBOX_SERVICE]).await?;
+    command_success("/usr/bin/systemctl", &["restart", BLACKBOX_SERVICE]).await?;
     command_success("/usr/bin/systemctl", &["enable", COLLECTOR_SERVICE]).await?;
     command_success("/usr/bin/systemctl", &["restart", COLLECTOR_SERVICE]).await?;
 
     Ok(json!({
         "active_targets": active_targets,
         "service": "active",
+        "prober_service": "active",
         "config": COLLECTOR_CONFIG_FILENAME
     }))
 }
 
-pub(super) fn status() -> Value {
-    let service_active = std::process::Command::new("/usr/bin/systemctl")
-        .args(["is-active", "--quiet", COLLECTOR_SERVICE])
+fn service_active(service: &str) -> bool {
+    std::process::Command::new("/usr/bin/systemctl")
+        .args(["is-active", "--quiet", service])
         .status()
         .map(|status| status.success())
-        .unwrap_or(false);
+        .unwrap_or(false)
+}
+
+pub(super) fn status() -> Value {
     json!({
         "collector_installed": Path::new(COLLECTOR_BINARY).exists(),
-        "service_active": service_active,
-        "service": COLLECTOR_SERVICE
+        "prober_installed": Path::new(BLACKBOX_BINARY).exists(),
+        "service_active": service_active(COLLECTOR_SERVICE),
+        "prober_service_active": service_active(BLACKBOX_SERVICE),
+        "service": COLLECTOR_SERVICE,
+        "prober_service": BLACKBOX_SERVICE
     })
 }
 
@@ -187,9 +211,11 @@ mod tests {
             ]
         });
         let config = collector_config(&inventory).unwrap();
-        assert!(config.contains("icmpcheck/switch-01"));
+        assert!(config.contains("prometheus/switch-01"));
+        assert!(config.contains("module: [icmp]"));
+        assert!(config.contains("127.0.0.1:9116"));
         assert!(config.contains("metrics/switch-01"));
         assert!(config.contains("nexus.device.name"));
-        assert!(!config.contains("icmpcheck/tv-01"));
+        assert!(!config.contains("prometheus/tv-01"));
     }
 }

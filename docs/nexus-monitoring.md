@@ -6,9 +6,10 @@ Nexus owns the monitoring control plane. SigNoz remains the observability backen
 
 - **Nexus UI/API**: source of truth for monitored devices, monitoring state and provider configuration.
 - **SigNoz**: metrics exploration, dashboards, alert rules, planned maintenance and notification routing.
-- **OpenTelemetry Collector**: host metrics for Linux guests and centralized ICMP synthetic checks for agentless devices.
+- **Prometheus Blackbox Exporter**: stable ICMP probe execution for agentless devices.
+- **OpenTelemetry Collector**: scrapes Blackbox Exporter metrics through its supported Prometheus receiver and exports them to SigNoz over OTLP.
 
-Operators should not edit the ICMP collector YAML to register devices. Add, remove or change devices through **Monitoring** in the Nexus UI. The backend regenerates and validates the collector configuration and reconciles the dedicated systemd service.
+Operators should not edit probe or collector configuration to register devices. Add, remove or change devices through **Monitoring** in the Nexus UI. The backend regenerates and validates the collector configuration and reconciles the dedicated Nexus services.
 
 ## Device inventory
 
@@ -22,15 +23,23 @@ The backend persists Nexus-owned state in `monitoring.json` under the PDM config
 - monitoring profile (`icmp` in the initial implementation)
 - state: `enabled`, `maintenance` or `disabled`
 
-Only `enabled` devices are rendered into the active ICMP collector configuration. Maintenance and disabled devices are intentionally excluded from probes.
+Only `enabled` devices are rendered into the active probe configuration. Maintenance and disabled devices are intentionally excluded from probes.
 
 ## ICMP probe engine
 
-The backend generates `/etc/proxmox-datacenter-manager/nexus-icmp-collector.yaml` for the packaged `nexus-icmp-collector.service`. Each enabled device receives an isolated `icmpcheck/<device-id>` receiver and metrics pipeline, allowing Nexus resource attributes to remain specific to that device.
+Nexus deliberately does not depend on the experimental OpenTelemetry ICMP receiver. The supported runtime path is:
 
-The collector exports OTLP metrics to `192.168.0.47:4317` by default. The OpenTelemetry `icmpcheckreceiver` provides packet-loss and RTT metrics plus `net.peer.ip` and `net.peer.name` resource attributes.
+`Nexus inventory -> Prometheus Blackbox Exporter (ICMP) -> OpenTelemetry Prometheus receiver -> OTLP -> SigNoz`
 
-The collector binary is intentionally not silently installed by a device CRUD operation. If `/usr/bin/otelcol-contrib` is absent, the device remains safely persisted and the UI surfaces the reconciliation failure.
+The packaged `nexus-blackbox-exporter.service` binds Blackbox Exporter to `127.0.0.1:9116` and uses the Debian package's standard `/etc/prometheus/blackbox.yml` ICMP module. It is not exposed to the LAN.
+
+The backend generates `/etc/proxmox-datacenter-manager/nexus-icmp-collector.yaml` for `nexus-icmp-collector.service`. Each enabled device receives an isolated `prometheus/<device-id>` receiver and metrics pipeline. The receiver calls the local Blackbox `/probe` endpoint with `module=icmp`, while Nexus resource processors attach `nexus.device.id`, `nexus.device.name`, `nexus.resource.type`, `nexus.site` and `nexus.monitoring.profile` before export.
+
+The collector exports OTLP metrics to `192.168.0.47:4317` by default. Before replacing active configuration, Nexus validates the generated YAML with `/usr/bin/otelcol-contrib validate`. A failed validation never replaces the previous active configuration and the complete validation failure is returned to the UI.
+
+Both `/usr/bin/otelcol-contrib` and `/usr/bin/prometheus-blackbox-exporter` are runtime prerequisites. Nexus device CRUD does not silently install operating-system packages. If either prerequisite is absent, the device remains safely persisted and the UI surfaces the reconciliation failure.
+
+When there are no enabled targets Nexus disables both `nexus-blackbox-exporter.service` and `nexus-icmp-collector.service` and removes the generated collector YAML. With enabled targets, Nexus starts the Blackbox service first and the collector second.
 
 ## SigNoz API
 

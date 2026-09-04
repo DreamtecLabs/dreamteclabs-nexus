@@ -4,6 +4,7 @@ SERVICES := \
 	proxmox-datacenter-manager-banner.service \
 	proxmox-datacenter-manager-daily-update.service \
 	proxmox-datacenter-manager-daily-update.timer \
+	nexus-blackbox-exporter.service \
 	nexus-icmp-collector.service \
 
 HELPERS := \

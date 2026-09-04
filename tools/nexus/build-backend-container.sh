@@ -86,6 +86,11 @@ monitoring_unit="$extract_dir/usr/lib/systemd/system/nexus-icmp-collector.servic
 test -f "$monitoring_unit"
 grep -q 'otelcol-contrib' "$monitoring_unit"
 grep -q 'nexus-icmp-collector.yaml' "$monitoring_unit"
+blackbox_unit="$extract_dir/usr/lib/systemd/system/nexus-blackbox-exporter.service"
+test -f "$blackbox_unit"
+grep -q 'prometheus-blackbox-exporter' "$blackbox_unit"
+grep -q '127.0.0.1:9116' "$blackbox_unit"
+grep -q 'CAP_NET_RAW' "$blackbox_unit"
 rm -rf "$extract_dir"
 
 rm -rf artifacts/backend
