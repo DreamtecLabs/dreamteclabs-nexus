@@ -33,7 +33,7 @@ Build-Depends: debhelper-compat (= 13),
                librust-openssl-0.10+default-dev (>= 0.10.40-~~),
                librust-pbs-api-types-1+default-dev (>= 1.0.9-~~),
                librust-pbs-api-types-1+enum-fallback-dev (>= 1.0.9-~~),
-               librust-percent-encoding-2+default-dev,
+               librust-percent-encoding-2+default-dev (>= 2.1-~~),
                librust-proxmox-access-control-1+api-dev,
                librust-proxmox-access-control-1+default-dev (>= 1.1-~~),
                librust-proxmox-acme-api-1+default-dev,
@@ -64,6 +64,7 @@ Build-Depends: debhelper-compat (= 13),
                librust-proxmox-http-1+default-dev (>= 1.0.4-~~),
                librust-proxmox-http-1+http-helpers-dev (>= 1.0.4-~~),
                librust-proxmox-http-1+proxmox-async-dev (>= 1.0.4-~~),
+               librust-proxmox-http-1+websocket-dev (>= 1.0.4-~~),
                librust-proxmox-human-byte-1+default-dev,
                librust-proxmox-installer-types-0.2+api-types-dev,
                librust-proxmox-installer-types-0.2+default-dev,
@@ -179,7 +180,7 @@ Recommends: ifupdown2,
             zfsutils-linux,
 Description: Manage multiple Proxmox VE cluster and other Proxmox projects
  This package provides the API daemons of the Proxmox Datacenter Manager (PDM)
- which allows one to add multiple Proxmox VE cluster and other Proxmox projects
+ which allows one to add multiple Proxmox VE and Proxmox Backup Server
  instances to manage them centrally.
 
 Package: proxmox-datacenter-manager-client
