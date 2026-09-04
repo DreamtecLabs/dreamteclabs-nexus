@@ -1,4 +1,5 @@
 debian/pdm-enterprise.sources etc/apt/sources.list.d/
+usr/lib/systemd/system/nexus-blackbox-exporter.service
 usr/lib/systemd/system/nexus-icmp-collector.service
 usr/lib/systemd/system/proxmox-datacenter-api.service
 usr/lib/systemd/system/proxmox-datacenter-manager-banner.service
