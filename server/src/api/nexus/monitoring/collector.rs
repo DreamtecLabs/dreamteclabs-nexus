@@ -122,7 +122,10 @@ pub(super) async fn reconcile(inventory: &Value) -> Result<Value, Error> {
 
     command_success(
         BLACKBOX_BINARY,
-        &["--config.file=/etc/prometheus/blackbox.yml", "--config.check"],
+        &[
+            "--config.file=/etc/prometheus/blackbox.yml",
+            "--config.check",
+        ],
     )
     .await
     .context("Prometheus Blackbox Exporter configuration is invalid")?;
