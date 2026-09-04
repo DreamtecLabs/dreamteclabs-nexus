@@ -1,6 +1,6 @@
 use std::process::Stdio;
 
-use anyhow::{Context, Error};
+use anyhow::{Context, Error, bail};
 use serde_json::{Value, json};
 use tokio::process::Command;
 
@@ -27,6 +27,22 @@ const SUBDIRS: SubdirMap = &sorted!([
     ),
     ("reconcile", &Router::new().post(&API_METHOD_RECONCILE)),
     ("signoz", &Router::new().get(&API_METHOD_SIGNOZ_STATUS)),
+    (
+        "signoz-downtime",
+        &Router::new().post(&API_METHOD_CREATE_SIGNOZ_DOWNTIME)
+    ),
+    (
+        "signoz-downtime-delete",
+        &Router::new().post(&API_METHOD_DELETE_SIGNOZ_DOWNTIME)
+    ),
+    (
+        "signoz-downtimes",
+        &Router::new().get(&API_METHOD_LIST_SIGNOZ_DOWNTIMES)
+    ),
+    (
+        "signoz-rules",
+        &Router::new().get(&API_METHOD_LIST_SIGNOZ_RULES)
+    ),
 ]);
 
 pub const ROUTER: Router = Router::new()
@@ -84,6 +100,121 @@ pub fn get_monitoring() -> Result<Value, Error> {
 /// Test the configured SigNoz API and return a safe connection summary.
 pub async fn signoz_status() -> Result<Value, Error> {
     Ok(signoz::status().await)
+}
+
+#[api(
+    access: {
+        permission: &Permission::Privilege(&["system"], PRIV_SYS_AUDIT, false),
+    },
+    protected: true,
+)]
+/// Return alert rules from the current SigNoz v2 rules API.
+pub async fn list_signoz_rules() -> Result<Value, Error> {
+    signoz::list_rules().await
+}
+
+#[api(
+    access: {
+        permission: &Permission::Privilege(&["system"], PRIV_SYS_AUDIT, false),
+    },
+    protected: true,
+)]
+/// Return planned-maintenance windows from SigNoz.
+pub async fn list_signoz_downtimes() -> Result<Value, Error> {
+    signoz::list_downtimes().await
+}
+
+fn normalize_optional_text(value: Option<String>) -> Option<String> {
+    value
+        .map(|value| value.trim().to_string())
+        .filter(|value| !value.is_empty())
+}
+
+fn parse_alert_ids(value: Option<String>) -> Vec<String> {
+    value
+        .unwrap_or_default()
+        .split(',')
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .map(str::to_string)
+        .collect()
+}
+
+#[api(
+    input: {
+        properties: {
+            name: { type: String, description: "Human-readable planned-maintenance name." },
+            description: { type: String, description: "Maintenance reason or operator note.", optional: true },
+            timezone: { type: String, description: "IANA timezone, for example America/Monterrey." },
+            start_time: { type: String, description: "RFC3339 maintenance start time." },
+            end_time: { type: String, description: "RFC3339 maintenance end time." },
+            scope: { type: String, description: "Optional SigNoz alert-label scope expression.", optional: true },
+            alert_ids: { type: String, description: "Optional comma-separated SigNoz alert rule IDs. Empty applies to all rules matching scope.", optional: true },
+        },
+    },
+    access: {
+        permission: &Permission::Privilege(&["system"], PRIV_SYS_MODIFY, false),
+    },
+    protected: true,
+)]
+/// Create a fixed SigNoz planned-maintenance window.
+pub async fn create_signoz_downtime(
+    name: String,
+    timezone: String,
+    start_time: String,
+    end_time: String,
+    description: Option<String>,
+    scope: Option<String>,
+    alert_ids: Option<String>,
+) -> Result<Value, Error> {
+    let name = name.trim();
+    let timezone = timezone.trim();
+    let start_time = start_time.trim();
+    let end_time = end_time.trim();
+    if name.is_empty() || timezone.is_empty() || start_time.is_empty() || end_time.is_empty() {
+        bail!("name, timezone, start_time and end_time are required");
+    }
+    if name.len() > 160 || timezone.len() > 128 || start_time.len() > 64 || end_time.len() > 64 {
+        bail!("planned-maintenance input exceeds the supported length");
+    }
+
+    let payload = json!({
+        "name": name,
+        "description": normalize_optional_text(description).unwrap_or_default(),
+        "schedule": {
+            "timezone": timezone,
+            "startTime": start_time,
+            "endTime": end_time
+        },
+        "alertIds": parse_alert_ids(alert_ids),
+        "scope": normalize_optional_text(scope).unwrap_or_default()
+    });
+    signoz::create_downtime(&payload).await
+}
+
+#[api(
+    input: {
+        properties: {
+            id: { type: String, description: "SigNoz planned-maintenance id." },
+        },
+    },
+    access: {
+        permission: &Permission::Privilege(&["system"], PRIV_SYS_MODIFY, false),
+    },
+    protected: true,
+)]
+/// Delete a SigNoz planned-maintenance window.
+pub async fn delete_signoz_downtime(id: String) -> Result<Value, Error> {
+    let id = id.trim();
+    if id.is_empty()
+        || id.len() > 128
+        || !id
+            .chars()
+            .all(|character| character.is_ascii_alphanumeric() || character == '-')
+    {
+        bail!("invalid SigNoz planned-maintenance id");
+    }
+    signoz::delete_downtime(id).await
 }
 
 #[api(
@@ -213,4 +344,17 @@ pub async fn probe_device(id: String) -> Result<Value, Error> {
 /// Regenerate and apply the ICMP collector configuration from the Nexus inventory.
 pub async fn reconcile() -> Result<Value, Error> {
     collector::reconcile(&store::read_inventory()?).await
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn alert_ids_are_trimmed_and_empty_values_removed() {
+        assert_eq!(
+            parse_alert_ids(Some("rule-a, rule-b,,".to_string())),
+            vec!["rule-a".to_string(), "rule-b".to_string()]
+        );
+    }
 }
