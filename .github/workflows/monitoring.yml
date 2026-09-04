@@ -3,7 +3,7 @@ name: Nexus Monitoring
 on:
   pull_request:
     paths:
-      - 'server/src/api/nexus/monitoring.rs'
+      - 'server/src/api/nexus/monitoring/**'
       - 'server/src/api/nexus/mod.rs'
       - 'server/src/api/mod.rs'
       - 'ui/src/nexus/monitoring.rs'
@@ -21,7 +21,7 @@ on:
     branches:
       - master
     paths:
-      - 'server/src/api/nexus/monitoring.rs'
+      - 'server/src/api/nexus/monitoring/**'
       - 'server/src/api/nexus/mod.rs'
       - 'server/src/api/mod.rs'
       - 'ui/src/nexus/monitoring.rs'
