@@ -17,8 +17,9 @@ grep -q 'const RULES_PATH: &str = "/api/v2/rules"' server/src/api/nexus/monitori
 grep -q 'const DOWNTIME_PATH: &str = "/api/v1/downtime_schedules"' server/src/api/nexus/monitoring/signoz.rs
 grep -q 'Method::POST, DOWNTIME_PATH' server/src/api/nexus/monitoring/signoz.rs
 grep -q 'Method::DELETE' server/src/api/nexus/monitoring/signoz.rs
-grep -q 'icmpcheck/' server/src/api/nexus/monitoring/collector.rs
-grep -q 'nexus.device.id' server/src/api/nexus/monitoring/collector.rs
+grep -q 'prometheus/nexus_icmp' server/src/api/nexus/monitoring/collector.rs
+grep -q 'prometheus-blackbox-exporter' server/src/api/nexus/monitoring/collector.rs
+grep -q 'nexus_device_id' server/src/api/nexus/monitoring/collector.rs
 grep -q 'maintenance' server/src/api/nexus/monitoring/store.rs
 grep -q 'NexusMonitoring' ui/src/nexus/mod.rs
 grep -q '"Monitoring"' ui/src/main_menu.rs
@@ -26,10 +27,24 @@ grep -q '"/monitoring/device"' ui/src/nexus/monitoring.rs
 
 test -f services/nexus-icmp-collector.service
 grep -q 'otelcol-contrib' services/nexus-icmp-collector.service
-grep -q 'CAP_NET_RAW' services/nexus-icmp-collector.service
-grep -q 'nexus-icmp-collector.service' services/Makefile
-grep -q 'nexus-icmp-collector.service' debian/proxmox-datacenter-manager.install
+grep -q '^User=www-data$' services/nexus-icmp-collector.service
+grep -q '^Group=www-data$' services/nexus-icmp-collector.service
+if grep -q 'CAP_NET_RAW' services/nexus-icmp-collector.service; then
+    echo 'collector must not retain CAP_NET_RAW; blackbox owns ICMP sockets' >&2
+    exit 1
+fi
 
+test -f services/prometheus-blackbox-exporter-nexus.conf
+grep -q '^AmbientCapabilities=CAP_NET_RAW$' services/prometheus-blackbox-exporter-nexus.conf
+grep -q '^CapabilityBoundingSet=CAP_NET_RAW$' services/prometheus-blackbox-exporter-nexus.conf
+grep -q '^NoNewPrivileges=true$' services/prometheus-blackbox-exporter-nexus.conf
+
+grep -q 'nexus-icmp-collector.service' services/Makefile
+grep -q 'prometheus-blackbox-exporter.service.d' services/Makefile
+grep -q 'nexus-icmp-collector.service' debian/proxmox-datacenter-manager.install
+grep -q 'prometheus-blackbox-exporter.service.d/nexus-icmp.conf' debian/proxmox-datacenter-manager.install
+
+grep -q 'prometheus-blackbox-exporter' debian/control
 grep -q 'nexus-icmp-collector.service' tools/nexus/build-backend-container.sh
 
 cargo fmt --all -- --check

@@ -13,8 +13,11 @@ HELPERS := \
 all:
 
 .PHONY: install
-install: $(SERVICES) $(HELPERS)
+install: $(SERVICES) $(HELPERS) prometheus-blackbox-exporter-nexus.conf
 	install -d $(DESTDIR)/usr/lib/systemd/system
 	install -m 0644 $(SERVICES) $(DESTDIR)/usr/lib/systemd/system
+	install -d $(DESTDIR)/usr/lib/systemd/system/prometheus-blackbox-exporter.service.d
+	install -m 0644 prometheus-blackbox-exporter-nexus.conf \
+		$(DESTDIR)/usr/lib/systemd/system/prometheus-blackbox-exporter.service.d/nexus-icmp.conf
 	install -d $(DESTDIR)/usr/libexec/proxmox
 	install -m 0755 $(HELPERS) $(DESTDIR)/usr/libexec/proxmox
