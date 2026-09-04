@@ -122,7 +122,7 @@ pub fn nexus_monitoring() -> Html {
             let site_value = (*site_state).trim().to_string();
             if name_value.is_empty() || address_value.is_empty() || kind_value.is_empty() {
                 message.set(Some(Err(
-                    "Name, IP/hostname and type are required.".to_string(),
+                    "Name, IP/hostname and type are required.".to_string()
                 )));
                 return;
             }
@@ -182,7 +182,7 @@ pub fn nexus_monitoring() -> Html {
                 match result {
                     Ok(_) => {
                         message.set(Some(Ok(
-                            "ICMP collector reconciled successfully.".to_string(),
+                            "ICMP collector reconciled successfully.".to_string()
                         )));
                         load_monitoring(monitoring);
                     }
