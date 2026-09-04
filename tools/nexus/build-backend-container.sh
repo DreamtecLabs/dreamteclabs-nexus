@@ -3,31 +3,34 @@ set -euo pipefail
 
 cd /workspace
 
-if [[ -n "${HOST_UID:-}" && -n "${HOST_GID:-}" ]]; then
-    trap 'chown -R "${HOST_UID}:${HOST_GID}" /workspace' EXIT
+if [[ -z "${HOST_UID:-}" || -z "${HOST_GID:-}" ]]; then
+    echo "HOST_UID and HOST_GID are required so workspace ownership can be restored" >&2
+    exit 2
 fi
+trap 'chown -R "${HOST_UID}:${HOST_GID}" /workspace' EXIT
 
-apt-get update
-apt-get install -y --no-install-recommends \
-    build-essential \
-    ca-certificates \
-    curl \
-    devscripts \
-    equivs \
-    git \
-    gnupg \
-    lintian
+if [[ "${NEXUS_BACKEND_BUILDER_READY:-0}" != "1" ]]; then
+    apt-get update
+    apt-get install -y --no-install-recommends \
+        build-essential \
+        ca-certificates \
+        curl \
+        devscripts \
+        equivs \
+        git \
+        gnupg \
+        lintian
 
-keyring=/usr/share/keyrings/proxmox-archive-keyring.gpg
-curl -fsSL https://enterprise.proxmox.com/debian/proxmox-archive-keyring-trixie.gpg -o "$keyring"
-cat >/etc/apt/sources.list.d/proxmox-devel.sources <<EOF
+    keyring=/usr/share/keyrings/proxmox-archive-keyring.gpg
+    curl -fsSL https://enterprise.proxmox.com/debian/proxmox-archive-keyring-trixie.gpg -o "$keyring"
+    cat >/etc/apt/sources.list.d/proxmox-devel.sources <<EOF
 Types: deb
 URIs: http://download.proxmox.com/debian/devel/
 Suites: trixie
 Components: main
 Signed-By: $keyring
 EOF
-cat >/etc/apt/sources.list.d/proxmox-pdm.sources <<EOF
+    cat >/etc/apt/sources.list.d/proxmox-pdm.sources <<EOF
 Types: deb
 URIs: http://download.proxmox.com/debian/pdm
 Suites: trixie
@@ -35,38 +38,42 @@ Components: pdm-no-subscription
 Signed-By: $keyring
 EOF
 
-apt-get update
-export DEB_BUILD_PROFILES=nodoc
-mk-build-deps \
-    --build-dep \
-    --build-profiles nodoc \
-    --install \
-    --remove \
-    --tool 'apt-get -y --no-install-recommends' \
-    debian/control
+    apt-get update
+    export DEB_BUILD_PROFILES=nodoc
+    mk-build-deps \
+        --build-dep \
+        --build-profiles nodoc \
+        --install \
+        --remove \
+        --tool 'apt-get -y --no-install-recommends' \
+        debian/control
+else
+    export DEB_BUILD_PROFILES="${DEB_BUILD_PROFILES:-nodoc}"
+    echo "Using cached Nexus backend builder dependencies"
+fi
 
 git config --global --add safe.directory /workspace
 git submodule update --init --recursive
 
+build_user=nexus-build
+if ! id -u "$build_user" >/dev/null 2>&1; then
+    useradd --system --home-dir /nonexistent --shell /usr/sbin/nologin "$build_user"
+fi
 export CARGO_TARGET_DIR="${CARGO_TARGET_DIR:-/workspace/.cache/backend-target}"
 mkdir -p "$CARGO_TARGET_DIR"
-# dpkg-buildpackage/dh-cargo execute build steps as an unprivileged build user
-# even though this CI container starts as root. Those steps write not only to
-# Cargo's target directory, but also to the copied Debian build tree (including
-# debian/cargo_home and generated build files). Make the complete bind-mounted
-# workspace writable before creating that build tree; ownership is restored to
-# the host runner by the EXIT trap above.
-chmod -R a+rwX /workspace
+chown -R "$build_user:$build_user" /workspace
 export CARGO_BUILD_JOBS=1
 export CARGO_INCREMENTAL=0
 export MAKEFLAGS=-j1
 
-# Debian packaging occasionally returns non-zero only in the final lintian
-# pass while the installable main package has already been produced. Capture
-# the package first, then validate the artifact itself instead of accepting an
-# unverified partial build.
 set +e
-make deb-api
+runuser -u "$build_user" -- env \
+    DEB_BUILD_PROFILES="$DEB_BUILD_PROFILES" \
+    CARGO_TARGET_DIR="$CARGO_TARGET_DIR" \
+    CARGO_BUILD_JOBS="$CARGO_BUILD_JOBS" \
+    CARGO_INCREMENTAL="$CARGO_INCREMENTAL" \
+    MAKEFLAGS="$MAKEFLAGS" \
+    make deb-api
 build_status=$?
 set -e
 
