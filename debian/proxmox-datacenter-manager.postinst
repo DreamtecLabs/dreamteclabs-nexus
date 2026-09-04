@@ -20,14 +20,14 @@ case "$1" in
 
     cfgdir="/etc/proxmox-datacenter-manager"
 
-    # Nexus owns the ICMP collector lifecycle. Debian's generated systemd
+    # Nexus owns the agentless probe lifecycle. Debian's generated systemd
     # maintainer snippets enable installed units by default, but on a fresh
-    # install Nexus has not generated collector configuration yet. Keep the
-    # service disabled until the monitoring reconcile path creates a valid
-    # configuration and explicitly enables/starts it. Preserve an already
-    # configured collector across upgrades.
+    # install Nexus has not generated collector configuration yet. Keep both
+    # services disabled until Monitoring reconcile validates configuration and
+    # explicitly enables/starts them. Preserve configured probes on upgrades.
     if test ! -s "$cfgdir/nexus-icmp-collector.yaml"; then
         systemctl disable --now nexus-icmp-collector.service >/dev/null 2>&1 || true
+        systemctl disable --now prometheus-blackbox-exporter.service >/dev/null 2>&1 || true
     fi
 
     if test -n "$2" && dpkg --compare-versions "$2" 'lt' '1.0~'; then
