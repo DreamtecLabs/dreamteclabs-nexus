@@ -75,6 +75,10 @@ dpkg-deb -x "$package" "$extract_dir"
 helper="$extract_dir/usr/libexec/proxmox/nexus-domains-helper"
 test -x "$helper"
 grep -q 'migrate)' "$helper"
+monitoring_unit="$extract_dir/usr/lib/systemd/system/nexus-icmp-collector.service"
+test -f "$monitoring_unit"
+grep -q 'otelcol-contrib' "$monitoring_unit"
+grep -q 'nexus-icmp-collector.yaml' "$monitoring_unit"
 rm -rf "$extract_dir"
 
 rm -rf artifacts/backend
