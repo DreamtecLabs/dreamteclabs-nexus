@@ -7,8 +7,16 @@ cd "$repo_root"
 grep -q 'pub mod monitoring;' server/src/api/nexus/mod.rs
 grep -q 'nexus::monitoring::ROUTER' server/src/api/mod.rs
 grep -q 'API_METHOD_SIGNOZ_STATUS' server/src/api/nexus/monitoring/mod.rs
+grep -q 'API_METHOD_LIST_SIGNOZ_RULES' server/src/api/nexus/monitoring/mod.rs
+grep -q 'API_METHOD_LIST_SIGNOZ_DOWNTIMES' server/src/api/nexus/monitoring/mod.rs
+grep -q 'API_METHOD_CREATE_SIGNOZ_DOWNTIME' server/src/api/nexus/monitoring/mod.rs
+grep -q 'API_METHOD_DELETE_SIGNOZ_DOWNTIME' server/src/api/nexus/monitoring/mod.rs
 grep -q 'NEXUS_SIGNOZ_API_KEY' server/src/api/nexus/monitoring/signoz.rs
 grep -q 'SIGNOZ-API-KEY' server/src/api/nexus/monitoring/signoz.rs
+grep -q 'const RULES_PATH: &str = "/api/v2/rules"' server/src/api/nexus/monitoring/signoz.rs
+grep -q 'const DOWNTIME_PATH: &str = "/api/v1/downtime_schedules"' server/src/api/nexus/monitoring/signoz.rs
+grep -q 'Method::POST, DOWNTIME_PATH' server/src/api/nexus/monitoring/signoz.rs
+grep -q 'Method::DELETE' server/src/api/nexus/monitoring/signoz.rs
 grep -q 'icmpcheck/' server/src/api/nexus/monitoring/collector.rs
 grep -q 'nexus.device.id' server/src/api/nexus/monitoring/collector.rs
 grep -q 'maintenance' server/src/api/nexus/monitoring/store.rs
