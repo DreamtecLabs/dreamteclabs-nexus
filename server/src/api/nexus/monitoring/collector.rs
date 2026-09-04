@@ -56,7 +56,7 @@ fn collector_config(inventory: &Value) -> Result<String, Error> {
         let site = device.get("site").and_then(Value::as_str).unwrap_or("home");
 
         receivers.push_str(&format!(
-            "  icmpcheck/{id}:\n    collection_interval: {interval}\n    targets:\n      - host: {}\n        ping_count: 3\n        ping_interval: 1s\n        ping_timeout: 5s\n",
+            "  icmp_check/{id}:\n    collection_interval: {interval}\n    targets:\n      - host: {}\n        ping_count: 3\n        ping_interval: 1s\n        ping_timeout: 5s\n",
             yaml_quote(address)
         ));
         processors.push_str(&format!(
@@ -67,7 +67,7 @@ fn collector_config(inventory: &Value) -> Result<String, Error> {
             yaml_quote(site),
         ));
         pipelines.push_str(&format!(
-            "    metrics/{id}:\n      receivers: [icmpcheck/{id}]\n      processors: [resource/{id}, batch/{id}]\n      exporters: [otlp]\n"
+            "    metrics/{id}:\n      receivers: [icmp_check/{id}]\n      processors: [resource/{id}, batch/{id}]\n      exporters: [otlp]\n"
         ));
     }
 
@@ -124,7 +124,7 @@ pub(super) async fn reconcile(inventory: &Value) -> Result<Value, Error> {
     let config_arg = format!("--config={temporary}");
     if let Err(err) = command_success(COLLECTOR_BINARY, &["validate", &config_arg]).await {
         let _ = tokio::fs::remove_file(&temporary).await;
-        return Err(err.context("generated ICMP collector configuration is invalid"));
+        bail!("generated ICMP collector configuration is invalid: {err:#}");
     }
 
     tokio::fs::rename(&temporary, COLLECTOR_CONFIG_FILENAME)
@@ -187,9 +187,9 @@ mod tests {
             ]
         });
         let config = collector_config(&inventory).unwrap();
-        assert!(config.contains("icmpcheck/switch-01"));
+        assert!(config.contains("icmp_check/switch-01"));
         assert!(config.contains("metrics/switch-01"));
         assert!(config.contains("nexus.device.name"));
-        assert!(!config.contains("icmpcheck/tv-01"));
+        assert!(!config.contains("icmp_check/tv-01"));
     }
 }
