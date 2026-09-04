@@ -3,9 +3,11 @@ set -euo pipefail
 
 cd /workspace
 
-if [[ -n "${HOST_UID:-}" && -n "${HOST_GID:-}" ]]; then
-    trap 'chown -R "${HOST_UID}:${HOST_GID}" /workspace' EXIT
+if [[ -z "${HOST_UID:-}" || -z "${HOST_GID:-}" ]]; then
+    echo "HOST_UID and HOST_GID are required so workspace ownership can be restored" >&2
+    exit 2
 fi
+trap 'chown -R "${HOST_UID}:${HOST_GID}" /workspace' EXIT
 
 apt-get update
 apt-get install -y --no-install-recommends \
