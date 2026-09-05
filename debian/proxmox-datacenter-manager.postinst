@@ -28,6 +28,12 @@ case "$1" in
     if test ! -s "$cfgdir/nexus-icmp-collector.yaml"; then
         systemctl disable --now nexus-icmp-collector.service >/dev/null 2>&1 || true
         systemctl disable --now prometheus-blackbox-exporter.service >/dev/null 2>&1 || true
+    else
+        # Apply Nexus-owned systemd policy changes (collector identity and the
+        # Blackbox CAP_NET_RAW drop-in) immediately for already configured
+        # monitoring installations.
+        systemctl try-restart prometheus-blackbox-exporter.service >/dev/null 2>&1 || true
+        systemctl try-restart nexus-icmp-collector.service >/dev/null 2>&1 || true
     fi
 
     if test -n "$2" && dpkg --compare-versions "$2" 'lt' '1.0~'; then
