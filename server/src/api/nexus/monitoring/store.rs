@@ -124,9 +124,9 @@ pub(super) fn normalize_metrics_path(input: &str) -> Result<String, Error> {
         bail!("metrics path must start with '/' and contain at most 128 characters");
     }
     if path.chars().any(char::is_control)
-        || !path.bytes().all(|byte| {
-            byte.is_ascii_alphanumeric() || matches!(byte, b'/' | b'-' | b'_' | b'.')
-        })
+        || !path
+            .bytes()
+            .all(|byte| byte.is_ascii_alphanumeric() || matches!(byte, b'/' | b'-' | b'_' | b'.'))
     {
         bail!("metrics path contains invalid characters");
     }
