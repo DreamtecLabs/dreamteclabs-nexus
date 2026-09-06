@@ -92,6 +92,7 @@ jobs:
           bash -n tools/nexus/build-ui-container.sh
           bash -n tools/nexus/build-backend-container.sh
           bash -n tools/nexus/deploy-ui.sh
+          bash -n tools/nexus/deploy-backend.sh
           bash -n tools/nexus/validate-domains-ci.sh
 
       - name: Enforce Nexus ownership boundary
