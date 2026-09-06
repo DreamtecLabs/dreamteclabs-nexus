@@ -425,15 +425,8 @@ pub async fn upsert_service(
         }
     }
 
-    let (id, inventory) = store::upsert_service(
-        name,
-        address,
-        port,
-        metrics_path,
-        site,
-        state,
-        downtime_id,
-    )?;
+    let (id, inventory) =
+        store::upsert_service(name, address, port, metrics_path, site, state, downtime_id)?;
     let reconcile = collector::reconcile(&inventory).await;
 
     Ok(json!({
@@ -565,8 +558,17 @@ mod tests {
             "devices": [{"state": "enabled"}, {"state": "maintenance"}],
             "services": [{"state": "enabled"}, {"state": "enabled"}]
         }));
-        assert_eq!(view.pointer("/probe_engine/active_devices"), Some(&json!(1)));
-        assert_eq!(view.pointer("/probe_engine/active_services"), Some(&json!(2)));
-        assert_eq!(view.pointer("/probe_engine/active_targets"), Some(&json!(3)));
+        assert_eq!(
+            view.pointer("/probe_engine/active_devices"),
+            Some(&json!(1))
+        );
+        assert_eq!(
+            view.pointer("/probe_engine/active_services"),
+            Some(&json!(2))
+        );
+        assert_eq!(
+            view.pointer("/probe_engine/active_targets"),
+            Some(&json!(3))
+        );
     }
 }
