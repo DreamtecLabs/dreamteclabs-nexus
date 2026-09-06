@@ -20,12 +20,6 @@ case "$1" in
 
     cfgdir="/etc/proxmox-datacenter-manager"
 
-    # Apply the Nexus ICMP ping-socket policy immediately. The blackbox exporter
-    # then uses unprivileged Linux ping sockets instead of CAP_NET_RAW.
-    if test -x /usr/lib/systemd/systemd-sysctl; then
-        /usr/lib/systemd/systemd-sysctl --prefix=/net/ipv4/ping_group_range >/dev/null 2>&1 || true
-    fi
-
     # Nexus owns the agentless probe lifecycle. Debian's generated systemd
     # maintainer snippets enable installed units by default, but on a fresh
     # install Nexus has not generated collector configuration yet. Keep both
