@@ -15,12 +15,8 @@ mod collector;
 mod signoz;
 mod store;
 
-/// Serializes the read-decide-call SigNoz-write sequence for device upsert/delete.
-/// Both operations read the current device record, may call the SigNoz downtime API,
-/// and then persist the result; without this lock two concurrent requests for the
-/// same device could both create a maintenance downtime and only one id would survive
-/// the second inventory write, leaking the other schedule indefinitely.
-static DEVICE_LOCK: Mutex<()> = Mutex::const_new(());
+/// Serializes monitoring inventory changes that also synchronize SigNoz maintenance state.
+static RESOURCE_LOCK: Mutex<()> = Mutex::const_new(());
 
 #[sortable]
 const SUBDIRS: SubdirMap = &sorted!([
@@ -34,6 +30,11 @@ const SUBDIRS: SubdirMap = &sorted!([
         &Router::new().post(&API_METHOD_PROBE_DEVICE)
     ),
     ("reconcile", &Router::new().post(&API_METHOD_RECONCILE)),
+    ("service", &Router::new().post(&API_METHOD_UPSERT_SERVICE)),
+    (
+        "service-delete",
+        &Router::new().post(&API_METHOD_DELETE_SERVICE)
+    ),
     ("signoz", &Router::new().get(&API_METHOD_SIGNOZ_STATUS)),
     (
         "signoz-downtime",
@@ -57,31 +58,44 @@ pub const ROUTER: Router = Router::new()
     .get(&API_METHOD_GET_MONITORING)
     .subdirs(SUBDIRS);
 
+fn count_state(inventory: &Value, collection: &str, state: &str) -> usize {
+    inventory
+        .get(collection)
+        .and_then(Value::as_array)
+        .map(|items| {
+            items
+                .iter()
+                .filter(|item| item.get("state").and_then(Value::as_str) == Some(state))
+                .count()
+        })
+        .unwrap_or(0)
+}
+
 fn monitoring_view(inventory: Value) -> Value {
-    let enabled = inventory
-        .get("devices")
-        .and_then(Value::as_array)
-        .map(|devices| {
-            devices
-                .iter()
-                .filter(|device| device.get("state").and_then(Value::as_str) == Some("enabled"))
-                .count()
-        })
-        .unwrap_or(0);
-    let maintenance = inventory
-        .get("devices")
-        .and_then(Value::as_array)
-        .map(|devices| {
-            devices
-                .iter()
-                .filter(|device| device.get("state").and_then(Value::as_str) == Some("maintenance"))
-                .count()
-        })
-        .unwrap_or(0);
+    let enabled_devices = count_state(&inventory, "devices", "enabled");
+    let maintenance_devices = count_state(&inventory, "devices", "maintenance");
+    let enabled_services = count_state(&inventory, "services", "enabled");
+    let maintenance_services = count_state(&inventory, "services", "maintenance");
     let mut engine = collector::status();
     if let Some(object) = engine.as_object_mut() {
-        object.insert("active_targets".to_string(), json!(enabled));
-        object.insert("maintenance_targets".to_string(), json!(maintenance));
+        object.insert(
+            "active_targets".to_string(),
+            json!(enabled_devices + enabled_services),
+        );
+        object.insert("active_devices".to_string(), json!(enabled_devices));
+        object.insert("active_services".to_string(), json!(enabled_services));
+        object.insert(
+            "maintenance_targets".to_string(),
+            json!(maintenance_devices + maintenance_services),
+        );
+        object.insert(
+            "maintenance_devices".to_string(),
+            json!(maintenance_devices),
+        );
+        object.insert(
+            "maintenance_services".to_string(),
+            json!(maintenance_services),
+        );
     }
     json!({
         "inventory": inventory,
@@ -94,7 +108,7 @@ fn monitoring_view(inventory: Value) -> Value {
         permission: &Permission::Privilege(&["system"], PRIV_SYS_AUDIT, false),
     },
 )]
-/// Return the Nexus monitoring inventory and local ICMP probe-engine state.
+/// Return the Nexus monitoring inventory and local collector state.
 pub fn get_monitoring() -> Result<Value, Error> {
     Ok(monitoring_view(store::read_inventory()?))
 }
@@ -240,7 +254,7 @@ pub async fn delete_signoz_downtime(id: String) -> Result<Value, Error> {
     },
     protected: true,
 )]
-/// Create or update an ICMP-monitored device and reconcile the probe collector.
+/// Create or update an ICMP-monitored device and reconcile the collector.
 pub async fn upsert_device(
     name: String,
     address: String,
@@ -255,18 +269,13 @@ pub async fn upsert_device(
     let state = store::normalize_state(state.as_deref().unwrap_or("enabled"))?;
     let id = store::normalize_slug(&name)?;
 
-    let _guard = DEVICE_LOCK.lock().await;
+    let _guard = RESOURCE_LOCK.lock().await;
 
     let previous_inventory = store::read_inventory()?;
     let existing_downtime_id = store::find_device(&previous_inventory, &id)
         .and_then(|device| device.get("signoz_downtime_id").and_then(Value::as_str))
         .map(str::to_string);
 
-    // Reconcile against the desired state and what's actually persisted right now,
-    // not the transition edge: this makes it self-healing when a previous attempt
-    // left a downtime dangling (e.g. delete failed while leaving maintenance, or
-    // create failed while entering it), instead of only retrying on the exact
-    // update that flips the state.
     let mut downtime_id = existing_downtime_id.clone();
     let mut signoz_maintenance = None;
 
@@ -289,8 +298,6 @@ pub async fn upsert_device(
                 downtime_id = None;
             }
             Err(err) => {
-                // Keep tracking the id so the next update retries the delete instead
-                // of losing track of an orphaned downtime.
                 signoz_maintenance = Some(json!({ "downtime_error": err.to_string() }));
             }
         }
@@ -321,10 +328,10 @@ pub async fn upsert_device(
     },
     protected: true,
 )]
-/// Delete a monitoring device and reconcile the probe collector.
+/// Delete a monitoring device and reconcile the collector.
 pub async fn delete_device(id: String) -> Result<Value, Error> {
     let id = store::normalize_slug(&id)?;
-    let _guard = DEVICE_LOCK.lock().await;
+    let _guard = RESOURCE_LOCK.lock().await;
     let previous_inventory = store::read_inventory()?;
     let downtime_id = store::find_device(&previous_inventory, &id)
         .and_then(|device| device.get("signoz_downtime_id").and_then(Value::as_str))
@@ -332,11 +339,155 @@ pub async fn delete_device(id: String) -> Result<Value, Error> {
 
     let inventory = store::delete_device(&id)?;
     if let Some(downtime_id) = downtime_id {
-        // Best-effort: the device is already gone from the inventory either way, so a
-        // failure here only leaves a stale SigNoz downtime rather than blocking deletion.
         if let Err(err) = signoz::delete_downtime(&downtime_id).await {
             log::warn!(
                 "unable to remove SigNoz downtime {downtime_id} for deleted device {id}: {err}"
+            );
+        }
+    }
+    let reconcile = collector::reconcile(&inventory).await;
+
+    Ok(json!({
+        "deleted": id,
+        "inventory": monitoring_view(inventory),
+        "reconcile": match reconcile {
+            Ok(value) => value,
+            Err(err) => json!({ "error": err.to_string() }),
+        }
+    }))
+}
+
+fn find_service<'a>(inventory: &'a Value, id: &str) -> Option<&'a Value> {
+    inventory
+        .get("services")
+        .and_then(Value::as_array)
+        .and_then(|services| {
+            services
+                .iter()
+                .find(|service| service.get("id").and_then(Value::as_str) == Some(id))
+        })
+}
+
+#[api(
+    input: {
+        properties: {
+            name: { type: String, description: "Human-readable service name." },
+            address: { type: String, description: "Service IPv4, IPv6 or hostname." },
+            port: { type: u16, description: "Prometheus metrics TCP port." },
+            metrics_path: { type: String, description: "Prometheus metrics path, normally /metrics.", optional: true },
+            site: { type: String, description: "Nexus site identifier.", optional: true },
+            state: { type: String, description: "Monitoring state: enabled, maintenance or disabled.", optional: true },
+        },
+    },
+    access: {
+        permission: &Permission::Privilege(&["system"], PRIV_SYS_MODIFY, false),
+    },
+    protected: true,
+)]
+/// Create or update a Prometheus-monitored service and reconcile the collector.
+pub async fn upsert_service(
+    name: String,
+    address: String,
+    port: u16,
+    metrics_path: Option<String>,
+    site: Option<String>,
+    state: Option<String>,
+) -> Result<Value, Error> {
+    if port == 0 {
+        bail!("service port must be between 1 and 65535");
+    }
+    let name = store::normalize_name(&name)?;
+    let address = store::normalize_address(&address)?;
+    let metrics_path =
+        store::normalize_metrics_path(metrics_path.as_deref().unwrap_or("/metrics"))?;
+    let site = store::normalize_simple_label(site.as_deref().unwrap_or("home"), "site")?;
+    let state = store::normalize_state(state.as_deref().unwrap_or("enabled"))?;
+    let id = store::normalize_slug(&name)?;
+
+    let _guard = RESOURCE_LOCK.lock().await;
+    let previous_inventory = store::read_inventory()?;
+    let existing_downtime_id = find_service(&previous_inventory, &id)
+        .and_then(|service| service.get("signoz_downtime_id").and_then(Value::as_str))
+        .map(str::to_string);
+    let mut downtime_id = existing_downtime_id.clone();
+    let mut signoz_maintenance = None;
+
+    if state == "maintenance" {
+        if downtime_id.is_none() {
+            match signoz::create_service_maintenance_downtime(&id, &name).await {
+                Ok(created_id) => {
+                    signoz_maintenance = Some(json!({ "downtime_created": created_id }));
+                    downtime_id = Some(created_id);
+                }
+                Err(err) => {
+                    signoz_maintenance = Some(json!({ "downtime_error": err.to_string() }));
+                }
+            }
+        }
+    } else if let Some(existing_id) = existing_downtime_id {
+        match signoz::delete_downtime(&existing_id).await {
+            Ok(_) => {
+                signoz_maintenance = Some(json!({ "downtime_deleted": existing_id }));
+                downtime_id = None;
+            }
+            Err(err) => {
+                signoz_maintenance = Some(json!({ "downtime_error": err.to_string() }));
+            }
+        }
+    }
+
+    let (id, mut inventory) =
+        store::upsert_service(name, address, port, metrics_path, site, state)?;
+    if let Some(downtime_id) = downtime_id {
+        if let Some(service) = inventory
+            .get_mut("services")
+            .and_then(Value::as_array_mut)
+            .and_then(|services| {
+                services.iter_mut().find(|service| {
+                    service.get("id").and_then(Value::as_str) == Some(id.as_str())
+                })
+            })
+        {
+            service["signoz_downtime_id"] = json!(downtime_id);
+        }
+    }
+    let reconcile = collector::reconcile(&inventory).await;
+
+    Ok(json!({
+        "service_id": id,
+        "inventory": monitoring_view(inventory),
+        "reconcile": match reconcile {
+            Ok(value) => value,
+            Err(err) => json!({ "error": err.to_string() }),
+        },
+        "signoz_maintenance": signoz_maintenance,
+    }))
+}
+
+#[api(
+    input: {
+        properties: {
+            id: { type: String, description: "Nexus monitoring service id." },
+        },
+    },
+    access: {
+        permission: &Permission::Privilege(&["system"], PRIV_SYS_MODIFY, false),
+    },
+    protected: true,
+)]
+/// Delete a monitoring service and reconcile the collector.
+pub async fn delete_service(id: String) -> Result<Value, Error> {
+    let id = store::normalize_slug(&id)?;
+    let _guard = RESOURCE_LOCK.lock().await;
+    let previous_inventory = store::read_inventory()?;
+    let downtime_id = find_service(&previous_inventory, &id)
+        .and_then(|service| service.get("signoz_downtime_id").and_then(Value::as_str))
+        .map(str::to_string);
+    let inventory = store::delete_service(&id)?;
+    if let Some(downtime_id) = downtime_id {
+        if let Err(err) = signoz::delete_downtime(&downtime_id).await {
+            log::warn!(
+                "unable to remove SigNoz downtime {downtime_id} for deleted service {id}: {err}"
             );
         }
     }
@@ -408,7 +559,7 @@ pub async fn probe_device(id: String) -> Result<Value, Error> {
     },
     protected: true,
 )]
-/// Regenerate and apply the ICMP collector configuration from the Nexus inventory.
+/// Regenerate and apply the monitoring collector configuration from the Nexus inventory.
 pub async fn reconcile() -> Result<Value, Error> {
     collector::reconcile(&store::read_inventory()?).await
 }
@@ -423,5 +574,16 @@ mod tests {
             parse_alert_ids(Some("rule-a, rule-b,,".to_string())),
             vec!["rule-a".to_string(), "rule-b".to_string()]
         );
+    }
+
+    #[test]
+    fn monitoring_view_counts_devices_and_services() {
+        let view = monitoring_view(json!({
+            "devices": [{"state": "enabled"}, {"state": "maintenance"}],
+            "services": [{"state": "enabled"}, {"state": "enabled"}]
+        }));
+        assert_eq!(view.pointer("/probe_engine/active_devices"), Some(&json!(1)));
+        assert_eq!(view.pointer("/probe_engine/active_services"), Some(&json!(2)));
+        assert_eq!(view.pointer("/probe_engine/active_targets"), Some(&json!(3)));
     }
 }
