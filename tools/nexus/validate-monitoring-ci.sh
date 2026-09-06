@@ -20,13 +20,17 @@ grep -q 'Method::DELETE' server/src/api/nexus/monitoring/signoz.rs
 grep -q 'prometheus/nexus_icmp' server/src/api/nexus/monitoring/collector.rs
 grep -q 'prometheus-blackbox-exporter' server/src/api/nexus/monitoring/collector.rs
 grep -q 'nexus_device_id' server/src/api/nexus/monitoring/collector.rs
+grep -q 'nexus_service_id' server/src/api/nexus/monitoring/collector.rs
 grep -q 'COLLECTOR_TELEMETRY_PORT: u16 = 8889' server/src/api/nexus/monitoring/collector.rs
 grep -q "host: '127.0.0.1'" server/src/api/nexus/monitoring/collector.rs
 grep -q 'maintenance' server/src/api/nexus/monitoring/store.rs
 grep -q 'fn create_maintenance_downtime' server/src/api/nexus/monitoring/signoz.rs
+grep -q 'fn create_service_maintenance_downtime' server/src/api/nexus/monitoring/signoz.rs
 grep -q 'nexus_device_id=' server/src/api/nexus/monitoring/signoz.rs
+grep -q 'nexus_service_id=' server/src/api/nexus/monitoring/signoz.rs
 grep -q 'signoz_downtime_id' server/src/api/nexus/monitoring/store.rs
-grep -q 'DEVICE_LOCK' server/src/api/nexus/monitoring/mod.rs
+grep -q 'RESOURCE_LOCK' server/src/api/nexus/monitoring/mod.rs
+grep -q 'API_METHOD_UPSERT_SERVICE' server/src/api/nexus/monitoring/mod.rs
 grep -q 'NexusMonitoring' ui/src/nexus/mod.rs
 grep -q '"Monitoring"' ui/src/main_menu.rs
 grep -q '"/monitoring/device"' ui/src/nexus/monitoring.rs
