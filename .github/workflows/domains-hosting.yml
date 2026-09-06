@@ -116,7 +116,6 @@ jobs:
             backend-cargo-${{ runner.os }}-
 
       - name: Install Rust stable
-        if: steps.changes.outputs.rust == 'true'
         uses: dtolnay/rust-toolchain@stable
         with:
           components: rustfmt
