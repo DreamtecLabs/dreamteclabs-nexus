@@ -101,12 +101,12 @@ pub(super) async fn delete_downtime(id: &str) -> Result<Value, Error> {
     request(Method::DELETE, &format!("{DOWNTIME_PATH}/{id}"), None).await
 }
 
-/// Nexus device identity in SigNoz is the `nexus_device_id` label attached to every
-/// metric the ICMP probe pipeline emits for that device (see `collector::collector_config`).
-/// A downtime scoped to `nexus_device_id="<id>"` therefore silences alerts for exactly
-/// that device and no other resource.
 fn device_scope(device_id: &str) -> String {
     format!("nexus_device_id=\"{device_id}\"")
+}
+
+fn service_scope(service_id: &str) -> String {
+    format!("nexus_service_id=\"{service_id}\"")
 }
 
 fn extract_downtime_id(response: &Value) -> Result<String, Error> {
@@ -126,21 +126,18 @@ fn extract_downtime_id(response: &Value) -> Result<String, Error> {
     bail!("SigNoz did not return a recognizable downtime id: {response}");
 }
 
-/// Create (or replace) the planned-maintenance window that suppresses alerts for a
-/// single Nexus-managed device while it is in the local `maintenance` state. The
-/// window is open-ended on the SigNoz side (a far-future end time); Nexus deletes it
-/// explicitly via [`delete_downtime`] as soon as the device leaves maintenance, so the
-/// long end time is only a safety bound against an orphaned schedule.
-pub(super) async fn create_maintenance_downtime(
-    device_id: &str,
-    device_name: &str,
+async fn create_resource_maintenance_downtime(
+    resource_id: &str,
+    resource_name: &str,
+    resource_kind: &str,
+    scope: String,
 ) -> Result<String, Error> {
     let start = proxmox_time::epoch_i64();
     let end = start + 10 * 365 * 24 * 60 * 60;
     let payload = json!({
-        "name": format!("Nexus maintenance: {device_name}"),
+        "name": format!("Nexus maintenance: {resource_name}"),
         "description": format!(
-            "Automatically created by Nexus while device '{device_id}' is in Maintenance."
+            "Automatically created by Nexus while {resource_kind} '{resource_id}' is in Maintenance."
         ),
         "schedule": {
             "timezone": "UTC",
@@ -148,10 +145,31 @@ pub(super) async fn create_maintenance_downtime(
             "endTime": proxmox_time::epoch_to_rfc3339_utc(end)?,
         },
         "alertIds": Vec::<String>::new(),
-        "scope": device_scope(device_id),
+        "scope": scope,
     });
     let response = create_downtime(&payload).await?;
     extract_downtime_id(&response)
+}
+
+pub(super) async fn create_maintenance_downtime(
+    device_id: &str,
+    device_name: &str,
+) -> Result<String, Error> {
+    create_resource_maintenance_downtime(device_id, device_name, "device", device_scope(device_id))
+        .await
+}
+
+pub(super) async fn create_service_maintenance_downtime(
+    service_id: &str,
+    service_name: &str,
+) -> Result<String, Error> {
+    create_resource_maintenance_downtime(
+        service_id,
+        service_name,
+        "service",
+        service_scope(service_id),
+    )
+    .await
 }
 
 pub(super) async fn status() -> Value {
@@ -208,10 +226,14 @@ mod tests {
     }
 
     #[test]
-    fn device_scope_matches_the_confirmed_signoz_label() {
+    fn resource_scopes_match_collector_labels() {
         assert_eq!(
             device_scope("zigbee-slzb-06m"),
             "nexus_device_id=\"zigbee-slzb-06m\""
+        );
+        assert_eq!(
+            service_scope("dreamteclabs-notify"),
+            "nexus_service_id=\"dreamteclabs-notify\""
         );
     }
 

@@ -20,7 +20,8 @@ pub(super) fn default_inventory() -> Value {
             "otlp_endpoint": DEFAULT_OTLP_ENDPOINT,
             "collection_interval": "30s"
         },
-        "devices": []
+        "devices": [],
+        "services": []
     })
 }
 
@@ -28,7 +29,12 @@ pub(super) fn read_inventory() -> Result<Value, Error> {
     let Some(raw) = proxmox_sys::fs::file_read_optional_string(INVENTORY_FILENAME)? else {
         return Ok(default_inventory());
     };
-    serde_json::from_str(&raw).context("unable to parse monitoring.json")
+    let mut inventory: Value =
+        serde_json::from_str(&raw).context("unable to parse monitoring.json")?;
+    if inventory.get("services").is_none() {
+        inventory["services"] = json!([]);
+    }
+    Ok(inventory)
 }
 
 fn write_inventory(inventory: &Value) -> Result<(), Error> {
@@ -44,10 +50,10 @@ fn write_inventory(inventory: &Value) -> Result<(), Error> {
 pub(super) fn normalize_name(input: &str) -> Result<String, Error> {
     let name = input.trim();
     if name.is_empty() || name.len() > 80 {
-        bail!("device name must contain between 1 and 80 characters");
+        bail!("monitoring name must contain between 1 and 80 characters");
     }
     if name.chars().any(char::is_control) {
-        bail!("device name contains invalid control characters");
+        bail!("monitoring name contains invalid control characters");
     }
     Ok(name.to_string())
 }
@@ -68,7 +74,7 @@ pub(super) fn normalize_slug(input: &str) -> Result<String, Error> {
         output.pop();
     }
     if output.is_empty() || output.len() > 64 {
-        bail!("device name cannot be converted to a valid device id");
+        bail!("monitoring name cannot be converted to a valid id");
     }
     Ok(output)
 }
@@ -93,11 +99,11 @@ pub(super) fn normalize_address(input: &str) -> Result<String, Error> {
         return Ok(address);
     }
     if address.is_empty() || address.len() > 253 {
-        bail!("invalid device IP address or hostname");
+        bail!("invalid IP address or hostname");
     }
     for label in address.split('.') {
         if label.is_empty() || label.len() > 63 {
-            bail!("invalid device IP address or hostname");
+            bail!("invalid IP address or hostname");
         }
         let bytes = label.as_bytes();
         if !bytes.first().is_some_and(u8::is_ascii_alphanumeric)
@@ -106,10 +112,25 @@ pub(super) fn normalize_address(input: &str) -> Result<String, Error> {
                 .iter()
                 .all(|byte| byte.is_ascii_alphanumeric() || *byte == b'-')
         {
-            bail!("invalid device IP address or hostname");
+            bail!("invalid IP address or hostname");
         }
     }
     Ok(address)
+}
+
+pub(super) fn normalize_metrics_path(input: &str) -> Result<String, Error> {
+    let path = input.trim();
+    if path.is_empty() || path.len() > 128 || !path.starts_with('/') {
+        bail!("metrics path must start with '/' and contain at most 128 characters");
+    }
+    if path.chars().any(char::is_control)
+        || !path
+            .bytes()
+            .all(|byte| byte.is_ascii_alphanumeric() || matches!(byte, b'/' | b'-' | b'_' | b'.'))
+    {
+        bail!("metrics path contains invalid characters");
+    }
+    Ok(path.to_string())
 }
 
 pub(super) fn normalize_state(input: &str) -> Result<String, Error> {
@@ -129,6 +150,17 @@ pub(super) fn find_device<'a>(inventory: &'a Value, id: &str) -> Option<&'a Valu
             devices
                 .iter()
                 .find(|device| device.get("id").and_then(Value::as_str) == Some(id))
+        })
+}
+
+pub(super) fn find_service<'a>(inventory: &'a Value, id: &str) -> Option<&'a Value> {
+    inventory
+        .get("services")
+        .and_then(Value::as_array)
+        .and_then(|services| {
+            services
+                .iter()
+                .find(|service| service.get("id").and_then(Value::as_str) == Some(id))
         })
 }
 
@@ -197,6 +229,73 @@ pub(super) fn delete_device(id: &str) -> Result<Value, Error> {
     Ok(inventory)
 }
 
+pub(super) fn upsert_service(
+    name: String,
+    address: String,
+    port: u16,
+    metrics_path: String,
+    site: String,
+    state: String,
+    signoz_downtime_id: Option<String>,
+) -> Result<(String, Value), Error> {
+    let id = normalize_slug(&name)?;
+    let _guard = INVENTORY_WRITE_LOCK
+        .lock()
+        .map_err(|_| anyhow::anyhow!("monitoring inventory write lock is poisoned"))?;
+    let mut inventory = read_inventory()?;
+    let services = inventory
+        .get_mut("services")
+        .and_then(Value::as_array_mut)
+        .context("monitoring inventory is missing a services array")?;
+    let mut entry = json!({
+        "id": id,
+        "name": name,
+        "address": address,
+        "port": port,
+        "metrics_path": metrics_path,
+        "site": site,
+        "profile": "prometheus",
+        "state": state
+    });
+    if let Some(downtime_id) = signoz_downtime_id {
+        entry["signoz_downtime_id"] = json!(downtime_id);
+    }
+    if let Some(existing) = services
+        .iter_mut()
+        .find(|service| service.get("id").and_then(Value::as_str) == Some(id.as_str()))
+    {
+        *existing = entry;
+    } else {
+        services.push(entry);
+    }
+    services.sort_by(|left, right| {
+        left.get("name")
+            .and_then(Value::as_str)
+            .unwrap_or("")
+            .cmp(right.get("name").and_then(Value::as_str).unwrap_or(""))
+    });
+    write_inventory(&inventory)?;
+    Ok((id, inventory))
+}
+
+pub(super) fn delete_service(id: &str) -> Result<Value, Error> {
+    let _guard = INVENTORY_WRITE_LOCK
+        .lock()
+        .map_err(|_| anyhow::anyhow!("monitoring inventory write lock is poisoned"))?;
+    let mut inventory = read_inventory()?;
+    let services = inventory
+        .get_mut("services")
+        .and_then(Value::as_array_mut)
+        .context("monitoring inventory is missing a services array")?;
+    let before = services.len();
+    services.retain(|service| service.get("id").and_then(Value::as_str) != Some(id));
+    if services.len() == before {
+        bail!("monitoring service '{id}' was not found");
+    }
+    write_inventory(&inventory)?;
+    Ok(inventory)
+}
+
 pub(super) fn enabled_devices(inventory: &Value) -> Vec<&Value> {
     inventory
         .get("devices")
@@ -205,6 +304,19 @@ pub(super) fn enabled_devices(inventory: &Value) -> Vec<&Value> {
             devices
                 .iter()
                 .filter(|device| device.get("state").and_then(Value::as_str) == Some("enabled"))
+                .collect()
+        })
+        .unwrap_or_default()
+}
+
+pub(super) fn enabled_services(inventory: &Value) -> Vec<&Value> {
+    inventory
+        .get("services")
+        .and_then(Value::as_array)
+        .map(|services| {
+            services
+                .iter()
+                .filter(|service| service.get("state").and_then(Value::as_str) == Some("enabled"))
                 .collect()
         })
         .unwrap_or_default()
@@ -223,6 +335,13 @@ mod tests {
         );
         assert!(normalize_address("192.168.0.1;id").is_err());
         assert!(normalize_address("-bad.internal").is_err());
+    }
+
+    #[test]
+    fn metrics_path_validation_is_closed() {
+        assert_eq!(normalize_metrics_path("/metrics").unwrap(), "/metrics");
+        assert!(normalize_metrics_path("metrics").is_err());
+        assert!(normalize_metrics_path("/metrics?token=secret").is_err());
     }
 
     #[test]
@@ -246,5 +365,31 @@ mod tests {
             Some("dt-1")
         );
         assert!(find_device(&inventory, "missing").is_none());
+    }
+
+    #[test]
+    fn find_service_tracks_maintenance_downtime() {
+        let inventory = json!({
+            "services": [
+                {"id": "notify", "state": "maintenance", "signoz_downtime_id": "dt-service"}
+            ]
+        });
+        assert_eq!(
+            find_service(&inventory, "notify")
+                .and_then(|service| service.get("signoz_downtime_id"))
+                .and_then(Value::as_str),
+            Some("dt-service")
+        );
+    }
+
+    #[test]
+    fn enabled_services_returns_only_active_prometheus_targets() {
+        let inventory = json!({
+            "services": [
+                {"id": "notify", "state": "enabled"},
+                {"id": "paused", "state": "maintenance"}
+            ]
+        });
+        assert_eq!(enabled_services(&inventory).len(), 1);
     }
 }
