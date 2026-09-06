@@ -5,6 +5,7 @@ SERVICES := \
 	proxmox-datacenter-manager-daily-update.service \
 	proxmox-datacenter-manager-daily-update.timer \
 	nexus-icmp-collector.service \
+	nexus-icmp-ping-policy.service \
 
 HELPERS := \
 	nexus-domains-helper \
