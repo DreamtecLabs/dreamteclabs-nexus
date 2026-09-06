@@ -2,7 +2,7 @@ debian/pdm-enterprise.sources etc/apt/sources.list.d/
 usr/lib/systemd/system/nexus-icmp-collector.service
 usr/lib/proxmox/nexus-icmp-collector-runtime.yaml
 usr/lib/systemd/system/prometheus-blackbox-exporter.service.d/nexus-icmp.conf
-usr/lib/sysctl.d/90-nexus-blackbox-icmp.conf
+usr/lib/sysctl.d/99-zz-nexus-blackbox-icmp.conf
 usr/lib/systemd/system/proxmox-datacenter-api.service
 usr/lib/systemd/system/proxmox-datacenter-manager-banner.service
 usr/lib/systemd/system/proxmox-datacenter-manager-daily-update.service
@@ -16,7 +16,9 @@ usr/libexec/proxmox/proxmox-datacenter-privileged-api
 usr/sbin/pdmAtoB
 usr/sbin/proxmox-datacenter-manager-admin
 usr/share/bash-completion/completions/pdmAtoB.bash
+usr/share/bash-completion/completions/proxmox-datacenter-api.bash
 usr/share/bash-completion/completions/proxmox-datacenter-manager-admin.bash
+usr/share/bash-completion/completions/proxmox-datacenter-privileged-api.bash
 usr/share/man/man1/pdmAtoB.1
 usr/share/man/man1/proxmox-datacenter-api.1
 usr/share/man/man1/proxmox-datacenter-manager-admin.1
