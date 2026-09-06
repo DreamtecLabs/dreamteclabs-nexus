@@ -31,10 +31,15 @@ test -f services/nexus-icmp-collector.service
 grep -q 'otelcol-contrib' services/nexus-icmp-collector.service
 grep -q '^User=www-data$' services/nexus-icmp-collector.service
 grep -q '^Group=www-data$' services/nexus-icmp-collector.service
+grep -q -- '--config=/usr/lib/proxmox/nexus-icmp-collector-runtime.yaml' services/nexus-icmp-collector.service
 if grep -q 'CAP_NET_RAW' services/nexus-icmp-collector.service; then
     echo 'collector must not retain CAP_NET_RAW; blackbox owns ICMP probing' >&2
     exit 1
 fi
+
+test -f services/nexus-icmp-collector-runtime.yaml
+grep -q "host: '127.0.0.1'" services/nexus-icmp-collector-runtime.yaml
+grep -q 'port: 8889' services/nexus-icmp-collector-runtime.yaml
 
 test -f services/prometheus-blackbox-exporter-nexus.conf
 grep -q '^NoNewPrivileges=true$' services/prometheus-blackbox-exporter-nexus.conf
@@ -47,10 +52,12 @@ test -f services/prometheus-blackbox-exporter-nexus-sysctl.conf
 grep -q '^net.ipv4.ping_group_range = 0 2147483647$' services/prometheus-blackbox-exporter-nexus-sysctl.conf
 
 grep -q 'nexus-icmp-collector.service' services/Makefile
+grep -q 'nexus-icmp-collector-runtime.yaml' services/Makefile
 grep -q 'prometheus-blackbox-exporter.service.d' services/Makefile
 grep -q 'usr/lib/sysctl.d' services/Makefile
 grep -q '90-nexus-blackbox-icmp.conf' services/Makefile
 grep -q 'nexus-icmp-collector.service' debian/proxmox-datacenter-manager.install
+grep -q 'usr/lib/proxmox/nexus-icmp-collector-runtime.yaml' debian/proxmox-datacenter-manager.install
 grep -q 'prometheus-blackbox-exporter.service.d/nexus-icmp.conf' debian/proxmox-datacenter-manager.install
 grep -q 'usr/lib/sysctl.d/90-nexus-blackbox-icmp.conf' debian/proxmox-datacenter-manager.install
 
