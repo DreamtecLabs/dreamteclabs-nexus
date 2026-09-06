@@ -1,3 +1,4 @@
+# Keep Nexus runtime service units in this manifest so package CI tracks their changes.
 SERVICES := \
 	proxmox-datacenter-api.service \
 	proxmox-datacenter-privileged-api.service \
