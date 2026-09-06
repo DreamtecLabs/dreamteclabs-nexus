@@ -4,26 +4,22 @@ Nexus owns the monitoring control plane. SigNoz remains the observability backen
 
 ## Responsibilities
 
-- **Nexus UI/API**: source of truth for monitored devices, monitoring state and provider configuration.
+- **Nexus UI/API**: source of truth for monitored devices, Prometheus services, monitoring state and provider configuration.
 - **SigNoz**: metrics exploration, dashboards, alert rules, planned maintenance and notification routing.
 - **Prometheus Blackbox Exporter**: ICMP synthetic probing for agentless devices.
-- **OpenTelemetry Collector**: collects blackbox metrics and exports them to SigNoz over OTLP; it also remains the host-metrics path for Linux guests.
+- **OpenTelemetry Collector**: collects blackbox and Prometheus service metrics and exports them to SigNoz over OTLP; it also remains the host-metrics path for Linux guests.
 
-Operators should not edit monitoring YAML to register devices. Add, remove or change devices through **Monitoring** in the Nexus UI. The backend regenerates and validates the OpenTelemetry collector configuration and reconciles the required services.
+Operators should not edit monitoring YAML to register targets. Add, remove or change targets through the Nexus monitoring API/UI. The backend regenerates and validates the OpenTelemetry collector configuration and reconciles the required services.
 
-## Device inventory
+## Monitoring inventory
 
-The backend persists Nexus-owned state in `monitoring.json` under the PDM configuration directory. Device records contain:
+The backend persists Nexus-owned state in `monitoring.json` under the PDM configuration directory.
 
-- stable Nexus id
-- human-readable name
-- IPv4, IPv6 or hostname
-- device kind
-- site
-- monitoring profile (`icmp` in the initial implementation)
-- state: `enabled`, `maintenance` or `disabled`
+Device records contain a stable Nexus id, human-readable name, IPv4/IPv6/hostname, device kind, site, monitoring profile (`icmp`) and state (`enabled`, `maintenance` or `disabled`).
 
-Only `enabled` devices are rendered into the active probe configuration. Maintenance and disabled devices are intentionally excluded from probes.
+Service records contain a stable Nexus id, human-readable name, IPv4/IPv6/hostname, TCP port, Prometheus metrics path, site, monitoring profile (`prometheus`) and the same monitoring state. Existing inventories are upgraded in memory with an empty `services` collection, so adding service monitoring is backward compatible with deployed `monitoring.json` files.
+
+Only `enabled` targets are rendered into the active collector configuration. Maintenance and disabled targets are intentionally excluded from collection.
 
 ## ICMP probe engine
 
@@ -33,13 +29,25 @@ The supported agentless ICMP path is:
 
 Debian Trixie's `prometheus-blackbox-exporter` package supplies the ICMP prober and `/etc/prometheus/blackbox.yml`. Nexus depends on that package instead of relying on the experimental OpenTelemetry `icmpcheckreceiver`, which is not present in the deployed `otelcol-contrib 0.139.0` distribution.
 
-The backend generates `/etc/proxmox-datacenter-manager/nexus-icmp-collector.yaml` for `nexus-icmp-collector.service`. The generated collector uses the supported `prometheus` receiver to scrape the local blackbox exporter on `127.0.0.1:9115`, passing each enabled Nexus device as an ICMP probe target and attaching Nexus identity labels.
+The backend generates `/etc/proxmox-datacenter-manager/nexus-icmp-collector.yaml` for `nexus-icmp-collector.service`. The filename and unit name are retained for compatibility, but the generated collector now owns both ICMP and managed Prometheus service receivers.
 
-Before replacing the active collector configuration, Nexus validates both the Debian blackbox configuration and the generated OpenTelemetry configuration. If validation fails, the device stays persisted but the invalid collector configuration is not promoted.
+Before replacing the active collector configuration, Nexus validates both the Debian blackbox configuration (when ICMP devices exist) and the generated OpenTelemetry configuration. If validation fails, the target stays persisted but the invalid collector configuration is not promoted.
 
-When at least one device is enabled, reconcile enables/starts `prometheus-blackbox-exporter.service` and `nexus-icmp-collector.service`. When no devices are enabled, Nexus disables/stops both services. This keeps service lifecycle owned by Nexus rather than by manual operator edits.
+When at least one monitoring target is enabled, reconcile enables/starts `nexus-icmp-collector.service`. The blackbox exporter is enabled only when at least one ICMP device is active and is stopped when only Prometheus services remain. When no targets are enabled, Nexus disables/stops both services. This keeps service lifecycle owned by Nexus rather than by manual operator edits.
 
 The collector exports OTLP metrics to `192.168.0.47:4317` by default.
+
+## Prometheus service monitoring
+
+Managed Prometheus services are scraped directly by the OpenTelemetry Collector. Each enabled service gets a dedicated Prometheus scrape job using its configured address, port and metrics path. Nexus attaches stable labels to every resulting time series:
+
+- `nexus_service_id`
+- `nexus_service_name`
+- `nexus_resource_type="service"`
+- `nexus_site`
+- `nexus_monitoring_profile="prometheus"`
+
+This is the path used for DreamtecLabs Notify. Notify exposes WhatsApp session metrics such as `dreamteclabs_notify_whatsapp_instance_open`, while the Prometheus receiver also emits scrape availability (`up`). Together these support per-instance failure alerting and loss-of-telemetry detection without exposing credentials, phone numbers, messages or QR data.
 
 ## SigNoz API
 
@@ -56,35 +64,39 @@ The backend deliberately validates only Nexus-owned input boundaries and lets Si
 
 ## API routes
 
-- `GET /api2/json/monitoring` — inventory and local probe-engine status
+- `GET /api2/json/monitoring` — inventory and local collector status
 - `GET /api2/json/monitoring/signoz` — safe SigNoz API connectivity summary
 - `GET /api2/json/monitoring/signoz-rules` — current SigNoz alert rules
 - `GET /api2/json/monitoring/signoz-downtimes` — current SigNoz planned-maintenance windows
 - `POST /api2/json/monitoring/signoz-downtime` — create a fixed planned-maintenance window
 - `POST /api2/json/monitoring/signoz-downtime-delete` — delete a planned-maintenance window
-- `POST /api2/json/monitoring/device` — create/update a device and reconcile
+- `POST /api2/json/monitoring/device` — create/update an ICMP device and reconcile
 - `POST /api2/json/monitoring/device-delete` — delete a device and reconcile
 - `POST /api2/json/monitoring/device-probe` — one-shot diagnostic ping
-- `POST /api2/json/monitoring/reconcile` — regenerate/restart the ICMP probe engine
+- `POST /api2/json/monitoring/service` — create/update a Prometheus service and reconcile
+- `POST /api2/json/monitoring/service-delete` — delete a Prometheus service and reconcile
+- `POST /api2/json/monitoring/reconcile` — regenerate/restart the managed collector
 
 Read operations require system audit privileges. Mutating operations require system modify privileges.
 
-## Automatic per-device maintenance binding
+## Automatic maintenance binding
 
-Every metric the ICMP probe pipeline emits for a device carries a `nexus_device_id` label matching that device's Nexus id (see `collector::collector_config`). This has been validated against the deployed SigNoz instance as the resource's real alert-label identity.
+Every ICMP metric for a device carries `nexus_device_id`, and every managed Prometheus service metric carries `nexus_service_id`. Switching a managed target to `maintenance` creates a SigNoz planned-maintenance window scoped to exactly that target label, excludes the target from collection and persists the returned `signoz_downtime_id` in `monitoring.json`.
 
-Switching a device to the local `maintenance` state (via `POST /monitoring/device`) now automatically:
+Switching the target back to `enabled` or `disabled` deletes that SigNoz downtime automatically. Deleting the target also removes any associated downtime. If a SigNoz call fails, the local state change and collector reconciliation still proceed and the error is surfaced in `signoz_maintenance.downtime_error`; tracked downtime ids are retained until deletion succeeds, avoiding orphaned suppression windows.
 
-- creates a SigNoz planned-maintenance window scoped to exactly `nexus_device_id="<id>"`, so only that device's alerts are suppressed — no other resource is affected
-- stops the ICMP probe for that device (unchanged: only `enabled` devices are rendered into the active probe configuration)
-- records the created downtime's id on the device record (`signoz_downtime_id` in `monitoring.json`)
+The explicit `signoz-downtime`/`signoz-downtime-delete` API routes remain available for maintenance windows that are not tied to a single Nexus target.
 
-Switching the device back out of `maintenance` (`enabled` or `disabled`) deletes that SigNoz downtime automatically, so alerting resumes without operator intervention. Deleting the device entirely also removes any associated downtime.
+## Alerting model
 
-If the SigNoz API call fails (unreachable, misconfigured key, etc.), the local state change and probe reconciliation still succeed — the operator sees the failure in the response's `signoz_maintenance.downtime_error` field and can retry by toggling the device's state again. The device keeps tracking a downtime id it failed to delete so a later attempt can still find it, instead of leaking an orphaned SigNoz schedule.
+For DreamtecLabs Notify, the intended SigNoz rules are:
 
-The explicit `signoz-downtime`/`signoz-downtime-delete` API routes remain available for maintenance windows that are not tied to a single Nexus device (e.g. a host-wide or manually scoped window).
+- `dreamteclabs_notify_whatsapp_instance_open == 0` grouped by `instance`, sustained for two minutes.
+- `dreamteclabs_notify_evolution_up == 0` sustained for one to two minutes.
+- scrape/telemetry loss using the Prometheus `up` metric for `nexus_service_id="dreamteclabs-notify"`, so a dead Notify process or unreachable `/metrics` cannot silently look healthy.
+
+The exact rule creation payload remains SigNoz-version-specific and should be validated against the deployed `/api/v2/rules` contract before Nexus starts creating rules automatically. Until that contract is confirmed, SigNoz remains authoritative for rule bodies while Nexus owns target lifecycle and maintenance scopes.
 
 ## Next increments
 
-The data model is designed to expand to HTTP/HTTPS, TCP and SNMP profiles without making SigNoz the inventory source of truth. The next SigNoz increment is a managed availability alert rule (`probe_success == 0`) that also respects this same per-device maintenance binding.
+The same inventory model can expand to HTTP/HTTPS, TCP and SNMP profiles. The next monitoring increment is managed SigNoz alert-rule creation after validating the deployed rule-create payload and no-data semantics end to end.
