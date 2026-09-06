@@ -101,7 +101,10 @@ fn collector_config(inventory: &Value) -> Result<String, Error> {
             .get("metrics_path")
             .and_then(Value::as_str)
             .unwrap_or("/metrics");
-        let site = service.get("site").and_then(Value::as_str).unwrap_or("home");
+        let site = service
+            .get("site")
+            .and_then(Value::as_str)
+            .unwrap_or("home");
         let receiver = format!("prometheus/nexus_service_{id}");
         let target = format!("{address}:{port}");
 
