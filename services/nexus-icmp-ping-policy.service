@@ -1,0 +1,7 @@
+[Unit]
+Description=DreamtecLabs Nexus ICMP ping-socket policy
+Before=prometheus-blackbox-exporter.service
+
+[Service]
+Type=oneshot
+ExecStart=/bin/sh -ec 'gid="$(id -g prometheus)"; echo "$gid $gid" > /proc/sys/net/ipv4/ping_group_range'

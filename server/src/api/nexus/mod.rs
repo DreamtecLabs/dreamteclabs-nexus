@@ -4,3 +4,4 @@
 //! upstream synchronization remains explicit and reviewable.
 
 pub mod domains;
+pub mod monitoring;

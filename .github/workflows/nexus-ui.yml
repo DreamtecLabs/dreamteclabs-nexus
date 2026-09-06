@@ -83,6 +83,7 @@ jobs:
           bash -n tools/nexus/build-install-ui.sh
           bash -n tools/nexus/build-ui-ci.sh
           bash -n tools/nexus/build-ui-container.sh
+          bash -n tools/nexus/build-backend-container.sh
           bash -n tools/nexus/deploy-ui.sh
           bash -n tools/nexus/validate-domains-ci.sh
 
@@ -157,6 +158,15 @@ jobs:
           fetch-depth: 2
           submodules: recursive
 
+      - name: Restore UI Cargo cache
+        uses: actions/cache@v4
+        with:
+          path: .cache/ui-target
+          key: ui-cargo-${{ runner.os }}-${{ hashFiles('Cargo.lock', 'Cargo.toml', 'ui/Cargo.toml', 'ui/debian/control') }}-${{ github.ref_name }}
+          restore-keys: |
+            ui-cargo-${{ runner.os }}-${{ hashFiles('Cargo.lock', 'Cargo.toml', 'ui/Cargo.toml', 'ui/debian/control') }}-
+            ui-cargo-${{ runner.os }}-
+
       - name: Build package in Debian Trixie
         id: package_build
         continue-on-error: true
@@ -168,6 +178,7 @@ jobs:
             --memory=7g \
             -e HOST_UID="$(id -u)" \
             -e HOST_GID="$(id -g)" \
+            -e CARGO_TARGET_DIR=/workspace/.cache/ui-target \
             -v "$GITHUB_WORKSPACE:/workspace" \
             -w /workspace \
             debian:trixie \

@@ -1,0 +1,16 @@
+[Unit]
+Description=DreamtecLabs Nexus ICMP OpenTelemetry Collector
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=www-data
+Group=www-data
+ExecStart=/usr/bin/otelcol-contrib --config=/etc/proxmox-datacenter-manager/nexus-icmp-collector.yaml --config=/usr/lib/proxmox/nexus-icmp-collector-runtime.yaml
+Restart=on-failure
+RestartSec=5s
+NoNewPrivileges=true
+
+[Install]
+WantedBy=multi-user.target

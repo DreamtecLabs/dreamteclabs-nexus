@@ -19,11 +19,12 @@ UI_DEB:=$(wildcard $(PACKAGE)-ui_*_$(DEB_HOST_ARCH).deb)
 DSC=$(PACKAGE)_$(DEB_VERSION).dsc
 
 CARGO ?= cargo
+CARGO_TARGET_DIR ?= target
 ifeq ($(BUILD_MODE), release)
 CARGO_BUILD_ARGS += --release
-COMPILEDIR := target/release
+COMPILEDIR := $(CARGO_TARGET_DIR)/release
 else
-COMPILEDIR := target/debug
+COMPILEDIR := $(CARGO_TARGET_DIR)/debug
 endif
 
 COMPLETION_DIR := cli/completions
@@ -178,4 +179,3 @@ test:
 tidy:
 	$(CARGO) fmt
 	$(MAKE) -C $(UI_DIR) tidy
-

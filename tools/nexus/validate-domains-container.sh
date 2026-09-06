@@ -51,6 +51,12 @@ mk-build-deps \
 git config --global --add safe.directory /workspace
 git submodule update --init --recursive
 
+# Keep compiled Rust dependencies outside generated Debian source trees so
+# GitHub Actions can restore them between runs. The cache key is controlled by
+# the workflow and invalidated when Cargo/debian dependency metadata changes.
+export CARGO_TARGET_DIR="${CARGO_TARGET_DIR:-/workspace/.cache/domains-target}"
+mkdir -p "$CARGO_TARGET_DIR"
+
 export CARGO_BUILD_JOBS=1
 export CARGO_INCREMENTAL=0
 export MAKEFLAGS=-j1
@@ -58,5 +64,5 @@ export MAKEFLAGS=-j1
 # Keep the repository's Debian Cargo source replacement intact. The installed
 # Proxmox/Rust build dependencies populate /usr/share/cargo/registry, including
 # internal crates such as pbs-api-types that are intentionally not on crates.io.
-cargo test -p server api::nexus::domains::tests --lib
+cargo test -p server api::nexus --lib
 cargo check -p server
