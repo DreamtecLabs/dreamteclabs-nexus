@@ -1,0 +1,7 @@
+[Unit]
+Description=DreamtecLabs Nexus ICMP ping-socket policy
+Before=prometheus-blackbox-exporter.service
+
+[Service]
+Type=oneshot
+ExecStart=/bin/sh -c 'printf "0 2147483647\n" > /proc/sys/net/ipv4/ping_group_range'
