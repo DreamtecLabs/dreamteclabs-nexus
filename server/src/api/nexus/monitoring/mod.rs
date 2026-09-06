@@ -357,17 +357,6 @@ pub async fn delete_device(id: String) -> Result<Value, Error> {
     }))
 }
 
-fn find_service<'a>(inventory: &'a Value, id: &str) -> Option<&'a Value> {
-    inventory
-        .get("services")
-        .and_then(Value::as_array)
-        .and_then(|services| {
-            services
-                .iter()
-                .find(|service| service.get("id").and_then(Value::as_str) == Some(id))
-        })
-}
-
 #[api(
     input: {
         properties: {
@@ -406,7 +395,7 @@ pub async fn upsert_service(
 
     let _guard = RESOURCE_LOCK.lock().await;
     let previous_inventory = store::read_inventory()?;
-    let existing_downtime_id = find_service(&previous_inventory, &id)
+    let existing_downtime_id = store::find_service(&previous_inventory, &id)
         .and_then(|service| service.get("signoz_downtime_id").and_then(Value::as_str))
         .map(str::to_string);
     let mut downtime_id = existing_downtime_id.clone();
@@ -436,21 +425,15 @@ pub async fn upsert_service(
         }
     }
 
-    let (id, mut inventory) =
-        store::upsert_service(name, address, port, metrics_path, site, state)?;
-    if let Some(downtime_id) = downtime_id {
-        if let Some(service) = inventory
-            .get_mut("services")
-            .and_then(Value::as_array_mut)
-            .and_then(|services| {
-                services.iter_mut().find(|service| {
-                    service.get("id").and_then(Value::as_str) == Some(id.as_str())
-                })
-            })
-        {
-            service["signoz_downtime_id"] = json!(downtime_id);
-        }
-    }
+    let (id, inventory) = store::upsert_service(
+        name,
+        address,
+        port,
+        metrics_path,
+        site,
+        state,
+        downtime_id,
+    )?;
     let reconcile = collector::reconcile(&inventory).await;
 
     Ok(json!({
@@ -480,7 +463,7 @@ pub async fn delete_service(id: String) -> Result<Value, Error> {
     let id = store::normalize_slug(&id)?;
     let _guard = RESOURCE_LOCK.lock().await;
     let previous_inventory = store::read_inventory()?;
-    let downtime_id = find_service(&previous_inventory, &id)
+    let downtime_id = store::find_service(&previous_inventory, &id)
         .and_then(|service| service.get("signoz_downtime_id").and_then(Value::as_str))
         .map(str::to_string);
     let inventory = store::delete_service(&id)?;
