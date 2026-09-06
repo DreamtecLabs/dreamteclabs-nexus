@@ -47,4 +47,16 @@ grep -q 'prometheus-blackbox-exporter.service.d/nexus-icmp.conf' debian/proxmox-
 grep -q 'prometheus-blackbox-exporter' debian/control
 grep -q 'nexus-icmp-collector.service' tools/nexus/build-backend-container.sh
 
+# A configured collector may be failed/inactive during upgrade because of the
+# legacy directory permission bug. Upgrades must therefore restart enabled
+# probe services, not use try-restart (which skips inactive units).
+grep -q 'systemctl is-enabled --quiet prometheus-blackbox-exporter.service' debian/proxmox-datacenter-manager.postinst
+grep -q 'systemctl restart prometheus-blackbox-exporter.service' debian/proxmox-datacenter-manager.postinst
+grep -q 'systemctl is-enabled --quiet nexus-icmp-collector.service' debian/proxmox-datacenter-manager.postinst
+grep -q 'systemctl restart nexus-icmp-collector.service' debian/proxmox-datacenter-manager.postinst
+if grep -q 'systemctl try-restart .*\(prometheus-blackbox-exporter\|nexus-icmp-collector\)' debian/proxmox-datacenter-manager.postinst; then
+    echo 'configured monitoring services must not use try-restart on upgrade' >&2
+    exit 1
+fi
+
 cargo fmt --all -- --check
