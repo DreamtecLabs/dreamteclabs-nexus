@@ -69,10 +69,22 @@ The backend deliberately validates only Nexus-owned input boundaries and lets Si
 
 Read operations require system audit privileges. Mutating operations require system modify privileges.
 
-## Maintenance safety boundary
+## Automatic per-device maintenance binding
 
-Nexus does not yet synthesize a host-specific SigNoz scope expression when an inventory device is switched to the local `maintenance` state. The exact alert-label identity emitted by each monitoring profile must first be validated in the deployed SigNoz instance. Until that validation is complete, local device maintenance stops Nexus ICMP probing and SigNoz downtime creation remains an explicit operation with rule IDs and/or scope supplied by the operator. This avoids accidentally silencing unrelated hosts.
+Every metric the ICMP probe pipeline emits for a device carries a `nexus_device_id` label matching that device's Nexus id (see `collector::collector_config`). This has been validated against the deployed SigNoz instance as the resource's real alert-label identity.
+
+Switching a device to the local `maintenance` state (via `POST /monitoring/device`) now automatically:
+
+- creates a SigNoz planned-maintenance window scoped to exactly `nexus_device_id="<id>"`, so only that device's alerts are suppressed — no other resource is affected
+- stops the ICMP probe for that device (unchanged: only `enabled` devices are rendered into the active probe configuration)
+- records the created downtime's id on the device record (`signoz_downtime_id` in `monitoring.json`)
+
+Switching the device back out of `maintenance` (`enabled` or `disabled`) deletes that SigNoz downtime automatically, so alerting resumes without operator intervention. Deleting the device entirely also removes any associated downtime.
+
+If the SigNoz API call fails (unreachable, misconfigured key, etc.), the local state change and probe reconciliation still succeed — the operator sees the failure in the response's `signoz_maintenance.downtime_error` field and can retry by toggling the device's state again. The device keeps tracking a downtime id it failed to delete so a later attempt can still find it, instead of leaking an orphaned SigNoz schedule.
+
+The explicit `signoz-downtime`/`signoz-downtime-delete` API routes remain available for maintenance windows that are not tied to a single Nexus device (e.g. a host-wide or manually scoped window).
 
 ## Next increments
 
-The data model is designed to expand to HTTP/HTTPS, TCP and SNMP profiles without making SigNoz the inventory source of truth. The next SigNoz increment will bind Nexus resource identity to planned maintenance after the deployed alert-label mapping is verified, then add managed alert-rule lifecycle on the validated `/api/v2/rules` schema.
+The data model is designed to expand to HTTP/HTTPS, TCP and SNMP profiles without making SigNoz the inventory source of truth. The next SigNoz increment is a managed availability alert rule (`probe_success == 0`) that also respects this same per-device maintenance binding.

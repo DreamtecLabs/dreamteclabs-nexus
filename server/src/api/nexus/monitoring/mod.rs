@@ -245,7 +245,56 @@ pub async fn upsert_device(
     let kind = store::normalize_simple_label(&kind, "device kind")?;
     let site = store::normalize_simple_label(site.as_deref().unwrap_or("home"), "site")?;
     let state = store::normalize_state(state.as_deref().unwrap_or("enabled"))?;
-    let (id, inventory) = store::upsert_device(name, address, kind, site, state)?;
+    let id = store::normalize_slug(&name)?;
+
+    let previous_inventory = store::read_inventory()?;
+    let previous_device = store::find_device(&previous_inventory, &id);
+    let previous_state = previous_device
+        .and_then(|device| device.get("state").and_then(Value::as_str))
+        .map(str::to_string);
+    let previous_downtime_id = previous_device
+        .and_then(|device| device.get("signoz_downtime_id").and_then(Value::as_str))
+        .map(str::to_string);
+
+    let entering_maintenance =
+        state == "maintenance" && previous_state.as_deref() != Some("maintenance");
+    let leaving_maintenance =
+        previous_state.as_deref() == Some("maintenance") && state != "maintenance";
+
+    let mut downtime_id = if leaving_maintenance {
+        None
+    } else {
+        previous_downtime_id.clone()
+    };
+    let mut signoz_maintenance = None;
+
+    if entering_maintenance {
+        match signoz::create_maintenance_downtime(&id, &name).await {
+            Ok(created_id) => {
+                downtime_id = Some(created_id.clone());
+                signoz_maintenance = Some(json!({ "downtime_created": created_id }));
+            }
+            Err(err) => {
+                signoz_maintenance = Some(json!({ "downtime_error": err.to_string() }));
+            }
+        }
+    } else if leaving_maintenance {
+        if let Some(old_downtime_id) = previous_downtime_id {
+            match signoz::delete_downtime(&old_downtime_id).await {
+                Ok(_) => {
+                    signoz_maintenance = Some(json!({ "downtime_deleted": old_downtime_id }));
+                }
+                Err(err) => {
+                    // Keep tracking the id so a retry (or the next state change) can
+                    // still find and remove it instead of leaking an orphaned downtime.
+                    downtime_id = Some(old_downtime_id);
+                    signoz_maintenance = Some(json!({ "downtime_error": err.to_string() }));
+                }
+            }
+        }
+    }
+
+    let (id, inventory) = store::upsert_device(name, address, kind, site, state, downtime_id)?;
     let reconcile = collector::reconcile(&inventory).await;
 
     Ok(json!({
@@ -254,7 +303,8 @@ pub async fn upsert_device(
         "reconcile": match reconcile {
             Ok(value) => value,
             Err(err) => json!({ "error": err.to_string() }),
-        }
+        },
+        "signoz_maintenance": signoz_maintenance,
     }))
 }
 
@@ -272,7 +322,21 @@ pub async fn upsert_device(
 /// Delete a monitoring device and reconcile the probe collector.
 pub async fn delete_device(id: String) -> Result<Value, Error> {
     let id = store::normalize_slug(&id)?;
+    let previous_inventory = store::read_inventory()?;
+    let downtime_id = store::find_device(&previous_inventory, &id)
+        .and_then(|device| device.get("signoz_downtime_id").and_then(Value::as_str))
+        .map(str::to_string);
+
     let inventory = store::delete_device(&id)?;
+    if let Some(downtime_id) = downtime_id {
+        // Best-effort: the device is already gone from the inventory either way, so a
+        // failure here only leaves a stale SigNoz downtime rather than blocking deletion.
+        if let Err(err) = signoz::delete_downtime(&downtime_id).await {
+            log::warn!(
+                "unable to remove SigNoz downtime {downtime_id} for deleted device {id}: {err}"
+            );
+        }
+    }
     let reconcile = collector::reconcile(&inventory).await;
 
     Ok(json!({

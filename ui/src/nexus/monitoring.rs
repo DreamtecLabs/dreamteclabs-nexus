@@ -71,8 +71,17 @@ fn update_device_state(
             )
             .await;
             match result {
-                Ok(_) => {
-                    message.set(Some(Ok(format!("Device monitoring set to {state}."))));
+                Ok(value) => {
+                    let downtime_error = value
+                        .pointer("/signoz_maintenance/downtime_error")
+                        .and_then(Value::as_str)
+                        .map(str::to_string);
+                    message.set(Some(match downtime_error {
+                        Some(err) => Err(format!(
+                            "Device monitoring set to {state}, but SigNoz maintenance sync failed: {err}"
+                        )),
+                        None => Ok(format!("Device monitoring set to {state}.")),
+                    }));
                     load_monitoring(monitoring);
                 }
                 Err(err) => message.set(Some(Err(err.to_string()))),
