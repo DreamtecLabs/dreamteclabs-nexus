@@ -60,6 +60,8 @@ jobs:
   validate:
     runs-on: ubuntu-24.04
     timeout-minutes: 45
+    outputs:
+      package: ${{ steps.changes.outputs.package }}
     steps:
       - name: Recover workspace ownership
         shell: bash
@@ -85,14 +87,23 @@ jobs:
           set -euo pipefail
           if [[ "${{ github.event_name }}" == "workflow_dispatch" ]]; then
             echo "rust=true" >> "$GITHUB_OUTPUT"
+            echo "package=true" >> "$GITHUB_OUTPUT"
             exit 0
           fi
 
-          git diff --name-only HEAD^1 HEAD | tee /tmp/domains-changed-files.txt
-          if grep -Eq '^(server/src/api/nexus/|server/src/api/mod\.rs$|Cargo\.toml$|Cargo\.lock$|debian/control$)' /tmp/domains-changed-files.txt; then
+          changed_files=/tmp/domains-changed-files.txt
+          git diff --name-only HEAD^1 HEAD | tee "$changed_files"
+
+          if grep -Eq '^(server/src/api/nexus/|server/src/api/mod\.rs$|Cargo\.toml$|Cargo\.lock$|debian/control$)' "$changed_files"; then
             echo "rust=true" >> "$GITHUB_OUTPUT"
           else
             echo "rust=false" >> "$GITHUB_OUTPUT"
+          fi
+
+          if grep -Eq '^(server/src/api/nexus/|server/src/api/mod\.rs$|Cargo\.toml$|Cargo\.lock$|services/nexus-domains-helper$|services/prometheus-blackbox-exporter-nexus\.conf$|services/Makefile$|debian/control$|debian/nexus-icmp-collector\.service$|debian/proxmox-datacenter-manager\.install$|debian/proxmox-datacenter-manager\.postinst$|tools/nexus/build-backend-container\.sh$)' "$changed_files"; then
+            echo "package=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "package=false" >> "$GITHUB_OUTPUT"
           fi
 
       - name: Restore backend Cargo cache
@@ -175,7 +186,7 @@ jobs:
 
   package-backend:
     name: Build PDM backend package
-    if: github.event_name == 'push' || github.event_name == 'workflow_dispatch'
+    if: ${{ github.event_name == 'workflow_dispatch' || (github.event_name == 'push' && needs.validate.outputs.package == 'true') }}
     needs: validate
     runs-on: ubuntu-24.04
     timeout-minutes: 60
