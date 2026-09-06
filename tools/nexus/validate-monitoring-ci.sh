@@ -26,8 +26,7 @@ grep -q 'maintenance' server/src/api/nexus/monitoring/store.rs
 grep -q 'fn create_maintenance_downtime' server/src/api/nexus/monitoring/signoz.rs
 grep -q 'nexus_device_id=' server/src/api/nexus/monitoring/signoz.rs
 grep -q 'signoz_downtime_id' server/src/api/nexus/monitoring/store.rs
-grep -q 'entering_maintenance' server/src/api/nexus/monitoring/mod.rs
-grep -q 'leaving_maintenance' server/src/api/nexus/monitoring/mod.rs
+grep -q 'DEVICE_LOCK' server/src/api/nexus/monitoring/mod.rs
 grep -q 'NexusMonitoring' ui/src/nexus/mod.rs
 grep -q '"Monitoring"' ui/src/main_menu.rs
 grep -q '"/monitoring/device"' ui/src/nexus/monitoring.rs
