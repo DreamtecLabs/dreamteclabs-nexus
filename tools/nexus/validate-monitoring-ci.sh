@@ -55,11 +55,11 @@ grep -q 'nexus-icmp-collector.service' services/Makefile
 grep -q 'nexus-icmp-collector-runtime.yaml' services/Makefile
 grep -q 'prometheus-blackbox-exporter.service.d' services/Makefile
 grep -q 'usr/lib/sysctl.d' services/Makefile
-grep -q '90-nexus-blackbox-icmp.conf' services/Makefile
+grep -q '99-zz-nexus-blackbox-icmp.conf' services/Makefile
 grep -q 'nexus-icmp-collector.service' debian/proxmox-datacenter-manager.install
 grep -q 'usr/lib/proxmox/nexus-icmp-collector-runtime.yaml' debian/proxmox-datacenter-manager.install
 grep -q 'prometheus-blackbox-exporter.service.d/nexus-icmp.conf' debian/proxmox-datacenter-manager.install
-grep -q 'usr/lib/sysctl.d/90-nexus-blackbox-icmp.conf' debian/proxmox-datacenter-manager.install
+grep -q 'usr/lib/sysctl.d/99-zz-nexus-blackbox-icmp.conf' debian/proxmox-datacenter-manager.install
 
 grep -q 'prometheus-blackbox-exporter' debian/control
 grep -q 'nexus-icmp-collector.service' tools/nexus/build-backend-container.sh
