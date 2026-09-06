@@ -58,7 +58,7 @@ permissions:
 
 jobs:
   validate:
-    runs-on: ubuntu-24.04
+    runs-on: self-hosted
     timeout-minutes: 45
     outputs:
       package: ${{ steps.changes.outputs.package }}
@@ -67,12 +67,11 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
+          docker ps -q --filter label=nexus-ci-build | xargs -r docker kill
           docker run --rm \
-            -e HOST_UID="$(id -u)" \
-            -e HOST_GID="$(id -g)" \
             -v "$GITHUB_WORKSPACE:/workspace" \
             debian:trixie \
-            sh -c 'chown -R "$HOST_UID:$HOST_GID" /workspace'
+            find /workspace -mindepth 1 -delete
 
       - name: Checkout
         uses: actions/checkout@v4
@@ -117,7 +116,6 @@ jobs:
             backend-cargo-${{ runner.os }}-
 
       - name: Install Rust stable
-        if: steps.changes.outputs.rust == 'true'
         uses: dtolnay/rust-toolchain@stable
         with:
           components: rustfmt
@@ -125,6 +123,16 @@ jobs:
       - name: Validate policy and formatting
         shell: bash
         run: bash tools/nexus/validate-domains-ci.sh
+
+      - name: Free disk space
+        if: steps.changes.outputs.rust == 'true'
+        shell: bash
+        run: |
+          set -euo pipefail
+          docker container prune -f
+          docker image prune -af
+          docker builder prune -af
+          df -h /
 
       - name: Test and compile in Debian Trixie
         if: steps.changes.outputs.rust == 'true'
@@ -135,6 +143,7 @@ jobs:
           set -o pipefail
           mkdir -p artifacts
           docker run --rm \
+            --label nexus-ci-build=1 \
             --memory=7g \
             -e HOST_UID="$(id -u)" \
             -e HOST_GID="$(id -g)" \
@@ -188,19 +197,27 @@ jobs:
     name: Build PDM backend package
     if: ${{ github.event_name == 'workflow_dispatch' || (github.event_name == 'push' && needs.validate.outputs.package == 'true') }}
     needs: validate
-    runs-on: ubuntu-24.04
+    runs-on: self-hosted
     timeout-minutes: 60
     steps:
       - name: Recover workspace ownership
         shell: bash
         run: |
           set -euo pipefail
+          docker ps -q --filter label=nexus-ci-build | xargs -r docker kill
           docker run --rm \
-            -e HOST_UID="$(id -u)" \
-            -e HOST_GID="$(id -g)" \
             -v "$GITHUB_WORKSPACE:/workspace" \
             debian:trixie \
-            sh -c 'chown -R "$HOST_UID:$HOST_GID" /workspace'
+            find /workspace -mindepth 1 -delete
+
+      - name: Free disk space
+        shell: bash
+        run: |
+          set -euo pipefail
+          docker container prune -f
+          docker image prune -af
+          docker builder prune -af
+          df -h /
 
       - name: Checkout
         uses: actions/checkout@v4
@@ -226,6 +243,7 @@ jobs:
           set -o pipefail
           mkdir -p artifacts
           docker run --rm \
+            --label nexus-ci-build=1 \
             --memory=7g \
             -e HOST_UID="$(id -u)" \
             -e HOST_GID="$(id -g)" \

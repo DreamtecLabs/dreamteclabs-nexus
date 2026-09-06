@@ -32,7 +32,7 @@ permissions:
 
 jobs:
   boundary:
-    runs-on: ubuntu-24.04
+    runs-on: self-hosted
     timeout-minutes: 30
     outputs:
       ui_changed: ${{ steps.changes.outputs.ui_changed }}
@@ -41,12 +41,19 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
+          # A prior attempt's build container can be left running (e.g.
+          # cancelled by this workflow's own concurrency group) and keep
+          # writing root-owned files into the bind-mounted workspace after
+          # the job that started it is gone. Stop any such stragglers first,
+          # then delete the workspace contents outright instead of chowning
+          # them: checkout re-clones from scratch either way, and deletion
+          # as root sidesteps edge cases a recursive chown can trip on
+          # (partial writes, temp dirs mid-rename).
+          docker ps -q --filter label=nexus-ci-build | xargs -r docker kill
           docker run --rm \
-            -e HOST_UID="$(id -u)" \
-            -e HOST_GID="$(id -g)" \
             -v "$GITHUB_WORKSPACE:/workspace" \
             debian:trixie \
-            sh -c 'chown -R "$HOST_UID:$HOST_GID" /workspace'
+            find /workspace -mindepth 1 -delete
 
       - name: Checkout
         uses: actions/checkout@v4
@@ -137,19 +144,31 @@ jobs:
     name: Build PDM UI package
     needs: boundary
     if: needs.boundary.outputs.ui_changed == 'true'
-    runs-on: ubuntu-24.04
+    runs-on: self-hosted
     timeout-minutes: 45
     steps:
       - name: Recover workspace ownership
         shell: bash
         run: |
           set -euo pipefail
+          docker ps -q --filter label=nexus-ci-build | xargs -r docker kill
           docker run --rm \
-            -e HOST_UID="$(id -u)" \
-            -e HOST_GID="$(id -g)" \
             -v "$GITHUB_WORKSPACE:/workspace" \
             debian:trixie \
-            sh -c 'chown -R "$HOST_UID:$HOST_GID" /workspace'
+            find /workspace -mindepth 1 -delete
+
+      - name: Free disk space
+        shell: bash
+        run: |
+          set -euo pipefail
+          # Long-running Debian Trixie builds on a persistent (non-ephemeral)
+          # runner accumulate stopped containers and dangling image layers
+          # across PRs until the disk fills mid-build. Reclaim that space
+          # before every heavy build instead of waiting for it to bite.
+          docker container prune -f
+          docker image prune -af
+          docker builder prune -af
+          df -h /
 
       - name: Checkout
         uses: actions/checkout@v4
@@ -175,6 +194,7 @@ jobs:
           set -o pipefail
           mkdir -p artifacts
           docker run --rm \
+            --label nexus-ci-build=1 \
             --memory=7g \
             -e HOST_UID="$(id -u)" \
             -e HOST_GID="$(id -g)" \
