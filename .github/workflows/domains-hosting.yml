@@ -5,8 +5,13 @@ on:
     paths:
       - 'server/src/api/nexus/**'
       - 'server/src/api/mod.rs'
+      - 'Cargo.toml'
+      - 'Cargo.lock'
       - 'services/nexus-domains-helper'
+      - 'services/prometheus-blackbox-exporter-nexus.conf'
       - 'services/Makefile'
+      - 'debian/control'
+      - 'debian/nexus-icmp-collector.service'
       - 'debian/proxmox-datacenter-manager.install'
       - 'debian/proxmox-datacenter-manager.postinst'
       - 'docs/nexus-domains-hosting.md'
@@ -23,8 +28,13 @@ on:
     paths:
       - 'server/src/api/nexus/**'
       - 'server/src/api/mod.rs'
+      - 'Cargo.toml'
+      - 'Cargo.lock'
       - 'services/nexus-domains-helper'
+      - 'services/prometheus-blackbox-exporter-nexus.conf'
       - 'services/Makefile'
+      - 'debian/control'
+      - 'debian/nexus-icmp-collector.service'
       - 'debian/proxmox-datacenter-manager.install'
       - 'debian/proxmox-datacenter-manager.postinst'
       - 'docs/nexus-domains-hosting.md'
@@ -68,16 +78,35 @@ jobs:
           fetch-depth: 2
           submodules: recursive
 
-      - name: Restore Domains Cargo cache
+      - name: Classify backend changes
+        id: changes
+        shell: bash
+        run: |
+          set -euo pipefail
+          if [[ "${{ github.event_name }}" == "workflow_dispatch" ]]; then
+            echo "rust=true" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+
+          git diff --name-only HEAD^1 HEAD | tee /tmp/domains-changed-files.txt
+          if grep -Eq '^(server/src/api/nexus/|server/src/api/mod\.rs$|Cargo\.toml$|Cargo\.lock$|debian/control$)' /tmp/domains-changed-files.txt; then
+            echo "rust=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "rust=false" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Restore backend Cargo cache
+        if: steps.changes.outputs.rust == 'true'
         uses: actions/cache@v4
         with:
-          path: .cache/domains-target
-          key: domains-cargo-${{ runner.os }}-${{ hashFiles('Cargo.lock', 'Cargo.toml', 'debian/control') }}-${{ github.ref_name }}
+          path: .cache/backend-target
+          key: backend-cargo-${{ runner.os }}-${{ hashFiles('Cargo.lock', 'Cargo.toml', 'debian/control') }}-${{ github.sha }}
           restore-keys: |
-            domains-cargo-${{ runner.os }}-${{ hashFiles('Cargo.lock', 'Cargo.toml', 'debian/control') }}-
-            domains-cargo-${{ runner.os }}-
+            backend-cargo-${{ runner.os }}-${{ hashFiles('Cargo.lock', 'Cargo.toml', 'debian/control') }}-
+            backend-cargo-${{ runner.os }}-
 
       - name: Install Rust stable
+        if: steps.changes.outputs.rust == 'true'
         uses: dtolnay/rust-toolchain@stable
         with:
           components: rustfmt
@@ -87,6 +116,7 @@ jobs:
         run: bash tools/nexus/validate-domains-ci.sh
 
       - name: Test and compile in Debian Trixie
+        if: steps.changes.outputs.rust == 'true'
         id: domains_build
         continue-on-error: true
         shell: bash
@@ -97,7 +127,7 @@ jobs:
             --memory=7g \
             -e HOST_UID="$(id -u)" \
             -e HOST_GID="$(id -g)" \
-            -e CARGO_TARGET_DIR=/workspace/.cache/domains-target \
+            -e CARGO_TARGET_DIR=/workspace/.cache/backend-target \
             -v "$GITHUB_WORKSPACE:/workspace" \
             -w /workspace \
             debian:trixie \
@@ -145,6 +175,7 @@ jobs:
 
   package-backend:
     name: Build PDM backend package
+    if: github.event_name == 'push' || github.event_name == 'workflow_dispatch'
     needs: validate
     runs-on: ubuntu-24.04
     timeout-minutes: 60
@@ -171,7 +202,7 @@ jobs:
         uses: actions/cache@v4
         with:
           path: .cache/backend-target
-          key: backend-cargo-${{ runner.os }}-${{ hashFiles('Cargo.lock', 'Cargo.toml', 'debian/control') }}-${{ github.ref_name }}
+          key: backend-cargo-${{ runner.os }}-${{ hashFiles('Cargo.lock', 'Cargo.toml', 'debian/control') }}-${{ github.sha }}
           restore-keys: |
             backend-cargo-${{ runner.os }}-${{ hashFiles('Cargo.lock', 'Cargo.toml', 'debian/control') }}-
             backend-cargo-${{ runner.os }}-
@@ -242,7 +273,6 @@ jobs:
           dpkg-deb --info artifacts/backend/proxmox-datacenter-manager_*.deb >/dev/null
 
       - name: Upload commit-addressed backend package
-        if: github.event_name == 'push' || github.event_name == 'workflow_dispatch'
         uses: actions/upload-artifact@v4
         with:
           name: nexus-pdm-backend-${{ github.sha }}
