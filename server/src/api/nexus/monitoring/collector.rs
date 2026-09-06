@@ -16,6 +16,7 @@ const BLACKBOX_BINARY: &str = "/usr/bin/prometheus-blackbox-exporter";
 const BLACKBOX_CONFIG: &str = "/etc/prometheus/blackbox.yml";
 const BLACKBOX_SERVICE: &str = "prometheus-blackbox-exporter.service";
 const BLACKBOX_ENDPOINT: &str = "127.0.0.1:9115";
+const COLLECTOR_TELEMETRY_PORT: u16 = 8889;
 
 fn yaml_quote(value: &str) -> String {
     format!("'{}'", value.replace('\'', "''"))
@@ -67,7 +68,7 @@ fn collector_config(inventory: &Value) -> Result<String, Error> {
     }
 
     Ok(format!(
-        "receivers:\n  prometheus/nexus_icmp:\n    config:\n      scrape_configs:\n        - job_name: 'nexus_icmp'\n          scrape_interval: {interval}\n          metrics_path: /probe\n          params:\n            module: ['icmp']\n          static_configs:\n{static_configs}          relabel_configs:\n            - source_labels: [__address__]\n              target_label: __param_target\n            - source_labels: [__param_target]\n              target_label: instance\n            - target_label: __address__\n              replacement: '{BLACKBOX_ENDPOINT}'\n\nprocessors:\n  batch: {{}}\n\nexporters:\n  otlp:\n    endpoint: {}\n    tls:\n      insecure: true\n\nservice:\n  pipelines:\n    metrics/nexus_icmp:\n      receivers: [prometheus/nexus_icmp]\n      processors: [batch]\n      exporters: [otlp]\n",
+        "receivers:\n  prometheus/nexus_icmp:\n    config:\n      scrape_configs:\n        - job_name: 'nexus_icmp'\n          scrape_interval: {interval}\n          metrics_path: /probe\n          params:\n            module: ['icmp']\n          static_configs:\n{static_configs}          relabel_configs:\n            - source_labels: [__address__]\n              target_label: __param_target\n            - source_labels: [__param_target]\n              target_label: instance\n            - target_label: __address__\n              replacement: '{BLACKBOX_ENDPOINT}'\n\nprocessors:\n  batch: {{}}\n\nexporters:\n  otlp:\n    endpoint: {}\n    tls:\n      insecure: true\n\nservice:\n  telemetry:\n    metrics:\n      readers:\n        - pull:\n            exporter:\n              prometheus:\n                host: '127.0.0.1'\n                port: {COLLECTOR_TELEMETRY_PORT}\n  pipelines:\n    metrics/nexus_icmp:\n      receivers: [prometheus/nexus_icmp]\n      processors: [batch]\n      exporters: [otlp]\n",
         yaml_quote(endpoint)
     ))
 }
@@ -215,6 +216,8 @@ mod tests {
         assert!(config.contains("192.168.0.5"));
         assert!(config.contains("nexus_device_name"));
         assert!(config.contains(BLACKBOX_ENDPOINT));
+        assert!(config.contains("host: '127.0.0.1'"));
+        assert!(config.contains(&format!("port: {COLLECTOR_TELEMETRY_PORT}")));
         assert!(!config.contains("192.168.0.6"));
         assert!(!config.contains("icmpcheck/"));
     }
