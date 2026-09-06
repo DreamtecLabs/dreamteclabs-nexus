@@ -41,7 +41,14 @@ test -f services/nexus-icmp-collector-runtime.yaml
 grep -q "host: '127.0.0.1'" services/nexus-icmp-collector-runtime.yaml
 grep -q 'port: 8889' services/nexus-icmp-collector-runtime.yaml
 
+test -f services/nexus-icmp-ping-policy.service
+grep -q '^Type=oneshot$' services/nexus-icmp-ping-policy.service
+grep -Fq '/proc/sys/net/ipv4/ping_group_range' services/nexus-icmp-ping-policy.service
+grep -Fq '0 2147483647' services/nexus-icmp-ping-policy.service
+
 test -f services/prometheus-blackbox-exporter-nexus.conf
+grep -q '^Requires=nexus-icmp-ping-policy.service$' services/prometheus-blackbox-exporter-nexus.conf
+grep -q '^After=nexus-icmp-ping-policy.service$' services/prometheus-blackbox-exporter-nexus.conf
 grep -q '^NoNewPrivileges=true$' services/prometheus-blackbox-exporter-nexus.conf
 if grep -q 'CAP_NET_RAW' services/prometheus-blackbox-exporter-nexus.conf; then
     echo 'blackbox should use unprivileged ping sockets instead of CAP_NET_RAW' >&2
@@ -52,11 +59,13 @@ test -f services/prometheus-blackbox-exporter-nexus-sysctl.conf
 grep -q '^net.ipv4.ping_group_range = 0 2147483647$' services/prometheus-blackbox-exporter-nexus-sysctl.conf
 
 grep -q 'nexus-icmp-collector.service' services/Makefile
+grep -q 'nexus-icmp-ping-policy.service' services/Makefile
 grep -q 'nexus-icmp-collector-runtime.yaml' services/Makefile
 grep -q 'prometheus-blackbox-exporter.service.d' services/Makefile
 grep -q 'usr/lib/sysctl.d' services/Makefile
 grep -q '99-zz-nexus-blackbox-icmp.conf' services/Makefile
 grep -q 'nexus-icmp-collector.service' debian/proxmox-datacenter-manager.install
+grep -q 'nexus-icmp-ping-policy.service' debian/proxmox-datacenter-manager.install
 grep -q 'usr/lib/proxmox/nexus-icmp-collector-runtime.yaml' debian/proxmox-datacenter-manager.install
 grep -q 'prometheus-blackbox-exporter.service.d/nexus-icmp.conf' debian/proxmox-datacenter-manager.install
 grep -q 'usr/lib/sysctl.d/99-zz-nexus-blackbox-icmp.conf' debian/proxmox-datacenter-manager.install
@@ -66,9 +75,6 @@ grep -q 'nexus-icmp-collector.service' tools/nexus/build-backend-container.sh
 
 grep -q 'systemd-sysctl --prefix=/net/ipv4/ping_group_range' debian/proxmox-datacenter-manager.postinst
 
-# A configured collector may be failed/inactive during upgrade because of the
-# legacy directory permission bug. Upgrades must therefore restart enabled
-# probe services, not use try-restart (which skips inactive units).
 grep -q 'systemctl is-enabled --quiet prometheus-blackbox-exporter.service' debian/proxmox-datacenter-manager.postinst
 grep -q 'systemctl restart prometheus-blackbox-exporter.service' debian/proxmox-datacenter-manager.postinst
 grep -q 'systemctl is-enabled --quiet nexus-icmp-collector.service' debian/proxmox-datacenter-manager.postinst
