@@ -155,13 +155,8 @@ pub(super) async fn create_maintenance_downtime(
     device_id: &str,
     device_name: &str,
 ) -> Result<String, Error> {
-    create_resource_maintenance_downtime(
-        device_id,
-        device_name,
-        "device",
-        device_scope(device_id),
-    )
-    .await
+    create_resource_maintenance_downtime(device_id, device_name, "device", device_scope(device_id))
+        .await
 }
 
 pub(super) async fn create_service_maintenance_downtime(
