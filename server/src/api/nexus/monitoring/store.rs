@@ -153,6 +153,17 @@ pub(super) fn find_device<'a>(inventory: &'a Value, id: &str) -> Option<&'a Valu
         })
 }
 
+pub(super) fn find_service<'a>(inventory: &'a Value, id: &str) -> Option<&'a Value> {
+    inventory
+        .get("services")
+        .and_then(Value::as_array)
+        .and_then(|services| {
+            services
+                .iter()
+                .find(|service| service.get("id").and_then(Value::as_str) == Some(id))
+        })
+}
+
 pub(super) fn upsert_device(
     name: String,
     address: String,
@@ -225,6 +236,7 @@ pub(super) fn upsert_service(
     metrics_path: String,
     site: String,
     state: String,
+    signoz_downtime_id: Option<String>,
 ) -> Result<(String, Value), Error> {
     let id = normalize_slug(&name)?;
     let _guard = INVENTORY_WRITE_LOCK
@@ -235,7 +247,7 @@ pub(super) fn upsert_service(
         .get_mut("services")
         .and_then(Value::as_array_mut)
         .context("monitoring inventory is missing a services array")?;
-    let entry = json!({
+    let mut entry = json!({
         "id": id,
         "name": name,
         "address": address,
@@ -245,6 +257,9 @@ pub(super) fn upsert_service(
         "profile": "prometheus",
         "state": state
     });
+    if let Some(downtime_id) = signoz_downtime_id {
+        entry["signoz_downtime_id"] = json!(downtime_id);
+    }
     if let Some(existing) = services
         .iter_mut()
         .find(|service| service.get("id").and_then(Value::as_str) == Some(id.as_str()))
@@ -350,6 +365,21 @@ mod tests {
             Some("dt-1")
         );
         assert!(find_device(&inventory, "missing").is_none());
+    }
+
+    #[test]
+    fn find_service_tracks_maintenance_downtime() {
+        let inventory = json!({
+            "services": [
+                {"id": "notify", "state": "maintenance", "signoz_downtime_id": "dt-service"}
+            ]
+        });
+        assert_eq!(
+            find_service(&inventory, "notify")
+                .and_then(|service| service.get("signoz_downtime_id"))
+                .and_then(Value::as_str),
+            Some("dt-service")
+        );
     }
 
     #[test]
