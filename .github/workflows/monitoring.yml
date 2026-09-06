@@ -59,6 +59,20 @@ jobs:
     runs-on: self-hosted
     timeout-minutes: 15
     steps:
+      - name: Recover workspace ownership
+        shell: bash
+        run: |
+          set -euo pipefail
+          # This job never writes root-owned files itself, but self-hosted
+          # runners reuse the same per-repo workspace across workflows. A
+          # cancelled nexus-ui/domains-hosting build container can leave it
+          # root-owned, which would break this job's checkout too.
+          docker ps -q --filter label=nexus-ci-build | xargs -r docker kill
+          docker run --rm \
+            -v "$GITHUB_WORKSPACE:/workspace" \
+            debian:trixie \
+            find /workspace -mindepth 1 -delete
+
       - name: Checkout
         uses: actions/checkout@v4
         with:

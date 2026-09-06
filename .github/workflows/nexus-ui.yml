@@ -49,7 +49,7 @@ jobs:
           # them: checkout re-clones from scratch either way, and deletion
           # as root sidesteps edge cases a recursive chown can trip on
           # (partial writes, temp dirs mid-rename).
-          docker ps -q --filter ancestor=debian:trixie | xargs -r docker kill
+          docker ps -q --filter label=nexus-ci-build | xargs -r docker kill
           docker run --rm \
             -v "$GITHUB_WORKSPACE:/workspace" \
             debian:trixie \
@@ -151,7 +151,7 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          docker ps -q --filter ancestor=debian:trixie | xargs -r docker kill
+          docker ps -q --filter label=nexus-ci-build | xargs -r docker kill
           docker run --rm \
             -v "$GITHUB_WORKSPACE:/workspace" \
             debian:trixie \
@@ -194,6 +194,7 @@ jobs:
           set -o pipefail
           mkdir -p artifacts
           docker run --rm \
+            --label nexus-ci-build=1 \
             --memory=7g \
             -e HOST_UID="$(id -u)" \
             -e HOST_GID="$(id -g)" \
