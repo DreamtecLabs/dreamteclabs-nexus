@@ -229,6 +229,11 @@
   .nexus-monitor-kpis { grid-template-columns: 1fr 1fr !important; }
   .nexus-monitor-add { grid-template-columns: 1fr 1fr !important; }
 }
+// PDM reserves space for its navigation drawer; collapse integration cards
+// while they still have enough room for their fixed-width definition labels.
+@media (max-width: 950px) {
+  .nexus-monitor-overview { grid-template-columns: 1fr !important; }
+}
 @media (max-width: 720px) {
   .nexus-monitoring { padding: 14px !important; gap: 12px !important; }
   .nexus-monitor-header { align-items: flex-start !important; flex-direction: column !important; }
