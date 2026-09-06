@@ -3,6 +3,7 @@ use std::process::Stdio;
 use anyhow::{Context, Error, bail};
 use serde_json::{Value, json};
 use tokio::process::Command;
+use tokio::sync::Mutex;
 
 use proxmox_router::{Permission, Router, SubdirMap, list_subdirs_api_method};
 use proxmox_schema::api;
@@ -13,6 +14,13 @@ use pdm_api_types::{PRIV_SYS_AUDIT, PRIV_SYS_MODIFY};
 mod collector;
 mod signoz;
 mod store;
+
+/// Serializes the read-decide-call SigNoz-write sequence for device upsert/delete.
+/// Both operations read the current device record, may call the SigNoz downtime API,
+/// and then persist the result; without this lock two concurrent requests for the
+/// same device could both create a maintenance downtime and only one id would survive
+/// the second inventory write, leaking the other schedule indefinitely.
+static DEVICE_LOCK: Mutex<()> = Mutex::const_new(());
 
 #[sortable]
 const SUBDIRS: SubdirMap = &sorted!([
@@ -245,7 +253,50 @@ pub async fn upsert_device(
     let kind = store::normalize_simple_label(&kind, "device kind")?;
     let site = store::normalize_simple_label(site.as_deref().unwrap_or("home"), "site")?;
     let state = store::normalize_state(state.as_deref().unwrap_or("enabled"))?;
-    let (id, inventory) = store::upsert_device(name, address, kind, site, state)?;
+    let id = store::normalize_slug(&name)?;
+
+    let _guard = DEVICE_LOCK.lock().await;
+
+    let previous_inventory = store::read_inventory()?;
+    let existing_downtime_id = store::find_device(&previous_inventory, &id)
+        .and_then(|device| device.get("signoz_downtime_id").and_then(Value::as_str))
+        .map(str::to_string);
+
+    // Reconcile against the desired state and what's actually persisted right now,
+    // not the transition edge: this makes it self-healing when a previous attempt
+    // left a downtime dangling (e.g. delete failed while leaving maintenance, or
+    // create failed while entering it), instead of only retrying on the exact
+    // update that flips the state.
+    let mut downtime_id = existing_downtime_id.clone();
+    let mut signoz_maintenance = None;
+
+    if state == "maintenance" {
+        if downtime_id.is_none() {
+            match signoz::create_maintenance_downtime(&id, &name).await {
+                Ok(created_id) => {
+                    signoz_maintenance = Some(json!({ "downtime_created": created_id }));
+                    downtime_id = Some(created_id);
+                }
+                Err(err) => {
+                    signoz_maintenance = Some(json!({ "downtime_error": err.to_string() }));
+                }
+            }
+        }
+    } else if let Some(existing_id) = existing_downtime_id {
+        match signoz::delete_downtime(&existing_id).await {
+            Ok(_) => {
+                signoz_maintenance = Some(json!({ "downtime_deleted": existing_id }));
+                downtime_id = None;
+            }
+            Err(err) => {
+                // Keep tracking the id so the next update retries the delete instead
+                // of losing track of an orphaned downtime.
+                signoz_maintenance = Some(json!({ "downtime_error": err.to_string() }));
+            }
+        }
+    }
+
+    let (id, inventory) = store::upsert_device(name, address, kind, site, state, downtime_id)?;
     let reconcile = collector::reconcile(&inventory).await;
 
     Ok(json!({
@@ -254,7 +305,8 @@ pub async fn upsert_device(
         "reconcile": match reconcile {
             Ok(value) => value,
             Err(err) => json!({ "error": err.to_string() }),
-        }
+        },
+        "signoz_maintenance": signoz_maintenance,
     }))
 }
 
@@ -272,7 +324,22 @@ pub async fn upsert_device(
 /// Delete a monitoring device and reconcile the probe collector.
 pub async fn delete_device(id: String) -> Result<Value, Error> {
     let id = store::normalize_slug(&id)?;
+    let _guard = DEVICE_LOCK.lock().await;
+    let previous_inventory = store::read_inventory()?;
+    let downtime_id = store::find_device(&previous_inventory, &id)
+        .and_then(|device| device.get("signoz_downtime_id").and_then(Value::as_str))
+        .map(str::to_string);
+
     let inventory = store::delete_device(&id)?;
+    if let Some(downtime_id) = downtime_id {
+        // Best-effort: the device is already gone from the inventory either way, so a
+        // failure here only leaves a stale SigNoz downtime rather than blocking deletion.
+        if let Err(err) = signoz::delete_downtime(&downtime_id).await {
+            log::warn!(
+                "unable to remove SigNoz downtime {downtime_id} for deleted device {id}: {err}"
+            );
+        }
+    }
     let reconcile = collector::reconcile(&inventory).await;
 
     Ok(json!({

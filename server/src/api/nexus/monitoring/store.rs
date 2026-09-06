@@ -121,12 +121,24 @@ pub(super) fn normalize_state(input: &str) -> Result<String, Error> {
     }
 }
 
+pub(super) fn find_device<'a>(inventory: &'a Value, id: &str) -> Option<&'a Value> {
+    inventory
+        .get("devices")
+        .and_then(Value::as_array)
+        .and_then(|devices| {
+            devices
+                .iter()
+                .find(|device| device.get("id").and_then(Value::as_str) == Some(id))
+        })
+}
+
 pub(super) fn upsert_device(
     name: String,
     address: String,
     kind: String,
     site: String,
     state: String,
+    signoz_downtime_id: Option<String>,
 ) -> Result<(String, Value), Error> {
     let id = normalize_slug(&name)?;
     let _guard = INVENTORY_WRITE_LOCK
@@ -137,7 +149,7 @@ pub(super) fn upsert_device(
         .get_mut("devices")
         .and_then(Value::as_array_mut)
         .context("monitoring inventory is missing a devices array")?;
-    let entry = json!({
+    let mut entry = json!({
         "id": id,
         "name": name,
         "address": address,
@@ -146,6 +158,9 @@ pub(super) fn upsert_device(
         "profile": "icmp",
         "state": state
     });
+    if let Some(downtime_id) = signoz_downtime_id {
+        entry["signoz_downtime_id"] = json!(downtime_id);
+    }
     if let Some(existing) = devices
         .iter_mut()
         .find(|device| device.get("id").and_then(Value::as_str) == Some(id.as_str()))
@@ -214,5 +229,22 @@ mod tests {
     fn state_validation_is_closed() {
         assert_eq!(normalize_state("maintenance").unwrap(), "maintenance");
         assert!(normalize_state("paused").is_err());
+    }
+
+    #[test]
+    fn find_device_locates_by_id_and_reports_missing() {
+        let inventory = json!({
+            "devices": [
+                {"id": "switch-01", "name": "Switch 01", "state": "enabled"},
+                {"id": "tv-01", "name": "TV 01", "state": "maintenance", "signoz_downtime_id": "dt-1"}
+            ]
+        });
+        assert_eq!(
+            find_device(&inventory, "tv-01")
+                .and_then(|device| device.get("signoz_downtime_id"))
+                .and_then(Value::as_str),
+            Some("dt-1")
+        );
+        assert!(find_device(&inventory, "missing").is_none());
     }
 }
