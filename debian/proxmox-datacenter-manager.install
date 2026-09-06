@@ -16,9 +16,7 @@ usr/libexec/proxmox/proxmox-datacenter-privileged-api
 usr/sbin/pdmAtoB
 usr/sbin/proxmox-datacenter-manager-admin
 usr/share/bash-completion/completions/pdmAtoB.bash
-usr/share/bash-completion/completions/proxmox-datacenter-api.bash
 usr/share/bash-completion/completions/proxmox-datacenter-manager-admin.bash
-usr/share/bash-completion/completions/proxmox-datacenter-privileged-api.bash
 usr/share/man/man1/pdmAtoB.1
 usr/share/man/man1/proxmox-datacenter-api.1
 usr/share/man/man1/proxmox-datacenter-manager-admin.1
