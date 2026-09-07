@@ -3,6 +3,7 @@ services:
     build: .
     network_mode: host
     restart: unless-stopped
+    stop_grace_period: 15s
     environment:
       NEXUS_ENVIRONMENT: ${NEXUS_ENVIRONMENT:-production}
       NEXUS_DATA_DIR: /var/lib/dreamteclabs-nexus
@@ -13,11 +14,18 @@ services:
       NEXUS_SIGNOZ_API_KEY: ${NEXUS_SIGNOZ_API_KEY:-}
     volumes:
       - /var/lib/dreamteclabs-nexus:/var/lib/dreamteclabs-nexus
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8081/health', timeout=2).read()"]
+      interval: 10s
+      timeout: 3s
+      retries: 6
+      start_period: 10s
 
   nexus-otel:
     image: otel/opentelemetry-collector-contrib:0.139.0
     network_mode: host
     restart: unless-stopped
+    stop_grace_period: 15s
     command: ["--config=/etc/otelcol-contrib/config.yaml"]
     environment:
       SIGNOZ_OTLP_ENDPOINT: ${SIGNOZ_OTLP_ENDPOINT:-192.168.0.47:4317}
