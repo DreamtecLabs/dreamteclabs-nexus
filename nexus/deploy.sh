@@ -3,8 +3,12 @@ set -euo pipefail
 
 cd "$(dirname "$0")"
 
-command -v docker >/dev/null 2>&1 || { echo "docker is required" >&2; exit 1; }
-docker compose version >/dev/null 2>&1 || { echo "docker compose is required" >&2; exit 1; }
+if ! command -v docker >/dev/null 2>&1; then
+  exec bash ./deploy-native.sh
+fi
+if ! docker compose version >/dev/null 2>&1; then
+  exec bash ./deploy-native.sh
+fi
 
 if [[ ! -f .env ]]; then
   cp .env.example .env
