@@ -48,6 +48,17 @@ class PowerOperationResult:
     verified: bool
 
 
+@dataclass(frozen=True, slots=True)
+class PowerAuditEntry:
+    timestamp: str
+    resource_id: str
+    resource_name: str
+    action: str
+    result: str
+    detail: str
+    task_reference: str | None = None
+
+
 class InfrastructureProvider(Protocol):
     async def list_resources(self) -> InfrastructureSnapshot: ...
 
@@ -56,3 +67,9 @@ class InfrastructureProvider(Protocol):
         resource: InfrastructureResource,
         action: str,
     ) -> str | None: ...
+
+
+class PowerAuditRepository(Protocol):
+    def record(self, entry: PowerAuditEntry) -> None: ...
+
+    def list_recent(self, limit: int = 25) -> tuple[PowerAuditEntry, ...]: ...
