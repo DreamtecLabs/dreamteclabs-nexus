@@ -71,7 +71,7 @@ jobs:
           else
             changed="$(git show --pretty='' --name-only HEAD)"
           fi
-          if printf '%s\n' "$changed" | grep -q '^ui/'; then
+          if printf '%s\n' "$changed" | grep -Eq '^(ui/|tools/nexus/|\.github/workflows/nexus-ui\.yml$)'; then
             echo 'ui_changed=true' >> "$GITHUB_OUTPUT"
           else
             echo 'ui_changed=false' >> "$GITHUB_OUTPUT"
