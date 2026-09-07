@@ -42,11 +42,28 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          docker ps -q --filter label=nexus-ci-build | xargs -r docker kill
+
+          # Only stop a stale Nexus build that is mounted on this runner
+          # agent's workspace. Multiple runner agents can share one host;
+          # killing every nexus-ci-build container can terminate a healthy
+          # build owned by another agent and surfaces as exit 137.
+          while read -r cid; do
+            [[ -n "$cid" ]] || continue
+            source="$(docker inspect -f '{{range .Mounts}}{{if eq .Destination "/workspace"}}{{.Source}}{{end}}{{end}}' "$cid" 2>/dev/null || true)"
+            if [[ "$source" == "$GITHUB_WORKSPACE" ]]; then
+              docker kill "$cid"
+            fi
+          done < <(docker ps -q --filter label=nexus-ci-build=1)
+
+          # Delete previous contents as root, then restore ownership of the
+          # workspace directory itself. Deleting only its children is not
+          # sufficient when a prior container changed the mount-point owner.
           docker run --rm \
+            -e HOST_UID="$(id -u)" \
+            -e HOST_GID="$(id -g)" \
             -v "$GITHUB_WORKSPACE:/workspace" \
             debian:trixie \
-            find /workspace -mindepth 1 -delete
+            sh -ec 'find /workspace -mindepth 1 -delete; chown "$HOST_UID:$HOST_GID" /workspace'
 
       - name: Checkout
         uses: actions/checkout@v4
@@ -140,16 +157,29 @@ jobs:
     if: needs.boundary.outputs.ui_changed == 'true'
     runs-on: self-hosted
     timeout-minutes: 45
+    concurrency:
+      group: nexus-ui-package-build
+      cancel-in-progress: false
     steps:
       - name: Recover workspace ownership
         shell: bash
         run: |
           set -euo pipefail
-          docker ps -q --filter label=nexus-ci-build | xargs -r docker kill
+
+          while read -r cid; do
+            [[ -n "$cid" ]] || continue
+            source="$(docker inspect -f '{{range .Mounts}}{{if eq .Destination "/workspace"}}{{.Source}}{{end}}{{end}}' "$cid" 2>/dev/null || true)"
+            if [[ "$source" == "$GITHUB_WORKSPACE" ]]; then
+              docker kill "$cid"
+            fi
+          done < <(docker ps -q --filter label=nexus-ci-build=1)
+
           docker run --rm \
+            -e HOST_UID="$(id -u)" \
+            -e HOST_GID="$(id -g)" \
             -v "$GITHUB_WORKSPACE:/workspace" \
             debian:trixie \
-            find /workspace -mindepth 1 -delete
+            sh -ec 'find /workspace -mindepth 1 -delete; chown "$HOST_UID:$HOST_GID" /workspace'
 
       - name: Free disk space
         shell: bash
@@ -182,11 +212,6 @@ jobs:
         run: |
           set -u
           mkdir -p artifacts
-
-          echo "Waiting for exclusive Nexus UI package build slot..."
-          exec 9>/tmp/nexus-ui-package-build.lock
-          flock 9
-          echo "Exclusive Nexus UI package build slot acquired."
 
           run_build() {
             docker run --rm \
@@ -226,8 +251,7 @@ jobs:
               break
             fi
 
-            echo "Build was killed with exit 137; recovering workspace and retrying after runner pressure clears."
-            docker ps -q --filter label=nexus-ci-build | xargs -r docker kill
+            echo "Build was killed with exit 137; restoring this workspace and retrying after runner pressure clears."
             docker run --rm \
               -v "$GITHUB_WORKSPACE:/workspace" \
               debian:trixie \
@@ -247,7 +271,6 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          docker ps -q --filter label=nexus-ci-build | xargs -r docker kill
           docker run --rm \
             -v "$GITHUB_WORKSPACE:/workspace" \
             debian:trixie \
