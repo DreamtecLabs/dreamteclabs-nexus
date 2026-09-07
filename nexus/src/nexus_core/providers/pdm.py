@@ -15,6 +15,20 @@ from nexus_core.ports.providers import ProviderStatus
 class PdmProvider:
     name = "pdm"
     _resources_path = "/api2/json/resources/list"
+    _canonical_types = {
+        "qemu": "pve-qemu",
+        "pve-qemu": "pve-qemu",
+        "lxc": "pve-lxc",
+        "pve-lxc": "pve-lxc",
+        "storage": "pve-storage",
+        "pve-storage": "pve-storage",
+        "network": "pve-network",
+        "pve-network": "pve-network",
+        "datastore": "pbs-datastore",
+        "pbs-datastore": "pbs-datastore",
+        "pbs-node": "pbs-node",
+        "pve-node": "pve-node",
+    }
 
     def __init__(
         self,
@@ -37,9 +51,7 @@ class PdmProvider:
 
     def _headers(self) -> dict[str, str]:
         if self._api_token_id and self._api_token_secret:
-            return {
-                "Authorization": f"PDMAPIToken {self._api_token_id}:{self._api_token_secret}",
-            }
+            return {"Authorization": f"PDMAPIToken {self._api_token_id}:{self._api_token_secret}"}
         return {}
 
     def _client(self) -> httpx.AsyncClient:
@@ -57,14 +69,9 @@ class PdmProvider:
                 response = await client.get(self._health_path)
                 response.raise_for_status()
         except httpx.HTTPStatusError as exc:
-            return ProviderStatus(
-                provider=self.name,
-                healthy=False,
-                detail=f"HTTP {exc.response.status_code} on {self._health_path}",
-            )
+            return ProviderStatus(provider=self.name, healthy=False, detail=f"HTTP {exc.response.status_code} on {self._health_path}")
         except httpx.HTTPError as exc:
             return ProviderStatus(provider=self.name, healthy=False, detail=type(exc).__name__)
-
         return ProviderStatus(provider=self.name, healthy=True)
 
     async def list_resources(self) -> InfrastructureSnapshot:
@@ -74,9 +81,7 @@ class PdmProvider:
                 response.raise_for_status()
                 payload = response.json()
         except httpx.HTTPStatusError as exc:
-            raise RuntimeError(
-                f"PDM resources API returned HTTP {exc.response.status_code}"
-            ) from exc
+            raise RuntimeError(f"PDM resources API returned HTTP {exc.response.status_code}") from exc
         except httpx.HTTPError as exc:
             raise RuntimeError(f"PDM resources API failed: {type(exc).__name__}") from exc
         except ValueError as exc:
@@ -94,17 +99,13 @@ class PdmProvider:
     def _normalize_resources(cls, remote_groups: list[object]) -> InfrastructureSnapshot:
         resources: list[InfrastructureResource] = []
         remote_errors: list[InfrastructureRemoteError] = []
-
         for raw_group in remote_groups:
             if not isinstance(raw_group, dict):
                 raise TypeError("remote group is not an object")
             remote = cls._required_string(raw_group, "remote")
             error = raw_group.get("error")
             if isinstance(error, str) and error.strip():
-                remote_errors.append(
-                    InfrastructureRemoteError(remote=remote, detail=error.strip()[:500])
-                )
-
+                remote_errors.append(InfrastructureRemoteError(remote=remote, detail=error.strip()[:500]))
             raw_resources = raw_group.get("resources", [])
             if not isinstance(raw_resources, list):
                 raise TypeError("resources is not a list")
@@ -112,33 +113,31 @@ class PdmProvider:
                 if not isinstance(raw_resource, dict):
                     raise TypeError("resource is not an object")
                 resources.append(cls._normalize_resource(remote, raw_resource))
-
         resources.sort(key=lambda item: (item.remote.casefold(), item.type, item.name.casefold(), item.id))
         remote_errors.sort(key=lambda item: item.remote.casefold())
         return InfrastructureSnapshot(tuple(resources), tuple(remote_errors))
 
     @classmethod
     def _normalize_resource(cls, remote: str, raw: dict[str, Any]) -> InfrastructureResource:
-        resource_type = cls._required_string(raw, "type")
+        raw_type = cls._required_string(raw, "type")
         resource_id = cls._required_string(raw, "id")
+        resource_type = cls._canonical_resource_type(raw_type, raw)
         status = cls._optional_string(raw.get("status")) or "unknown"
 
-        if resource_type in {"qemu", "lxc"}:
+        if resource_type in {"pve-qemu", "pve-lxc"}:
             name = cls._optional_string(raw.get("name")) or resource_id
-        elif resource_type == "node":
-            name = (
-                cls._optional_string(raw.get("node"))
-                or cls._optional_string(raw.get("name"))
-                or resource_id
-            )
-        elif resource_type == "storage":
-            name = cls._optional_string(raw.get("storage")) or resource_id
-        elif resource_type == "network":
-            name = cls._optional_string(raw.get("network")) or resource_id
-        elif resource_type == "datastore":
-            name = cls._optional_string(raw.get("name")) or resource_id
+        elif resource_type == "pve-node":
+            name = cls._optional_string(raw.get("node")) or cls._optional_string(raw.get("name")) or resource_id
+        elif resource_type == "pbs-node":
+            name = cls._optional_string(raw.get("name")) or cls._optional_string(raw.get("node")) or resource_id
+        elif resource_type == "pve-storage":
+            name = cls._optional_string(raw.get("storage")) or cls._name_from_id(resource_id) or resource_id
+        elif resource_type == "pve-network":
+            name = cls._optional_string(raw.get("network")) or cls._name_from_id(resource_id) or resource_id
+        elif resource_type == "pbs-datastore":
+            name = cls._optional_string(raw.get("name")) or cls._name_from_id(resource_id) or resource_id
         else:
-            name = cls._optional_string(raw.get("name")) or resource_id
+            name = cls._optional_string(raw.get("name")) or cls._name_from_id(resource_id) or resource_id
 
         vmid = raw.get("vmid")
         if not isinstance(vmid, int) or isinstance(vmid, bool):
@@ -158,6 +157,18 @@ class PdmProvider:
             vmid=vmid,
             template=template,
         )
+
+    @classmethod
+    def _canonical_resource_type(cls, raw_type: str, raw: dict[str, Any]) -> str:
+        if raw_type == "node":
+            # PVE nodes expose `node`; PBS nodes expose `name` in the PDM resource model.
+            return "pve-node" if cls._optional_string(raw.get("node")) else "pbs-node"
+        return cls._canonical_types.get(raw_type, raw_type)
+
+    @staticmethod
+    def _name_from_id(resource_id: str) -> str | None:
+        value = resource_id.rstrip("/").rsplit("/", 1)[-1].strip()
+        return value or None
 
     @staticmethod
     def _required_string(raw: dict[str, Any], key: str) -> str:
