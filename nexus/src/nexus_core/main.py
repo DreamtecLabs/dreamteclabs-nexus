@@ -1,8 +1,25 @@
+from dataclasses import asdict
+
 from fastapi import FastAPI, HTTPException, Request
+from pydantic import BaseModel, Field
 
 from nexus_core.config import Settings, get_settings
+from nexus_core.providers.alerting import UnconfiguredAlertingProvider
+from nexus_core.providers.file_sd import FileSdTelemetryRuntime
 from nexus_core.providers.pdm import PdmProvider
+from nexus_core.providers.signoz import SigNozAlertingProvider
+from nexus_core.repositories.monitoring_json import JsonMonitoringRepository
+from nexus_core.services.monitoring import MonitoringService
 from nexus_core.services.providers import ProviderService
+
+
+class MonitoringTargetInput(BaseModel):
+    name: str = Field(min_length=1, max_length=80)
+    address: str = Field(min_length=1, max_length=253)
+    port: int = Field(ge=1, le=65535)
+    metrics_path: str = Field(default="/metrics", max_length=128)
+    site: str = Field(min_length=1, max_length=64)
+    state: str = "enabled"
 
 
 def create_app(settings: Settings | None = None) -> FastAPI:
@@ -14,8 +31,20 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         timeout_seconds=settings.provider_timeout_seconds,
     )
 
-    app = FastAPI(title="DreamtecLabs Nexus", version="0.1.0")
+    monitoring_repository = JsonMonitoringRepository(settings.monitoring_inventory_path)
+    telemetry_runtime = FileSdTelemetryRuntime(settings.monitoring_file_sd_path)
+    if settings.signoz_api_key:
+        alerting = SigNozAlertingProvider(
+            base_url=settings.signoz_url,
+            api_key=settings.signoz_api_key,
+            timeout_seconds=settings.provider_timeout_seconds,
+        )
+    else:
+        alerting = UnconfiguredAlertingProvider()
+
+    app = FastAPI(title="DreamtecLabs Nexus", version="0.2.0")
     app.state.provider_service = ProviderService({pdm.name: pdm})
+    app.state.monitoring_service = MonitoringService(monitoring_repository, alerting, telemetry_runtime)
 
     @app.get("/health")
     async def health() -> dict[str, str]:
@@ -33,6 +62,31 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             "healthy": status.healthy,
             "detail": status.detail,
         }
+
+    @app.get("/api/v1/monitoring/targets")
+    async def monitoring_targets(request: Request) -> dict[str, object]:
+        targets = request.app.state.monitoring_service.list_targets()
+        return {"targets": [asdict(target) for target in targets], "count": len(targets)}
+
+    @app.put("/api/v1/monitoring/targets")
+    async def upsert_monitoring_target(payload: MonitoringTargetInput, request: Request) -> dict[str, object]:
+        try:
+            target = await request.app.state.monitoring_service.upsert_target(**payload.model_dump())
+        except ValueError as exc:
+            raise HTTPException(status_code=422, detail=str(exc)) from exc
+        except RuntimeError as exc:
+            raise HTTPException(status_code=503, detail=str(exc)) from exc
+        return asdict(target)
+
+    @app.delete("/api/v1/monitoring/targets/{target_id}")
+    async def delete_monitoring_target(target_id: str, request: Request) -> dict[str, object]:
+        try:
+            target = await request.app.state.monitoring_service.delete_target(target_id)
+        except KeyError as exc:
+            raise HTTPException(status_code=404, detail=f"monitoring target '{target_id}' was not found") from exc
+        except RuntimeError as exc:
+            raise HTTPException(status_code=503, detail=str(exc)) from exc
+        return asdict(target)
 
     return app
 
