@@ -7,7 +7,6 @@ on:
       - 'ui/src/nexus/**'
       - 'nexus/**'
       - 'docs/architecture/**'
-      - 'tools/nexus/check-pdm-provider-boundary.sh'
       - '.github/workflows/architecture-boundary.yml'
 
 permissions:
@@ -24,4 +23,4 @@ jobs:
 
       - name: Enforce PDM provider boundary
         shell: bash
-        run: bash tools/nexus/check-pdm-provider-boundary.sh "${{ github.event.pull_request.base.sha }}" "${{ github.sha }}"
+        run: bash nexus/tools/check-pdm-provider-boundary.sh "${{ github.event.pull_request.base.sha }}" "${{ github.sha }}"
