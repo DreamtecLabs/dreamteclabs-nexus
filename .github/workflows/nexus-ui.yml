@@ -192,18 +192,52 @@ jobs:
         continue-on-error: true
         shell: bash
         run: |
-          set -o pipefail
+          set -u
           mkdir -p artifacts
-          docker run --rm \
-            --label nexus-ci-build=1 \
-            --memory=7g \
-            -e HOST_UID="$(id -u)" \
-            -e HOST_GID="$(id -g)" \
-            -e CARGO_TARGET_DIR=/workspace/.cache/ui-target \
-            -v "$GITHUB_WORKSPACE:/workspace" \
-            -w /workspace \
-            debian:trixie \
-            bash tools/nexus/build-ui-container.sh 2>&1 | tee artifacts/build.log
+
+          run_build() {
+            docker run --rm \
+              --label nexus-ci-build=1 \
+              --memory=7g \
+              -e HOST_UID="$(id -u)" \
+              -e HOST_GID="$(id -g)" \
+              -e CARGO_TARGET_DIR=/workspace/.cache/ui-target \
+              -v "$GITHUB_WORKSPACE:/workspace" \
+              -w /workspace \
+              debian:trixie \
+              bash tools/nexus/build-ui-container.sh
+          }
+
+          attempt=1
+          max_attempts=3
+          while true; do
+            echo "Nexus UI package build attempt ${attempt}/${max_attempts}"
+            set +e
+            set -o pipefail
+            run_build 2>&1 | tee "artifacts/build-attempt-${attempt}.log"
+            status=${PIPESTATUS[0]}
+            set +o pipefail
+            set -e
+            cp "artifacts/build-attempt-${attempt}.log" artifacts/build.log
+
+            if [[ "$status" -eq 0 ]]; then
+              break
+            fi
+            if [[ "$status" -ne 137 || "$attempt" -ge "$max_attempts" ]]; then
+              exit "$status"
+            fi
+
+            echo "Build was killed with exit 137; recovering workspace and retrying after runner pressure clears."
+            docker ps -q --filter label=nexus-ci-build | xargs -r docker kill
+            docker run --rm \
+              -v "$GITHUB_WORKSPACE:/workspace" \
+              debian:trixie \
+              chown -R "$(id -u):$(id -g)" /workspace
+            docker container prune -f
+            docker builder prune -f
+            sleep 45
+            attempt=$((attempt + 1))
+          done
 
       - name: Publish build failure diagnostics
         if: steps.package_build.outcome == 'failure' && github.event_name == 'pull_request'
