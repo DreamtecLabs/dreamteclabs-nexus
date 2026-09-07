@@ -37,6 +37,14 @@ uvicorn nexus_core.main:app --reload --port 8081
 
 Configuration is environment based. The PDM adapter starts with `PDM_BASE_URL=https://127.0.0.1:8443`; no credentials are stored in this repository.
 
+## Runtime deployment
+
+The standalone runtime is `compose.yaml`: `nexus-core` serves the API/UI on host port 8081 and `nexus-otel` discovers Nexus-managed Prometheus targets through file discovery and exports metrics to SigNoz.
+
+On a new host, copy `.env.example` to `.env`, set environment-specific values and keep secrets only in `.env`. `deploy.sh` validates Compose, pulls the pinned OpenTelemetry Collector, builds Nexus Core, starts both services, waits for the container healthcheck and fails with recent logs if startup does not become healthy. Monitoring discovery is rebuilt from the Nexus-owned inventory on every Nexus Core startup, so collector state is not dependent on a previous API write.
+
+Existing PDM services remain in place during migration. Deploying Nexus Core does not replace or stop PDM; production cutover happens domain-by-domain only after parity validation.
+
 ## Change policy
 
 New Nexus features belong here, not under the upstream PDM backend/UI trees. Existing PDM customizations remain supported while they are migrated. Changes inside PDM should be limited to provider compatibility, security fixes, packaging and migration work.
