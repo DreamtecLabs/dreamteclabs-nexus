@@ -1,3 +1,23 @@
+# DreamtecLabs Nexus
+
+DreamtecLabs Nexus is the DreamtecLabs infrastructure control plane.
+
+## Architecture boundary
+
+Nexus product/domain functionality lives under [`nexus/`](nexus/). Proxmox Datacenter Manager (PDM) is treated as an infrastructure provider, not as the Nexus application framework.
+
+New Nexus features follow this dependency direction:
+
+```text
+Nexus UI -> Nexus API -> Domain Service -> Port -> Provider Adapter
+```
+
+PDM/Proxmox, SigNoz, Cloudflare, Hestia and DreamtecLabs Notify are external providers/integrations behind adapters. Existing PDM customizations remain during migration and are removed only after production parity is verified.
+
+See [`docs/architecture/0001-nexus-control-plane.md`](docs/architecture/0001-nexus-control-plane.md) for the accepted architecture decision.
+
+---
+
 # Proxmox Datacenter Manager
 
 A stand-alone API + GUI product with the following main features for multiple instances of Proxmox
@@ -48,7 +68,7 @@ VE and Proxmox Backup Server in one central place.
 ### Frontend
 
 - The Web UI communicates with the backend server via a JSON-based REST API.
-- The UI is implemented in Rust, using [Yew](https://yew.rs/) and the 
+- The UI is implemented in Rust, using [Yew](https://yew.rs/) and the
   [proxmox-yew-widget-toolkit](https://git.proxmox.com/?p=ui/proxmox-yew-widget-toolkit.git;a=summary).
   The Rust code is compiled to WebAssembly.
 - The code for the UI is located in the `ui/` directory.
@@ -61,7 +81,6 @@ There are two CLI tools to manage Proxmox Datacenter Manager.
 - `proxmox-datacenter-manager-admin`: root-only, local administration tool
 
 Their implementation can be found in `cli/admin` and `cli/client`, respectively.
-
 
 ## Documentation
 
