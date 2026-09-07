@@ -172,6 +172,7 @@ jobs:
           docker volume prune -f
           docker system df
           df -h /
+          df -ih /
           free -h
 
       - name: Checkout
@@ -190,6 +191,21 @@ jobs:
             ui-cargo-${{ runner.os }}-${{ hashFiles('Cargo.lock', 'Cargo.toml', 'ui/Cargo.toml', 'ui/debian/control') }}-
             ui-cargo-${{ runner.os }}-
 
+      - name: Prune non-reusable Cargo cache
+        shell: bash
+        run: |
+          set -euo pipefail
+          # Incremental state is both large and unsuitable for this release CI
+          # build. Old cache entries were able to consume the runner filesystem
+          # while rustc wrote query-cache.bin even though the source was valid.
+          # Keep reusable compiled dependencies, but drop all incremental trees.
+          if [[ -d .cache/ui-target ]]; then
+            find .cache/ui-target -type d -name incremental -prune -exec rm -rf {} +
+            du -sh .cache/ui-target || true
+          fi
+          df -h /
+          df -ih /
+
       - name: Build package in Debian Trixie
         id: package_build
         continue-on-error: true
@@ -204,6 +220,7 @@ jobs:
             -e HOST_UID="$(id -u)" \
             -e HOST_GID="$(id -g)" \
             -e CARGO_BUILD_JOBS=2 \
+            -e CARGO_INCREMENTAL=0 \
             -e CARGO_TARGET_DIR=/workspace/.cache/ui-target \
             -v "$GITHUB_WORKSPACE:/workspace" \
             -w /workspace \
