@@ -51,5 +51,8 @@ jobs:
       - name: Test
         run: pytest
 
+      - name: Validate compose
+        run: docker compose -f compose.yaml config --quiet
+
       - name: Build container
         run: docker build -t dreamteclabs-nexus-core:${GITHUB_SHA} .
