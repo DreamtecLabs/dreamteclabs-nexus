@@ -212,6 +212,9 @@ jobs:
         run: |
           set -u
           mkdir -p artifacts
+          diagnostics_dir="$RUNNER_TEMP/nexus-ui-build-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}"
+          rm -rf "$diagnostics_dir"
+          mkdir -p "$diagnostics_dir"
 
           run_build() {
             docker run --rm \
@@ -233,13 +236,15 @@ jobs:
 
           while true; do
             echo "Nexus UI package build attempt ${attempt}/${max_attempts}"
+            attempt_log="$diagnostics_dir/build-attempt-${attempt}.log"
             set +e
             set -o pipefail
-            run_build 2>&1 | tee "artifacts/build-attempt-${attempt}.log"
+            run_build 2>&1 | tee "$attempt_log"
             status=${PIPESTATUS[0]}
             set +o pipefail
             set -e
-            cp "artifacts/build-attempt-${attempt}.log" artifacts/build.log
+            mkdir -p artifacts
+            cp "$attempt_log" artifacts/build.log
 
             if [[ "$status" -eq 0 ]]; then
               break
