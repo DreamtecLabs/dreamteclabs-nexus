@@ -1,6 +1,8 @@
 from dataclasses import asdict
+from pathlib import Path
 
 from fastapi import FastAPI, HTTPException, Request
+from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field
 
 from nexus_core.config import Settings, get_settings
@@ -11,6 +13,7 @@ from nexus_core.providers.signoz import SigNozAlertingProvider
 from nexus_core.repositories.monitoring_json import JsonMonitoringRepository
 from nexus_core.services.monitoring import MonitoringService
 from nexus_core.services.providers import ProviderService
+from nexus_core.web import router as web_router
 
 
 class MonitoringTargetInput(BaseModel):
@@ -42,9 +45,13 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     else:
         alerting = UnconfiguredAlertingProvider()
 
-    app = FastAPI(title="DreamtecLabs Nexus", version="0.2.0")
+    app = FastAPI(title="DreamtecLabs Nexus", version="0.3.0")
     app.state.provider_service = ProviderService({pdm.name: pdm})
     app.state.monitoring_service = MonitoringService(monitoring_repository, alerting, telemetry_runtime)
+
+    static_dir = Path(__file__).resolve().parent / "static"
+    app.mount("/static", StaticFiles(directory=str(static_dir)), name="static")
+    app.include_router(web_router)
 
     @app.get("/health")
     async def health() -> dict[str, str]:

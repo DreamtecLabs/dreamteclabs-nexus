@@ -1,0 +1,25 @@
+{% extends "base.html" %}
+{% block title %}Nexus Overview{% endblock %}
+{% block content %}
+<section class="hero">
+  <div>
+    <p class="eyebrow">CONTROL PLANE</p>
+    <h1>Operations without coupling product logic to PDM.</h1>
+    <p class="muted">Nexus owns orchestration. Infrastructure systems remain providers behind stable adapters.</p>
+  </div>
+</section>
+<section class="grid">
+  <article class="card">
+    <span class="label">Monitoring targets</span>
+    <strong class="metric">{{ monitoring_count }}</strong>
+    <a href="/monitoring">Open monitoring →</a>
+  </article>
+  {% for provider in providers %}
+  <article class="card">
+    <span class="label">Provider · {{ provider.name }}</span>
+    <strong class="status {{ 'ok' if provider.healthy else 'bad' }}">{{ 'Healthy' if provider.healthy else 'Unavailable' }}</strong>
+    {% if provider.detail %}<p class="muted small">{{ provider.detail }}</p>{% endif %}
+  </article>
+  {% endfor %}
+</section>
+{% endblock %}
