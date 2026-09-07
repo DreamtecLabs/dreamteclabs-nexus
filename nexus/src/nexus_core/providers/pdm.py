@@ -31,6 +31,12 @@ class PdmProvider:
             ) as client:
                 response = await client.get(self._health_path)
                 response.raise_for_status()
+        except httpx.HTTPStatusError as exc:
+            return ProviderStatus(
+                provider=self.name,
+                healthy=False,
+                detail=f"HTTP {exc.response.status_code} on {self._health_path}",
+            )
         except httpx.HTTPError as exc:
             return ProviderStatus(provider=self.name, healthy=False, detail=type(exc).__name__)
 
