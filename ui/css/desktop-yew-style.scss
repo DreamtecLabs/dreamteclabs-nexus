@@ -1,6 +1,7 @@
 @import "../pwt-assets/scss/desktop-yew-style";
 @import "pdm";
 @import "nexus-storage";
+@import "nexus-monitoring";
 
 .proxmox-content-spacer {
     padding: var(--pwt-spacer-4);
