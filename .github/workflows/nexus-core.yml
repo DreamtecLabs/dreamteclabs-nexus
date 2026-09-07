@@ -52,7 +52,10 @@ jobs:
         run: pytest
 
       - name: Validate deployment scripts
-        run: bash -n deploy.sh deploy-native.sh
+        run: |
+          bash -n deploy.sh deploy-native.sh
+          test -x deploy.sh
+          test -x deploy-native.sh
 
       - name: Validate compose
         run: docker compose -f compose.yaml config --quiet

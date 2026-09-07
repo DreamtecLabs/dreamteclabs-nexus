@@ -16,6 +16,9 @@ class Settings(BaseSettings):
     pdm_api_token_id: str | None = Field(default=None, alias="PDM_API_TOKEN_ID")
     pdm_api_token_secret: str | None = Field(default=None, alias="PDM_API_TOKEN_SECRET")
     provider_timeout_seconds: float = Field(default=5.0, alias="NEXUS_PROVIDER_TIMEOUT_SECONDS")
+    power_operations_enabled: bool = Field(default=False, alias="NEXUS_POWER_OPERATIONS_ENABLED")
+    power_verification_attempts: int = Field(default=20, ge=1, le=120, alias="NEXUS_POWER_VERIFY_ATTEMPTS")
+    power_verification_interval_seconds: float = Field(default=1.0, ge=0.1, le=10.0, alias="NEXUS_POWER_VERIFY_INTERVAL_SECONDS")
     signoz_url: str = Field(default="http://192.168.0.47:8080", alias="NEXUS_SIGNOZ_URL")
     signoz_api_key: str | None = Field(default=None, alias="NEXUS_SIGNOZ_API_KEY")
 
@@ -26,6 +29,10 @@ class Settings(BaseSettings):
     @property
     def monitoring_file_sd_path(self) -> Path:
         return self.data_dir / "prometheus" / "monitoring-targets.json"
+
+    @property
+    def power_audit_path(self) -> Path:
+        return self.data_dir / "power-operations.jsonl"
 
 
 @lru_cache

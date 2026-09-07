@@ -89,6 +89,8 @@ async def test_pdm_rejects_unsupported_resources_payload() -> None:
 
 
 class FakeInfrastructureService:
+    power_operations_enabled = False
+
     async def list_resources(self) -> InfrastructureSnapshot:
         return InfrastructureSnapshot(
             resources=(
@@ -99,8 +101,13 @@ class FakeInfrastructureService:
             remote_errors=(InfrastructureRemoteError(remote="lab-pve", detail="temporarily unavailable"),),
         )
 
+    def available_power_actions(self, resource: InfrastructureResource) -> dict[str, bool]:
+        return {"start": resource.status == "stopped", "shutdown": resource.status == "running", "stop": resource.status == "running"}
+
 
 class FailingInfrastructureService:
+    power_operations_enabled = False
+
     async def list_resources(self) -> InfrastructureSnapshot:
         raise RuntimeError("PDM resources API failed: ConnectError")
 
@@ -121,6 +128,7 @@ def test_infrastructure_api_returns_normalized_snapshot(tmp_path: Path) -> None:
     assert payload["count"] == 3
     assert payload["resources"][0]["name"] == "postgres-01"
     assert payload["remote_errors"] == [{"remote": "lab-pve", "detail": "temporarily unavailable"}]
+    assert payload["power_operations_enabled"] is False
 
 
 def test_infrastructure_page_renders_inventory_summary_and_resources(tmp_path: Path) -> None:
@@ -134,6 +142,8 @@ def test_infrastructure_page_renders_inventory_summary_and_resources(tmp_path: P
     assert "1 running · 1 stopped" in response.text
     assert "Provider warnings" in response.text
     assert "temporarily unavailable" in response.text
+    assert "Open Power Center" in response.text
+    assert "inventory-search" in response.text
 
 
 def test_infrastructure_page_returns_503_when_provider_fails(tmp_path: Path) -> None:

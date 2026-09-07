@@ -12,7 +12,14 @@ from nexus_core.providers.file_sd import FileSdTelemetryRuntime
 from nexus_core.providers.pdm import PdmProvider
 from nexus_core.providers.signoz import SigNozAlertingProvider
 from nexus_core.repositories.monitoring_json import JsonMonitoringRepository
-from nexus_core.services.infrastructure import InfrastructureService
+from nexus_core.repositories.power_audit_jsonl import JsonlPowerAuditRepository
+from nexus_core.services.infrastructure import (
+    InfrastructureResourceNotFound,
+    InfrastructureService,
+    PowerActionNotAllowed,
+    PowerOperationsDisabled,
+    PowerVerificationTimeout,
+)
 from nexus_core.services.monitoring import MonitoringService
 from nexus_core.services.providers import ProviderService
 from nexus_core.web import router as web_router
@@ -25,6 +32,12 @@ class MonitoringTargetInput(BaseModel):
     metrics_path: str = Field(default="/metrics", max_length=128)
     site: str = Field(min_length=1, max_length=64)
     state: str = "enabled"
+
+
+class PowerActionInput(BaseModel):
+    resource_id: str = Field(min_length=1, max_length=255)
+    action: str = Field(min_length=1, max_length=16)
+    confirmation: str | None = Field(default=None, max_length=128)
 
 
 def create_app(settings: Settings | None = None) -> FastAPI:
@@ -40,6 +53,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
 
     monitoring_repository = JsonMonitoringRepository(settings.monitoring_inventory_path)
     telemetry_runtime = FileSdTelemetryRuntime(settings.monitoring_file_sd_path)
+    power_audit_repository = JsonlPowerAuditRepository(settings.power_audit_path)
     if settings.signoz_api_key:
         alerting = SigNozAlertingProvider(
             base_url=settings.signoz_url,
@@ -54,9 +68,15 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         await telemetry_runtime.reconcile(monitoring_repository.list_targets())
         yield
 
-    app = FastAPI(title="DreamtecLabs Nexus", version="0.4.0", lifespan=lifespan)
+    app = FastAPI(title="DreamtecLabs Nexus", version="0.5.0", lifespan=lifespan)
     app.state.provider_service = ProviderService({pdm.name: pdm})
-    app.state.infrastructure_service = InfrastructureService(pdm)
+    app.state.infrastructure_service = InfrastructureService(
+        pdm,
+        power_operations_enabled=settings.power_operations_enabled,
+        verification_attempts=settings.power_verification_attempts,
+        verification_interval_seconds=settings.power_verification_interval_seconds,
+        audit_repository=power_audit_repository,
+    )
     app.state.monitoring_service = MonitoringService(monitoring_repository, alerting, telemetry_runtime)
 
     static_dir = Path(__file__).resolve().parent / "static"
@@ -73,12 +93,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             status = await request.app.state.provider_service.health(provider_name)
         except ValueError as exc:
             raise HTTPException(status_code=404, detail=str(exc)) from exc
-
-        return {
-            "provider": status.provider,
-            "healthy": status.healthy,
-            "detail": status.detail,
-        }
+        return {"provider": status.provider, "healthy": status.healthy, "detail": status.detail}
 
     @app.get("/api/v1/infrastructure/resources")
     async def infrastructure_resources(request: Request) -> dict[str, object]:
@@ -90,7 +105,29 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             "resources": [asdict(resource) for resource in snapshot.resources],
             "remote_errors": [asdict(error) for error in snapshot.remote_errors],
             "count": len(snapshot.resources),
+            "power_operations_enabled": request.app.state.infrastructure_service.power_operations_enabled,
         }
+
+    @app.get("/api/v1/infrastructure/power/history")
+    async def infrastructure_power_history(request: Request, limit: int = 25) -> dict[str, object]:
+        entries = request.app.state.infrastructure_service.list_recent_power_operations(limit)
+        return {"operations": [asdict(entry) for entry in entries], "count": len(entries)}
+
+    @app.post("/api/v1/infrastructure/power")
+    async def infrastructure_power(payload: PowerActionInput, request: Request) -> dict[str, object]:
+        try:
+            result = await request.app.state.infrastructure_service.execute_power_action(**payload.model_dump())
+        except PowerOperationsDisabled as exc:
+            raise HTTPException(status_code=403, detail=str(exc)) from exc
+        except InfrastructureResourceNotFound as exc:
+            raise HTTPException(status_code=404, detail=str(exc)) from exc
+        except PowerActionNotAllowed as exc:
+            raise HTTPException(status_code=409, detail=str(exc)) from exc
+        except PowerVerificationTimeout as exc:
+            raise HTTPException(status_code=504, detail=str(exc)) from exc
+        except RuntimeError as exc:
+            raise HTTPException(status_code=503, detail=str(exc)) from exc
+        return asdict(result)
 
     @app.get("/api/v1/monitoring/targets")
     async def monitoring_targets(request: Request) -> dict[str, object]:
