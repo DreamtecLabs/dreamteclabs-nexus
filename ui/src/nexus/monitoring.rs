@@ -230,7 +230,12 @@ pub fn nexus_monitoring() -> Html {
     let disabled = devices.len().saturating_sub(enabled + maintenance);
     let down = probes
         .values()
-        .filter(|probe| !probe.get("reachable").and_then(Value::as_bool).unwrap_or(false))
+        .filter(|probe| {
+            !probe
+                .get("reachable")
+                .and_then(Value::as_bool)
+                .unwrap_or(false)
+        })
         .count();
 
     let query = search.trim().to_lowercase();
@@ -240,13 +245,40 @@ pub fn nexus_monitoring() -> Html {
     let filtered_devices: Vec<Value> = devices
         .iter()
         .filter(|device| {
-            let id = device.get("id").and_then(Value::as_str).unwrap_or("").to_lowercase();
-            let name = device.get("name").and_then(Value::as_str).unwrap_or("").to_lowercase();
-            let address = device.get("address").and_then(Value::as_str).unwrap_or("").to_lowercase();
-            let kind = device.get("kind").and_then(Value::as_str).unwrap_or("device").to_lowercase();
-            let site = device.get("site").and_then(Value::as_str).unwrap_or("home").to_lowercase();
-            let state = device.get("state").and_then(Value::as_str).unwrap_or("disabled").to_lowercase();
-            (query.is_empty() || id.contains(&query) || name.contains(&query) || address.contains(&query))
+            let id = device
+                .get("id")
+                .and_then(Value::as_str)
+                .unwrap_or("")
+                .to_lowercase();
+            let name = device
+                .get("name")
+                .and_then(Value::as_str)
+                .unwrap_or("")
+                .to_lowercase();
+            let address = device
+                .get("address")
+                .and_then(Value::as_str)
+                .unwrap_or("")
+                .to_lowercase();
+            let kind = device
+                .get("kind")
+                .and_then(Value::as_str)
+                .unwrap_or("device")
+                .to_lowercase();
+            let site = device
+                .get("site")
+                .and_then(Value::as_str)
+                .unwrap_or("home")
+                .to_lowercase();
+            let state = device
+                .get("state")
+                .and_then(Value::as_str)
+                .unwrap_or("disabled")
+                .to_lowercase();
+            (query.is_empty()
+                || id.contains(&query)
+                || name.contains(&query)
+                || address.contains(&query))
                 && (type_query.is_empty() || kind.contains(&type_query))
                 && (site_query.is_empty() || site.contains(&site_query))
                 && (state_query.is_empty() || state.contains(&state_query))
