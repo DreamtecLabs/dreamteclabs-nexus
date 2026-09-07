@@ -51,8 +51,8 @@ jobs:
       - name: Test
         run: pytest
 
-      - name: Validate deployment script
-        run: bash -n deploy.sh
+      - name: Validate deployment scripts
+        run: bash -n deploy.sh deploy-native.sh
 
       - name: Validate compose
         run: docker compose -f compose.yaml config --quiet
