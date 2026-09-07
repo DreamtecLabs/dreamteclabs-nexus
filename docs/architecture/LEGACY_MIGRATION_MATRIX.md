@@ -7,9 +7,9 @@ This document classifies legacy capabilities before implementation work begins. 
 | Legacy capability | Decision | vNext owner | Provider / source | Notes |
 |---|---|---|---|---|
 | Dashboard / operational overview | Redesign | Platform + UI | Nexus domain APIs | Recover useful overview concepts; do not reuse NiceGUI page coupling. |
-| Assets / inventory | Migrate | Infrastructure | PDM | PDM becomes authoritative for Proxmox hosts/guests. Nexus may persist annotations or business metadata only. |
+| Assets / inventory | Migrate | Infrastructure | PDM | **In progress:** canonical PDM-backed read model and standalone searchable Inventory workspace are implemented. PDM is authoritative for Proxmox/PBS runtime state; Nexus may persist annotations or business metadata only. |
 | Resource detail / relationships | Redesign | Infrastructure | PDM + Nexus metadata | Preserve useful resource-centric UX; rebuild relationship model around stable provider identities. |
-| Resource Power Center | Migrate | Infrastructure | PDM | Start/stop/shutdown/reboot operations go through a PDM port with post-mutation read-back. |
+| Resource Power Center | Migrate | Infrastructure | PDM | **In progress:** vNext supports state-aware start, graceful shutdown and hard stop for QEMU/LXC through the PDM port, with configuration gating, hard-stop confirmation, post-mutation read-back and durable operation audit. Reboot remains deferred until task lifecycle verification is modeled rather than reporting success from a still-running pre-reboot state. |
 | Direct Proxmox providers / `proxmoxer` paths | Replace by provider | Infrastructure | PDM | Do not migrate direct cluster-specific access into vNext. |
 | Infrastructure graph | Redesign | Infrastructure | PDM + Nexus metadata | Build only after inventory/resource identities are stable. |
 | Discovery | Replace by provider / Redesign | Infrastructure | PDM first | Avoid a second broad discovery engine where PDM already knows the estate. Add non-PDM discovery only for explicit gaps. |
@@ -39,15 +39,15 @@ This document classifies legacy capabilities before implementation work begins. 
 | NiceGUI runtime coupling | Discard | UI | — | vNext stays server-rendered/lightweight and independent of provider stateful UI sessions. |
 | Legacy composition root startup jobs/workers | Redesign | Platform | explicit services | Each background job must have one owner and isolated failure behavior. |
 | Platform health | Migrate | Platform | Nexus + provider health | Keep fail-visible health semantics without making unrelated provider outages crash startup. |
-| Audit / operation history | Redesign and prioritize | Platform | Nexus DB | Every mutation should produce a durable audit record as vNext gains write operations. |
+| Audit / operation history | Redesign and prioritize | Platform | Nexus persistence | **Started:** Infrastructure power mutations now write a durable append-only JSONL audit and expose recent history. Move to the future Nexus DB audit model when the Platform persistence layer is introduced. |
 
 ## Migration order
 
-1. Foundation and enforceable architecture boundaries.
-2. Infrastructure inventory/resource identities through PDM.
-3. Infrastructure power/lifecycle operations through PDM.
+1. Foundation and enforceable architecture boundaries. **Done.**
+2. Infrastructure inventory/resource identities through PDM. **Production read model validated; Inventory workspace implemented.**
+3. Infrastructure power/lifecycle operations through PDM. **Core safe Power Center slice implemented; additional lifecycle operations remain intentionally deferred.**
 4. Observability read model through SigNoz, followed by maintenance and alert management.
-5. Nexus UI shell and resource-centric views using domain APIs only.
+5. Resource-centric UI expansion using domain APIs only.
 6. Domains & Hosting through Cloudflare/Hestia.
 7. Applications/services, backups and networking/IPAM after authoritative data ownership is decided.
 8. Deferred capabilities only after the core control plane has demonstrated production stability.
