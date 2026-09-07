@@ -1,0 +1,130 @@
+{% extends "base.html" %}
+{% block title %}Power Center · DreamtecLabs Nexus{% endblock %}
+{% block content %}
+<section class="page-head">
+  <div>
+    <div class="eyebrow">Infrastructure</div>
+    <h1>Resource Power Center</h1>
+    <p class="muted">State-aware PVE guest lifecycle operations executed through the PDM provider and verified by read-back.</p>
+  </div>
+  <a class="button secondary" href="/infrastructure">Back to Inventory</a>
+</section>
+
+{% if not power_enabled %}
+<section class="card notice-card">
+  <strong>Power operations are locked.</strong>
+  <p class="muted">Inventory remains live and read-only. Set <code>NEXUS_POWER_OPERATIONS_ENABLED=true</code> only after the PDM token has the intended guest lifecycle permissions.</p>
+</section>
+{% endif %}
+
+{% if remote_errors %}
+<section class="card warning-card">
+  <strong>Provider warnings</strong>
+  {% for error in remote_errors %}<p class="muted small">{{ error.remote }}: {{ error.detail }}</p>{% endfor %}
+</section>
+{% endif %}
+
+<section class="grid power-summary">
+  <article class="card"><span class="label">Guests</span><strong class="metric">{{ summary.guests }}</strong></article>
+  <article class="card"><span class="label">Running</span><strong class="metric status-ok">{{ summary.running }}</strong></article>
+  <article class="card"><span class="label">Stopped</span><strong class="metric">{{ summary.stopped }}</strong></article>
+</section>
+
+<section class="toolbar card">
+  <input id="power-search" class="control" type="search" placeholder="Search guest, VMID or node…" autocomplete="off">
+  <select id="power-status" class="control">
+    <option value="">All guest states</option>
+    <option value="running">Running</option>
+    <option value="stopped">Stopped</option>
+  </select>
+  <span id="power-visible" class="muted small">{{ summary.guests }} visible</span>
+</section>
+
+<div id="power-message" class="operation-message" hidden></div>
+<section class="card table-card">
+  <div class="table-wrap">
+    <table id="power-table">
+      <thead><tr><th>Guest</th><th>Kind</th><th>Remote / node</th><th>VMID</th><th>Status</th><th>Available operations</th></tr></thead>
+      <tbody>
+      {% for row in rows %}
+        {% set resource = row.resource %}
+        <tr data-status="{{ resource.status }}" data-search="{{ (resource.name ~ ' ' ~ resource.vmid ~ ' ' ~ resource.node ~ ' ' ~ resource.remote)|lower }}">
+          <td><strong>{{ resource.name }}</strong><div class="muted small">{{ resource.id }}</div></td>
+          <td>{{ "LXC" if resource.type == "pve-lxc" else "QEMU" }}</td>
+          <td>{{ resource.remote }}<div class="muted small">{{ resource.node or "—" }}</div></td>
+          <td>{{ resource.vmid }}</td>
+          <td><span class="pill {{ resource.status }}">{{ resource.status }}</span></td>
+          <td class="actions">
+            <button class="action-button start" data-resource="{{ resource.id }}" data-name="{{ resource.name }}" data-action="start" {% if not power_enabled or not row.actions.start %}disabled{% endif %}>Start</button>
+            <button class="action-button shutdown" data-resource="{{ resource.id }}" data-name="{{ resource.name }}" data-action="shutdown" {% if not power_enabled or not row.actions.shutdown %}disabled{% endif %}>Shutdown</button>
+            <button class="action-button danger" data-resource="{{ resource.id }}" data-name="{{ resource.name }}" data-action="stop" {% if not power_enabled or not row.actions.stop %}disabled{% endif %}>Hard stop</button>
+          </td>
+        </tr>
+      {% else %}
+        <tr><td class="empty" colspan="6">No PVE guests were returned by PDM.</td></tr>
+      {% endfor %}
+      </tbody>
+    </table>
+  </div>
+</section>
+
+<script>
+(() => {
+  const search = document.getElementById('power-search');
+  const status = document.getElementById('power-status');
+  const rows = [...document.querySelectorAll('#power-table tbody tr[data-status]')];
+  const visible = document.getElementById('power-visible');
+  const message = document.getElementById('power-message');
+  const apply = () => {
+    const query = search.value.trim().toLowerCase();
+    let count = 0;
+    for (const row of rows) {
+      const show = (!query || row.dataset.search.includes(query)) && (!status.value || row.dataset.status === status.value);
+      row.hidden = !show;
+      if (show) count += 1;
+    }
+    visible.textContent = `${count} visible`;
+  };
+  search.addEventListener('input', apply);
+  status.addEventListener('change', apply);
+
+  for (const button of document.querySelectorAll('.action-button:not([disabled])')) {
+    button.addEventListener('click', async () => {
+      const action = button.dataset.action;
+      const name = button.dataset.name;
+      let confirmation = null;
+      if (action === 'stop') {
+        confirmation = window.prompt(`Hard stop is immediate. Type the exact resource name to confirm: ${name}`);
+        if (confirmation !== name) {
+          if (confirmation !== null) window.alert('Confirmation did not match. No action was sent.');
+          return;
+        }
+      } else if (!window.confirm(`${action === 'start' ? 'Start' : 'Gracefully shut down'} ${name}?`)) {
+        return;
+      }
+      const buttons = [...button.closest('tr').querySelectorAll('.action-button')];
+      buttons.forEach(item => item.disabled = true);
+      message.hidden = false;
+      message.className = 'operation-message pending';
+      message.textContent = `${action} requested for ${name}; waiting for PDM read-back verification…`;
+      try {
+        const response = await fetch('/api/v1/infrastructure/power', {
+          method: 'POST',
+          headers: {'Content-Type': 'application/json'},
+          body: JSON.stringify({resource_id: button.dataset.resource, action, confirmation})
+        });
+        const payload = await response.json();
+        if (!response.ok) throw new Error(payload.detail || `HTTP ${response.status}`);
+        message.className = 'operation-message success';
+        message.textContent = `${payload.resource_name}: ${payload.action} verified; observed state is ${payload.observed_status}. Refreshing…`;
+        window.setTimeout(() => window.location.reload(), 900);
+      } catch (error) {
+        message.className = 'operation-message error';
+        message.textContent = error.message;
+        buttons.forEach(item => item.disabled = false);
+      }
+    });
+  }
+})();
+</script>
+{% endblock %}
