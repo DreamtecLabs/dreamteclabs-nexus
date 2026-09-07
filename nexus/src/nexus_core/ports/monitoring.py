@@ -14,6 +14,23 @@ class MonitoringTarget:
     site: str
     state: str
     downtime_id: str | None = None
+    health_metric: str = "up"
+
+
+@dataclass(frozen=True, slots=True)
+class MetricSample:
+    value: float
+    timestamp_ms: int
+
+
+@dataclass(frozen=True, slots=True)
+class MonitoringStatus:
+    target_id: str
+    status: str
+    metric: str
+    value: float | None = None
+    timestamp_ms: int | None = None
+    detail: str | None = None
 
 
 class MonitoringRepository(Protocol):
@@ -30,6 +47,20 @@ class AlertingProvider(Protocol):
     async def create_maintenance(self, target: MonitoringTarget) -> str: ...
 
     async def delete_maintenance(self, downtime_id: str) -> None: ...
+
+
+class MetricsProvider(Protocol):
+    async def latest_metric(
+        self,
+        *,
+        metric_name: str,
+        filter_expression: str | None = None,
+        lookback_seconds: int = 900,
+    ) -> MetricSample | None: ...
+
+
+class RuleProvider(Protocol):
+    async def ensure_notify_rules(self) -> list[dict[str, object]]: ...
 
 
 class TelemetryRuntime(Protocol):
