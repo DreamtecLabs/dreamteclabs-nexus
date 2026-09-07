@@ -28,6 +28,7 @@ concurrency:
 permissions:
   contents: read
   actions: read
+  issues: write
   pull-requests: write
 
 jobs:
@@ -41,19 +42,28 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          # A prior attempt's build container can be left running (e.g.
-          # cancelled by this workflow's own concurrency group) and keep
-          # writing root-owned files into the bind-mounted workspace after
-          # the job that started it is gone. Stop any such stragglers first,
-          # then delete the workspace contents outright instead of chowning
-          # them: checkout re-clones from scratch either way, and deletion
-          # as root sidesteps edge cases a recursive chown can trip on
-          # (partial writes, temp dirs mid-rename).
-          docker ps -q --filter label=nexus-ci-build | xargs -r docker kill
+
+          # Only stop a stale Nexus build that is mounted on this runner
+          # agent's workspace. Multiple runner agents can share one host;
+          # killing every nexus-ci-build container can terminate a healthy
+          # build owned by another agent and surfaces as exit 137.
+          while read -r cid; do
+            [[ -n "$cid" ]] || continue
+            source="$(docker inspect -f '{{range .Mounts}}{{if eq .Destination "/workspace"}}{{.Source}}{{end}}{{end}}' "$cid" 2>/dev/null || true)"
+            if [[ "$source" == "$GITHUB_WORKSPACE" ]]; then
+              docker kill "$cid"
+            fi
+          done < <(docker ps -q --filter label=nexus-ci-build=1)
+
+          # Delete previous contents as root, then restore ownership of the
+          # workspace directory itself. Deleting only its children is not
+          # sufficient when a prior container changed the mount-point owner.
           docker run --rm \
+            -e HOST_UID="$(id -u)" \
+            -e HOST_GID="$(id -g)" \
             -v "$GITHUB_WORKSPACE:/workspace" \
             debian:trixie \
-            find /workspace -mindepth 1 -delete
+            sh -ec 'find /workspace -mindepth 1 -delete; chown "$HOST_UID:$HOST_GID" /workspace'
 
       - name: Checkout
         uses: actions/checkout@v4
@@ -71,7 +81,7 @@ jobs:
           else
             changed="$(git show --pretty='' --name-only HEAD)"
           fi
-          if printf '%s\n' "$changed" | grep -q '^ui/'; then
+          if printf '%s\n' "$changed" | grep -Eq '^(ui/|tools/nexus/build-ui-container\.sh$|\.github/workflows/nexus-ui\.yml$)'; then
             echo 'ui_changed=true' >> "$GITHUB_OUTPUT"
           else
             echo 'ui_changed=false' >> "$GITHUB_OUTPUT"
@@ -147,25 +157,34 @@ jobs:
     if: needs.boundary.outputs.ui_changed == 'true'
     runs-on: self-hosted
     timeout-minutes: 45
+    concurrency:
+      group: nexus-ui-package-build
+      cancel-in-progress: false
     steps:
       - name: Recover workspace ownership
         shell: bash
         run: |
           set -euo pipefail
-          docker ps -q --filter label=nexus-ci-build | xargs -r docker kill
+
+          while read -r cid; do
+            [[ -n "$cid" ]] || continue
+            source="$(docker inspect -f '{{range .Mounts}}{{if eq .Destination "/workspace"}}{{.Source}}{{end}}{{end}}' "$cid" 2>/dev/null || true)"
+            if [[ "$source" == "$GITHUB_WORKSPACE" ]]; then
+              docker kill "$cid"
+            fi
+          done < <(docker ps -q --filter label=nexus-ci-build=1)
+
           docker run --rm \
+            -e HOST_UID="$(id -u)" \
+            -e HOST_GID="$(id -g)" \
             -v "$GITHUB_WORKSPACE:/workspace" \
             debian:trixie \
-            find /workspace -mindepth 1 -delete
+            sh -ec 'find /workspace -mindepth 1 -delete; chown "$HOST_UID:$HOST_GID" /workspace'
 
       - name: Free disk space
         shell: bash
         run: |
           set -euo pipefail
-          # Long-running Debian Trixie builds on a persistent (non-ephemeral)
-          # runner accumulate stopped containers and dangling image layers
-          # across PRs until the disk fills mid-build. Reclaim that space
-          # before every heavy build instead of waiting for it to bite.
           docker container prune -f
           docker image prune -af
           docker builder prune -af
@@ -189,24 +208,81 @@ jobs:
 
       - name: Build package in Debian Trixie
         id: package_build
-        continue-on-error: true
         shell: bash
         run: |
-          set -o pipefail
+          set -u
           mkdir -p artifacts
+          diagnostics_dir="$RUNNER_TEMP/nexus-ui-build-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}"
+          rm -rf "$diagnostics_dir"
+          mkdir -p "$diagnostics_dir"
+
+          run_build() {
+            docker run --rm \
+              --label nexus-ci-build=1 \
+              --memory=7g \
+              -e HOST_UID="$(id -u)" \
+              -e HOST_GID="$(id -g)" \
+              -e CARGO_TARGET_DIR=/workspace/.cache/ui-target \
+              -v "$GITHUB_WORKSPACE:/workspace" \
+              -w /workspace \
+              debian:trixie \
+              bash tools/nexus/build-ui-container.sh
+          }
+
+          attempt=1
+          max_attempts=3
+          build_failed=false
+          build_status=0
+
+          while true; do
+            echo "Nexus UI package build attempt ${attempt}/${max_attempts}"
+            attempt_log="$diagnostics_dir/build-attempt-${attempt}.log"
+            set +e
+            set -o pipefail
+            run_build 2>&1 | tee "$attempt_log"
+            status=${PIPESTATUS[0]}
+            set +o pipefail
+            set -e
+            mkdir -p artifacts
+            cp "$attempt_log" artifacts/build.log
+
+            if [[ "$status" -eq 0 ]]; then
+              break
+            fi
+
+            if [[ "$status" -ne 137 || "$attempt" -ge "$max_attempts" ]]; then
+              build_failed=true
+              build_status="$status"
+              break
+            fi
+
+            echo "Build was killed with exit 137; restoring this workspace and retrying after runner pressure clears."
+            docker run --rm \
+              -v "$GITHUB_WORKSPACE:/workspace" \
+              debian:trixie \
+              chown -R "$(id -u):$(id -g)" /workspace
+            docker container prune -f
+            docker builder prune -f
+            sleep 90
+            attempt=$((attempt + 1))
+          done
+
+          echo "build_failed=$build_failed" >> "$GITHUB_OUTPUT"
+          echo "build_status=$build_status" >> "$GITHUB_OUTPUT"
+          exit 0
+
+      - name: Restore workspace ownership after build
+        if: always()
+        shell: bash
+        run: |
+          set -euo pipefail
           docker run --rm \
-            --label nexus-ci-build=1 \
-            --memory=7g \
-            -e HOST_UID="$(id -u)" \
-            -e HOST_GID="$(id -g)" \
-            -e CARGO_TARGET_DIR=/workspace/.cache/ui-target \
             -v "$GITHUB_WORKSPACE:/workspace" \
-            -w /workspace \
             debian:trixie \
-            bash tools/nexus/build-ui-container.sh 2>&1 | tee artifacts/build.log
+            chown -R "$(id -u):$(id -g)" /workspace
 
       - name: Publish build failure diagnostics
-        if: steps.package_build.outcome == 'failure' && github.event_name == 'pull_request'
+        if: always() && steps.package_build.outputs.build_failed == 'true' && github.event_name == 'pull_request'
         uses: actions/github-script@v7
         with:
           script: |
@@ -217,7 +293,7 @@ jobs:
             const start = errorStart >= 0 ? Math.max(0, errorStart - 35) : Math.max(0, lines.length - 120);
             const excerpt = lines.slice(start, Math.min(lines.length, start + 120)).join('\n').slice(-50000);
             const marker = '<!-- nexus-ui-build-diagnostics -->';
-            const body = `${marker}\n### Nexus UI build diagnostics\n\nCommit: \`${context.sha}\`\n\n\`\`\`text\n${excerpt}\n\`\`\``;
+            const body = `${marker}\n### Nexus UI build diagnostics\n\nCommit: \`${context.sha}\`\nBuild exit status: \`${{ steps.package_build.outputs.build_status }}\`\n\n\`\`\`text\n${excerpt}\n\`\`\``;
             const { data: comments } = await github.rest.issues.listComments({
               owner: context.repo.owner,
               repo: context.repo.repo,
@@ -242,10 +318,14 @@ jobs:
             }
 
       - name: Fail when package build fails
-        if: steps.package_build.outcome == 'failure'
-        run: exit 1
+        if: always() && steps.package_build.outputs.build_failed == 'true'
+        shell: bash
+        run: |
+          echo "Nexus UI package build failed with exit status ${{ steps.package_build.outputs.build_status }}" >&2
+          exit 1
 
       - name: Validate artifact provenance
+        if: steps.package_build.outputs.build_failed == 'false'
         shell: bash
         run: |
           set -euo pipefail
@@ -254,6 +334,7 @@ jobs:
           dpkg-deb --info artifacts/proxmox-datacenter-manager-ui_*.deb >/dev/null
 
       - name: Upload commit-addressed package
+        if: steps.package_build.outputs.build_failed == 'false'
         uses: actions/upload-artifact@v4
         with:
           name: nexus-pdm-ui-${{ github.sha }}
