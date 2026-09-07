@@ -33,6 +33,8 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         verify_tls=settings.pdm_verify_tls,
         health_path=settings.pdm_health_path,
         timeout_seconds=settings.provider_timeout_seconds,
+        api_token_id=settings.pdm_api_token_id,
+        api_token_secret=settings.pdm_api_token_secret,
     )
 
     monitoring_repository = JsonMonitoringRepository(settings.monitoring_inventory_path)
