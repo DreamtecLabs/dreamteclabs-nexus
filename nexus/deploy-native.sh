@@ -27,18 +27,28 @@ create_venv() {
   python3 -m venv .venv
 }
 
-if [[ ! -x .venv/bin/python ]]; then
-  if ! create_venv; then
-    if command -v apt-get >/dev/null 2>&1; then
-      echo "Python venv support is missing; installing python3-venv..." >&2
-      apt-get update
-      DEBIAN_FRONTEND=noninteractive apt-get install -y python3-venv
-      create_venv
-    else
-      echo "Python venv support is required. Install the venv package for the active Python version." >&2
-      exit 1
-    fi
+ensure_venv() {
+  if create_venv && [[ -x .venv/bin/python ]] && .venv/bin/python -m pip --version >/dev/null 2>&1; then
+    return 0
   fi
+
+  if command -v apt-get >/dev/null 2>&1; then
+    echo "Python venv/pip support is missing; installing python3-venv..." >&2
+    apt-get update
+    DEBIAN_FRONTEND=noninteractive apt-get install -y python3-venv
+    create_venv
+    .venv/bin/python -m pip --version >/dev/null 2>&1 || {
+      echo "Python virtual environment was created without pip." >&2
+      exit 1
+    }
+  else
+    echo "Python venv/pip support is required. Install the venv package for the active Python version." >&2
+    exit 1
+  fi
+}
+
+if [[ ! -x .venv/bin/python || ! -x .venv/bin/pip ]] || ! .venv/bin/python -m pip --version >/dev/null 2>&1; then
+  ensure_venv
 fi
 
 .venv/bin/python -m pip install --upgrade pip
