@@ -1,10 +1,12 @@
 from __future__ import annotations
 
 from typing import Any
+from urllib.parse import quote
 
 import httpx
 
 from nexus_core.ports.infrastructure import (
+    POWER_ACTIONS,
     InfrastructureRemoteError,
     InfrastructureResource,
     InfrastructureSnapshot,
@@ -95,6 +97,53 @@ class PdmProvider:
         except (KeyError, TypeError, ValueError) as exc:
             raise RuntimeError("PDM resources API returned an unsupported payload") from exc
 
+    async def execute_power_action(
+        self,
+        resource: InfrastructureResource,
+        action: str,
+    ) -> str | None:
+        action = action.strip().lower()
+        if action not in POWER_ACTIONS:
+            raise RuntimeError(f"PDM power action '{action}' is not supported")
+        if resource.type == "pve-qemu":
+            guest_kind = "qemu"
+        elif resource.type == "pve-lxc":
+            guest_kind = "lxc"
+        else:
+            raise RuntimeError(f"PDM power operations do not support resource type '{resource.type}'")
+        if resource.vmid is None:
+            raise RuntimeError("PDM power operation requires a VMID")
+
+        remote = quote(resource.remote, safe="")
+        path = f"/api2/json/pve/remotes/{remote}/{guest_kind}/{resource.vmid}/{action}"
+        body: dict[str, object] = {}
+        if resource.node:
+            body["node"] = resource.node
+
+        try:
+            async with self._client() as client:
+                response = await client.post(path, json=body)
+                response.raise_for_status()
+                payload = response.json()
+        except httpx.HTTPStatusError as exc:
+            raise RuntimeError(f"PDM power API returned HTTP {exc.response.status_code} for {action}") from exc
+        except httpx.HTTPError as exc:
+            raise RuntimeError(f"PDM power API failed for {action}: {type(exc).__name__}") from exc
+        except ValueError as exc:
+            raise RuntimeError("PDM power API returned invalid JSON") from exc
+
+        data = payload.get("data") if isinstance(payload, dict) else None
+        if data is None:
+            return None
+        if isinstance(data, str):
+            return data
+        if isinstance(data, dict):
+            for key in ("upid", "task", "id"):
+                value = data.get(key)
+                if isinstance(value, str) and value.strip():
+                    return value.strip()
+        return str(data)
+
     @classmethod
     def _normalize_resources(cls, remote_groups: list[object]) -> InfrastructureSnapshot:
         resources: list[InfrastructureResource] = []
@@ -161,7 +210,6 @@ class PdmProvider:
     @classmethod
     def _canonical_resource_type(cls, raw_type: str, raw: dict[str, Any]) -> str:
         if raw_type == "node":
-            # PVE nodes expose `node`; PBS nodes expose `name` in the PDM resource model.
             return "pve-node" if cls._optional_string(raw.get("node")) else "pbs-node"
         return cls._canonical_types.get(raw_type, raw_type)
 
