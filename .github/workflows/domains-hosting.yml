@@ -99,7 +99,7 @@ jobs:
             echo "rust=false" >> "$GITHUB_OUTPUT"
           fi
 
-          if grep -Eq '^(server/src/api/nexus/|server/src/api/mod\.rs$|Cargo\.toml$|Cargo\.lock$|services/nexus-domains-helper$|services/prometheus-blackbox-exporter-nexus\.conf$|services/Makefile$|debian/control$|debian/nexus-icmp-collector\.service$|debian/proxmox-datacenter-manager\.install$|debian/proxmox-datacenter-manager.postinst$|tools/nexus/build-backend-container\.sh$)' "$changed_files"; then
+          if grep -Eq '^(server/src/api/nexus/|server/src/api/mod\.rs$|Cargo\.toml$|Cargo\.lock$|services/nexus-domains-helper$|services/prometheus-blackbox-exporter-nexus\.conf$|services/Makefile$|debian/control$|debian/nexus-icmp-collector\.service$|debian/proxmox-datacenter-manager\.install$|debian/proxmox-datacenter-manager\.postinst$|tools/nexus/build-backend-container\.sh$)' "$changed_files"; then
             echo "package=true" >> "$GITHUB_OUTPUT"
           else
             echo "package=false" >> "$GITHUB_OUTPUT"
@@ -217,3 +217,76 @@ jobs:
           docker image prune -af
           docker builder prune -af
           df -h /
+
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          submodules: recursive
+
+      - name: Restore backend Cargo cache
+        uses: actions/cache@v4
+        with:
+          path: .cache/backend-target
+          key: backend-cargo-${{ runner.os }}-${{ hashFiles('Cargo.lock', 'Cargo.toml', 'debian/control') }}-${{ github.sha }}
+          restore-keys: |
+            backend-cargo-${{ runner.os }}-${{ hashFiles('Cargo.lock', 'Cargo.toml', 'debian/control') }}-
+            backend-cargo-${{ runner.os }}-
+
+      - name: Build PDM backend package
+        id: package
+        shell: bash
+        run: |
+          set -o pipefail
+          mkdir -p artifacts packages
+          docker run --rm \
+            --label nexus-ci-build=1 \
+            -e HOST_UID="$(id -u)" \
+            -e HOST_GID="$(id -g)" \
+            -e CARGO_TARGET_DIR=/workspace/.cache/backend-target \
+            -v "$GITHUB_WORKSPACE:/workspace" \
+            -w /workspace \
+            debian:trixie \
+            bash tools/nexus/build-backend-container.sh 2>&1 | tee artifacts/backend-package-build.log
+          cp -v ../*.deb packages/ 2>/dev/null || true
+          cp -v ../*.changes packages/ 2>/dev/null || true
+          cp -v ../*.buildinfo packages/ 2>/dev/null || true
+          find . -maxdepth 2 -type f \( -name '*.deb' -o -name '*.changes' -o -name '*.buildinfo' \) -exec cp -v {} packages/ \; 2>/dev/null || true
+          find packages -maxdepth 1 -type f -print
+          test -n "$(find packages -maxdepth 1 -type f -name '*.deb' -print -quit)"
+
+      - name: Upload PDM backend package
+        uses: actions/upload-artifact@v4
+        with:
+          name: pdm-backend-${{ github.sha }}
+          path: packages/*
+          if-no-files-found: error
+          retention-days: 14
+
+  publish-diagnostics:
+    name: Publish package diagnostics
+    if: ${{ always() && needs.validate.result == 'success' && needs.package-backend.result == 'failure' }}
+    needs:
+      - validate
+      - package-backend
+    runs-on: self-hosted
+    steps:
+      - name: Recover workspace ownership
+        shell: bash
+        run: |
+          set -euo pipefail
+          docker ps -q --filter label=nexus-ci-build | xargs -r docker kill
+          docker run --rm \
+            -v "$GITHUB_WORKSPACE:/workspace" \
+            debian:trixie \
+            find /workspace -mindepth 1 -delete
+
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 1
+
+      - name: Explain package build failure
+        shell: bash
+        run: |
+          echo 'Backend package build failed. Inspect the Build PDM backend package job logs and rerun after correcting the underlying failure.'
