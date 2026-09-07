@@ -73,6 +73,7 @@ async def power_center(request: Request) -> HTMLResponse:
             "remote_errors": snapshot.remote_errors,
             "summary": summary,
             "power_enabled": service.power_operations_enabled,
+            "history": service.list_recent_power_operations(10),
         },
     )
 
