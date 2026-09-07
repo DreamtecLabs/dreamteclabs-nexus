@@ -1,3 +1,4 @@
+from contextlib import asynccontextmanager
 from dataclasses import asdict
 from pathlib import Path
 
@@ -45,7 +46,12 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     else:
         alerting = UnconfiguredAlertingProvider()
 
-    app = FastAPI(title="DreamtecLabs Nexus", version="0.3.0")
+    @asynccontextmanager
+    async def lifespan(_: FastAPI):
+        await telemetry_runtime.reconcile(monitoring_repository.list_targets())
+        yield
+
+    app = FastAPI(title="DreamtecLabs Nexus", version="0.3.1", lifespan=lifespan)
     app.state.provider_service = ProviderService({pdm.name: pdm})
     app.state.monitoring_service = MonitoringService(monitoring_repository, alerting, telemetry_runtime)
 
