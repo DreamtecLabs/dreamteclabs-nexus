@@ -1,0 +1,21 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>{% block title %}DreamtecLabs Nexus{% endblock %}</title>
+  <link rel="stylesheet" href="/static/nexus.css">
+</head>
+<body>
+  <header class="topbar">
+    <a class="brand" href="/">DreamtecLabs <strong>Nexus</strong></a>
+    <nav>
+      <a href="/">Overview</a>
+      <a href="/monitoring">Monitoring</a>
+    </nav>
+  </header>
+  <main class="page">
+    {% block content %}{% endblock %}
+  </main>
+</body>
+</html>
