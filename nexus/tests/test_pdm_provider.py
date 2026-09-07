@@ -26,7 +26,7 @@ async def test_pdm_provider_reports_healthy() -> None:
 
 
 @pytest.mark.asyncio
-async def test_pdm_provider_contains_failure_at_adapter_boundary() -> None:
+async def test_pdm_provider_reports_safe_http_failure_detail() -> None:
     async def handler(_: httpx.Request) -> httpx.Response:
         return httpx.Response(503)
 
@@ -42,4 +42,4 @@ async def test_pdm_provider_contains_failure_at_adapter_boundary() -> None:
 
     assert status.provider == "pdm"
     assert status.healthy is False
-    assert status.detail == "HTTPStatusError"
+    assert status.detail == "HTTP 503 on /api2/json/version"
