@@ -71,7 +71,7 @@ jobs:
           else
             changed="$(git show --pretty='' --name-only HEAD)"
           fi
-          if printf '%s\n' "$changed" | grep -q '^ui/'; then
+          if printf '%s\n' "$changed" | grep -Eq '^(ui/|tools/nexus/|\.github/workflows/nexus-ui\.yml$)'; then
             echo 'ui_changed=true' >> "$GITHUB_OUTPUT"
           else
             echo 'ui_changed=false' >> "$GITHUB_OUTPUT"
@@ -162,14 +162,18 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          # Long-running Debian Trixie builds on a persistent (non-ephemeral)
-          # runner accumulate stopped containers and dangling image layers
-          # across PRs until the disk fills mid-build. Reclaim that space
-          # before every heavy build instead of waiting for it to bite.
+          # Long-running builds share this persistent runner with other jobs.
+          # Reclaim only Docker objects that are not in use, including stale
+          # anonymous volumes; otherwise overlay storage can leave too little
+          # headroom even before apt or Cargo starts.
           docker container prune -f
           docker image prune -af
           docker builder prune -af
+          docker volume prune -f
+          docker system df
           df -h /
+          df -ih /
+          free -h
 
       - name: Checkout
         uses: actions/checkout@v4
@@ -187,6 +191,21 @@ jobs:
             ui-cargo-${{ runner.os }}-${{ hashFiles('Cargo.lock', 'Cargo.toml', 'ui/Cargo.toml', 'ui/debian/control') }}-
             ui-cargo-${{ runner.os }}-
 
+      - name: Prune non-reusable Cargo cache
+        shell: bash
+        run: |
+          set -euo pipefail
+          # Incremental state is both large and unsuitable for this release CI
+          # build. Old cache entries were able to consume the runner filesystem
+          # while rustc wrote query-cache.bin even though the source was valid.
+          # Keep reusable compiled dependencies, but drop all incremental trees.
+          if [[ -d .cache/ui-target ]]; then
+            find .cache/ui-target -type d -name incremental -prune -exec rm -rf {} +
+            du -sh .cache/ui-target || true
+          fi
+          df -h /
+          df -ih /
+
       - name: Build package in Debian Trixie
         id: package_build
         continue-on-error: true
@@ -196,9 +215,12 @@ jobs:
           mkdir -p artifacts
           docker run --rm \
             --label nexus-ci-build=1 \
-            --memory=7g \
+            --memory=6g \
+            --memory-swap=7g \
             -e HOST_UID="$(id -u)" \
             -e HOST_GID="$(id -g)" \
+            -e CARGO_BUILD_JOBS=1 \
+            -e CARGO_INCREMENTAL=0 \
             -e CARGO_TARGET_DIR=/workspace/.cache/ui-target \
             -v "$GITHUB_WORKSPACE:/workspace" \
             -w /workspace \
