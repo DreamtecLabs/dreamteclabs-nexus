@@ -30,6 +30,10 @@ class Settings(BaseSettings):
     def monitoring_file_sd_path(self) -> Path:
         return self.data_dir / "prometheus" / "monitoring-targets.json"
 
+    @property
+    def power_audit_path(self) -> Path:
+        return self.data_dir / "power-operations.jsonl"
+
 
 @lru_cache
 def get_settings() -> Settings:
