@@ -12,6 +12,7 @@ from nexus_core.providers.file_sd import FileSdTelemetryRuntime
 from nexus_core.providers.pdm import PdmProvider
 from nexus_core.providers.signoz import SigNozAlertingProvider
 from nexus_core.repositories.monitoring_json import JsonMonitoringRepository
+from nexus_core.services.infrastructure import InfrastructureService
 from nexus_core.services.monitoring import MonitoringService
 from nexus_core.services.providers import ProviderService
 from nexus_core.web import router as web_router
@@ -53,8 +54,9 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         await telemetry_runtime.reconcile(monitoring_repository.list_targets())
         yield
 
-    app = FastAPI(title="DreamtecLabs Nexus", version="0.3.1", lifespan=lifespan)
+    app = FastAPI(title="DreamtecLabs Nexus", version="0.4.0", lifespan=lifespan)
     app.state.provider_service = ProviderService({pdm.name: pdm})
+    app.state.infrastructure_service = InfrastructureService(pdm)
     app.state.monitoring_service = MonitoringService(monitoring_repository, alerting, telemetry_runtime)
 
     static_dir = Path(__file__).resolve().parent / "static"
@@ -76,6 +78,18 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             "provider": status.provider,
             "healthy": status.healthy,
             "detail": status.detail,
+        }
+
+    @app.get("/api/v1/infrastructure/resources")
+    async def infrastructure_resources(request: Request) -> dict[str, object]:
+        try:
+            snapshot = await request.app.state.infrastructure_service.list_resources()
+        except RuntimeError as exc:
+            raise HTTPException(status_code=503, detail=str(exc)) from exc
+        return {
+            "resources": [asdict(resource) for resource in snapshot.resources],
+            "remote_errors": [asdict(error) for error in snapshot.remote_errors],
+            "count": len(snapshot.resources),
         }
 
     @app.get("/api/v1/monitoring/targets")

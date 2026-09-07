@@ -1,10 +1,20 @@
+from __future__ import annotations
+
+from typing import Any
+
 import httpx
 
+from nexus_core.ports.infrastructure import (
+    InfrastructureRemoteError,
+    InfrastructureResource,
+    InfrastructureSnapshot,
+)
 from nexus_core.ports.providers import ProviderStatus
 
 
 class PdmProvider:
     name = "pdm"
+    _resources_path = "/api2/json/resources/list"
 
     def __init__(
         self,
@@ -32,15 +42,18 @@ class PdmProvider:
             }
         return {}
 
+    def _client(self) -> httpx.AsyncClient:
+        return httpx.AsyncClient(
+            base_url=self._base_url,
+            verify=self._verify_tls,
+            timeout=self._timeout_seconds,
+            transport=self._transport,
+            headers=self._headers(),
+        )
+
     async def health(self) -> ProviderStatus:
         try:
-            async with httpx.AsyncClient(
-                base_url=self._base_url,
-                verify=self._verify_tls,
-                timeout=self._timeout_seconds,
-                transport=self._transport,
-                headers=self._headers(),
-            ) as client:
+            async with self._client() as client:
                 response = await client.get(self._health_path)
                 response.raise_for_status()
         except httpx.HTTPStatusError as exc:
@@ -53,3 +66,109 @@ class PdmProvider:
             return ProviderStatus(provider=self.name, healthy=False, detail=type(exc).__name__)
 
         return ProviderStatus(provider=self.name, healthy=True)
+
+    async def list_resources(self) -> InfrastructureSnapshot:
+        try:
+            async with self._client() as client:
+                response = await client.get(self._resources_path)
+                response.raise_for_status()
+                payload = response.json()
+        except httpx.HTTPStatusError as exc:
+            raise RuntimeError(
+                f"PDM resources API returned HTTP {exc.response.status_code}"
+            ) from exc
+        except httpx.HTTPError as exc:
+            raise RuntimeError(f"PDM resources API failed: {type(exc).__name__}") from exc
+        except ValueError as exc:
+            raise RuntimeError("PDM resources API returned invalid JSON") from exc
+
+        try:
+            remote_groups = payload["data"]
+            if not isinstance(remote_groups, list):
+                raise TypeError("data is not a list")
+            return self._normalize_resources(remote_groups)
+        except (KeyError, TypeError, ValueError) as exc:
+            raise RuntimeError("PDM resources API returned an unsupported payload") from exc
+
+    @classmethod
+    def _normalize_resources(cls, remote_groups: list[object]) -> InfrastructureSnapshot:
+        resources: list[InfrastructureResource] = []
+        remote_errors: list[InfrastructureRemoteError] = []
+
+        for raw_group in remote_groups:
+            if not isinstance(raw_group, dict):
+                raise TypeError("remote group is not an object")
+            remote = cls._required_string(raw_group, "remote")
+            error = raw_group.get("error")
+            if isinstance(error, str) and error.strip():
+                remote_errors.append(
+                    InfrastructureRemoteError(remote=remote, detail=error.strip()[:500])
+                )
+
+            raw_resources = raw_group.get("resources", [])
+            if not isinstance(raw_resources, list):
+                raise TypeError("resources is not a list")
+            for raw_resource in raw_resources:
+                if not isinstance(raw_resource, dict):
+                    raise TypeError("resource is not an object")
+                resources.append(cls._normalize_resource(remote, raw_resource))
+
+        resources.sort(key=lambda item: (item.remote.casefold(), item.type, item.name.casefold(), item.id))
+        remote_errors.sort(key=lambda item: item.remote.casefold())
+        return InfrastructureSnapshot(tuple(resources), tuple(remote_errors))
+
+    @classmethod
+    def _normalize_resource(cls, remote: str, raw: dict[str, Any]) -> InfrastructureResource:
+        resource_type = cls._required_string(raw, "type")
+        resource_id = cls._required_string(raw, "id")
+        status = cls._optional_string(raw.get("status")) or "unknown"
+
+        if resource_type in {"qemu", "lxc"}:
+            name = cls._optional_string(raw.get("name")) or resource_id
+        elif resource_type == "node":
+            name = (
+                cls._optional_string(raw.get("node"))
+                or cls._optional_string(raw.get("name"))
+                or resource_id
+            )
+        elif resource_type == "storage":
+            name = cls._optional_string(raw.get("storage")) or resource_id
+        elif resource_type == "network":
+            name = cls._optional_string(raw.get("network")) or resource_id
+        elif resource_type == "datastore":
+            name = cls._optional_string(raw.get("name")) or resource_id
+        else:
+            name = cls._optional_string(raw.get("name")) or resource_id
+
+        vmid = raw.get("vmid")
+        if not isinstance(vmid, int) or isinstance(vmid, bool):
+            vmid = None
+        template = raw.get("template")
+        if not isinstance(template, bool):
+            template = None
+
+        return InfrastructureResource(
+            id=resource_id,
+            provider=cls.name,
+            remote=remote,
+            type=resource_type,
+            name=name,
+            status=status,
+            node=cls._optional_string(raw.get("node")),
+            vmid=vmid,
+            template=template,
+        )
+
+    @staticmethod
+    def _required_string(raw: dict[str, Any], key: str) -> str:
+        value = raw.get(key)
+        if not isinstance(value, str) or not value.strip():
+            raise ValueError(f"missing {key}")
+        return value.strip()
+
+    @staticmethod
+    def _optional_string(value: object) -> str | None:
+        if not isinstance(value, str):
+            return None
+        normalized = value.strip()
+        return normalized or None
