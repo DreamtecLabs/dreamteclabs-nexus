@@ -24,6 +24,31 @@ async def index(request: Request) -> HTMLResponse:
     )
 
 
+@router.get("/infrastructure", response_class=HTMLResponse)
+async def infrastructure(request: Request) -> HTMLResponse:
+    snapshot = await request.app.state.infrastructure_service.list_resources()
+    resources = list(snapshot.resources)
+    guest_types = {"pve-lxc", "pve-qemu"}
+    guests = [resource for resource in resources if resource.type in guest_types]
+    summary = {
+        "total": len(resources),
+        "guests": len(guests),
+        "running": sum(resource.status == "running" for resource in guests),
+        "stopped": sum(resource.status == "stopped" for resource in guests),
+        "nodes": sum(resource.type == "pve-node" for resource in resources),
+        "pbs": sum(resource.type in {"pbs-node", "pbs-datastore"} for resource in resources),
+    }
+    return _templates.TemplateResponse(
+        request=request,
+        name="infrastructure.html",
+        context={
+            "resources": resources,
+            "remote_errors": snapshot.remote_errors,
+            "summary": summary,
+        },
+    )
+
+
 @router.get("/monitoring", response_class=HTMLResponse)
 async def monitoring(request: Request) -> HTMLResponse:
     targets = request.app.state.monitoring_service.list_targets()
