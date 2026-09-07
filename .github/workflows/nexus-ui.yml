@@ -170,6 +170,7 @@ jobs:
           docker image prune -af
           docker builder prune -af
           df -h /
+          free -h
 
       - name: Checkout
         uses: actions/checkout@v4
@@ -196,9 +197,11 @@ jobs:
           mkdir -p artifacts
           docker run --rm \
             --label nexus-ci-build=1 \
-            --memory=7g \
+            --memory=5g \
+            --memory-swap=5g \
             -e HOST_UID="$(id -u)" \
             -e HOST_GID="$(id -g)" \
+            -e CARGO_BUILD_JOBS=2 \
             -e CARGO_TARGET_DIR=/workspace/.cache/ui-target \
             -v "$GITHUB_WORKSPACE:/workspace" \
             -w /workspace \
