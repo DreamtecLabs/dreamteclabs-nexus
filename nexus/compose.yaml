@@ -1,0 +1,26 @@
+services:
+  nexus-core:
+    build: .
+    network_mode: host
+    restart: unless-stopped
+    environment:
+      NEXUS_ENVIRONMENT: ${NEXUS_ENVIRONMENT:-production}
+      NEXUS_DATA_DIR: /var/lib/dreamteclabs-nexus
+      PDM_BASE_URL: ${PDM_BASE_URL:-https://127.0.0.1:8443}
+      PDM_VERIFY_TLS: ${PDM_VERIFY_TLS:-false}
+      PDM_HEALTH_PATH: ${PDM_HEALTH_PATH:-/api2/json/version}
+      NEXUS_SIGNOZ_URL: ${NEXUS_SIGNOZ_URL:-http://192.168.0.47:8080}
+      NEXUS_SIGNOZ_API_KEY: ${NEXUS_SIGNOZ_API_KEY:-}
+    volumes:
+      - /var/lib/dreamteclabs-nexus:/var/lib/dreamteclabs-nexus
+
+  nexus-otel:
+    image: otel/opentelemetry-collector-contrib:0.139.0
+    network_mode: host
+    restart: unless-stopped
+    command: ["--config=/etc/otelcol-contrib/config.yaml"]
+    environment:
+      SIGNOZ_OTLP_ENDPOINT: ${SIGNOZ_OTLP_ENDPOINT:-192.168.0.47:4317}
+    volumes:
+      - ./observability/otel-collector.yaml:/etc/otelcol-contrib/config.yaml:ro
+      - /var/lib/dreamteclabs-nexus:/var/lib/dreamteclabs-nexus:ro
