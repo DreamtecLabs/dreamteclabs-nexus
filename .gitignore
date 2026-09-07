@@ -20,3 +20,12 @@
 /ui/target
 Cargo.lock
 proxmox-datacenter-manager-[0-9].*/
+
+# Nexus control plane
+/nexus/.venv/
+/nexus/.pytest_cache/
+/nexus/.mypy_cache/
+/nexus/.ruff_cache/
+/nexus/**/__pycache__/
+/nexus/**/*.pyc
+/nexus/.env
