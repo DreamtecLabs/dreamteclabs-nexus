@@ -162,13 +162,15 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          # Long-running Debian Trixie builds on a persistent (non-ephemeral)
-          # runner accumulate stopped containers and dangling image layers
-          # across PRs until the disk fills mid-build. Reclaim that space
-          # before every heavy build instead of waiting for it to bite.
+          # Long-running builds share this persistent runner with other jobs.
+          # Reclaim only Docker objects that are not in use, including stale
+          # anonymous volumes; otherwise overlay storage can leave too little
+          # headroom even before apt or Cargo starts.
           docker container prune -f
           docker image prune -af
           docker builder prune -af
+          docker volume prune -f
+          docker system df
           df -h /
           free -h
 
