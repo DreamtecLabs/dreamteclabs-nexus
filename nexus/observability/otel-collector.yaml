@@ -15,6 +15,9 @@ exporters:
       insecure: true
 
 service:
+  telemetry:
+    metrics:
+      level: none
   pipelines:
     metrics:
       receivers:
