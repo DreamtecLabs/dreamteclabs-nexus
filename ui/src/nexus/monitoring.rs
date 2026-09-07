@@ -231,12 +231,13 @@ pub fn nexus_monitoring() -> Html {
     let down = probes
         .iter()
         .filter(|(id, probe)| {
-            devices.iter().any(|device| {
-                device.get("id").and_then(Value::as_str) == Some(id.as_str())
-            }) && !probe
-                .get("reachable")
-                .and_then(Value::as_bool)
-                .unwrap_or(false)
+            devices
+                .iter()
+                .any(|device| device.get("id").and_then(Value::as_str) == Some(id.as_str()))
+                && !probe
+                    .get("reachable")
+                    .and_then(Value::as_bool)
+                    .unwrap_or(false)
         })
         .count();
 
