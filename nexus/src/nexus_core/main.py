@@ -12,6 +12,7 @@ from nexus_core.providers.file_sd import FileSdTelemetryRuntime
 from nexus_core.providers.pdm import PdmProvider
 from nexus_core.providers.signoz import SigNozAlertingProvider
 from nexus_core.repositories.monitoring_json import JsonMonitoringRepository
+from nexus_core.repositories.power_audit_jsonl import JsonlPowerAuditRepository
 from nexus_core.services.infrastructure import (
     InfrastructureResourceNotFound,
     InfrastructureService,
@@ -52,6 +53,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
 
     monitoring_repository = JsonMonitoringRepository(settings.monitoring_inventory_path)
     telemetry_runtime = FileSdTelemetryRuntime(settings.monitoring_file_sd_path)
+    power_audit_repository = JsonlPowerAuditRepository(settings.power_audit_path)
     if settings.signoz_api_key:
         alerting = SigNozAlertingProvider(
             base_url=settings.signoz_url,
@@ -73,6 +75,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         power_operations_enabled=settings.power_operations_enabled,
         verification_attempts=settings.power_verification_attempts,
         verification_interval_seconds=settings.power_verification_interval_seconds,
+        audit_repository=power_audit_repository,
     )
     app.state.monitoring_service = MonitoringService(monitoring_repository, alerting, telemetry_runtime)
 
@@ -104,6 +107,11 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             "count": len(snapshot.resources),
             "power_operations_enabled": request.app.state.infrastructure_service.power_operations_enabled,
         }
+
+    @app.get("/api/v1/infrastructure/power/history")
+    async def infrastructure_power_history(request: Request, limit: int = 25) -> dict[str, object]:
+        entries = request.app.state.infrastructure_service.list_recent_power_operations(limit)
+        return {"operations": [asdict(entry) for entry in entries], "count": len(entries)}
 
     @app.post("/api/v1/infrastructure/power")
     async def infrastructure_power(payload: PowerActionInput, request: Request) -> dict[str, object]:
