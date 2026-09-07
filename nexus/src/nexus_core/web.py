@@ -24,13 +24,16 @@ async def index(request: Request) -> HTMLResponse:
     )
 
 
-@router.get("/infrastructure", response_class=HTMLResponse)
-async def infrastructure(request: Request) -> HTMLResponse:
+async def _infrastructure_snapshot(request: Request):
     try:
-        snapshot = await request.app.state.infrastructure_service.list_resources()
+        return await request.app.state.infrastructure_service.list_resources()
     except RuntimeError as exc:
         raise HTTPException(status_code=503, detail=str(exc)) from exc
 
+
+@router.get("/infrastructure", response_class=HTMLResponse)
+async def infrastructure(request: Request) -> HTMLResponse:
+    snapshot = await _infrastructure_snapshot(request)
     resources = list(snapshot.resources)
     guests = [resource for resource in resources if resource.type in {"pve-lxc", "pve-qemu"}]
     summary = {
@@ -45,6 +48,32 @@ async def infrastructure(request: Request) -> HTMLResponse:
         request=request,
         name="infrastructure.html",
         context={"resources": resources, "remote_errors": snapshot.remote_errors, "summary": summary},
+    )
+
+
+@router.get("/infrastructure/power", response_class=HTMLResponse)
+async def power_center(request: Request) -> HTMLResponse:
+    snapshot = await _infrastructure_snapshot(request)
+    service = request.app.state.infrastructure_service
+    guests = [resource for resource in snapshot.resources if resource.type in {"pve-lxc", "pve-qemu"}]
+    rows = [
+        {"resource": resource, "actions": service.available_power_actions(resource)}
+        for resource in guests
+    ]
+    summary = {
+        "guests": len(guests),
+        "running": sum(resource.status == "running" for resource in guests),
+        "stopped": sum(resource.status == "stopped" for resource in guests),
+    }
+    return _templates.TemplateResponse(
+        request=request,
+        name="power.html",
+        context={
+            "rows": rows,
+            "remote_errors": snapshot.remote_errors,
+            "summary": summary,
+            "power_enabled": service.power_operations_enabled,
+        },
     )
 
 
