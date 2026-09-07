@@ -22,9 +22,25 @@ fi
 
 install -d -m 0755 /var/lib/dreamteclabs-nexus/prometheus
 
-if [[ ! -x .venv/bin/python ]]; then
+create_venv() {
+  rm -rf .venv
   python3 -m venv .venv
+}
+
+if [[ ! -x .venv/bin/python ]]; then
+  if ! create_venv; then
+    if command -v apt-get >/dev/null 2>&1; then
+      echo "Python venv support is missing; installing python3-venv..." >&2
+      apt-get update
+      DEBIAN_FRONTEND=noninteractive apt-get install -y python3-venv
+      create_venv
+    else
+      echo "Python venv support is required. Install the venv package for the active Python version." >&2
+      exit 1
+    fi
+  fi
 fi
+
 .venv/bin/python -m pip install --upgrade pip
 .venv/bin/python -m pip install .
 
