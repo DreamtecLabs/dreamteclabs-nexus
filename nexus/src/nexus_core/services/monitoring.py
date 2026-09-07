@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import ipaddress
 import re
+from dataclasses import replace
 
 from nexus_core.ports.monitoring import AlertingProvider, MonitoringRepository, MonitoringTarget, TelemetryRuntime
 
@@ -56,10 +57,10 @@ class MonitoringService:
 
         if normalized_state == "maintenance" and not downtime_id:
             downtime_id = await self._alerting.create_maintenance(target)
-            target = MonitoringTarget(**{**target.__dict__, "downtime_id": downtime_id})
+            target = replace(target, downtime_id=downtime_id)
         elif normalized_state != "maintenance" and downtime_id:
             await self._alerting.delete_maintenance(downtime_id)
-            target = MonitoringTarget(**{**target.__dict__, "downtime_id": None})
+            target = replace(target, downtime_id=None)
 
         stored = self._repository.upsert_target(target)
         await self._telemetry.reconcile(self._repository.list_targets())
