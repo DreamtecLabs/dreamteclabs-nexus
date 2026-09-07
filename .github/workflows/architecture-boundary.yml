@@ -1,0 +1,26 @@
+name: Architecture Boundary
+
+on:
+  pull_request:
+    paths:
+      - 'server/src/api/nexus/**'
+      - 'ui/src/nexus/**'
+      - 'nexus/**'
+      - 'docs/architecture/**'
+      - '.github/workflows/architecture-boundary.yml'
+
+permissions:
+  contents: read
+
+jobs:
+  pdm-provider-boundary:
+    runs-on: ubuntu-latest
+    timeout-minutes: 2
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Enforce PDM provider boundary
+        shell: bash
+        run: bash nexus/tools/check-pdm-provider-boundary.sh "${{ github.event.pull_request.base.sha }}" "${{ github.sha }}"
