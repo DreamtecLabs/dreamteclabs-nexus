@@ -1,0 +1,104 @@
+name: PDM Provider
+
+on:
+  pull_request:
+    paths:
+      - 'server/src/api/pve/**'
+      - 'server/src/connection.rs'
+      - 'tools/nexus/build-backend-container.sh'
+      - '.github/workflows/pdm-provider.yml'
+  push:
+    branches:
+      - master
+    paths:
+      - 'server/src/api/pve/**'
+      - 'server/src/connection.rs'
+      - 'tools/nexus/build-backend-container.sh'
+      - '.github/workflows/pdm-provider.yml'
+  workflow_dispatch:
+
+concurrency:
+  group: pdm-provider-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  backend-package:
+    runs-on: self-hosted
+    timeout-minutes: 60
+    steps:
+      - name: Recover workspace ownership
+        shell: bash
+        run: |
+          set -euo pipefail
+          docker ps -q --filter label=nexus-ci-build | xargs -r docker kill
+          docker run --rm -v "$GITHUB_WORKSPACE:/workspace" debian:trixie find /workspace -mindepth 1 -delete
+
+      - name: Free disk space
+        shell: bash
+        run: |
+          set -euo pipefail
+          docker container prune -f
+          docker image prune -af
+          docker builder prune -af
+          docker volume prune -f
+          df -h /
+
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 2
+          submodules: recursive
+
+      - name: Check Rust formatting
+        shell: bash
+        run: |
+          docker run --rm -v "$GITHUB_WORKSPACE:/workspace" -w /workspace rust:latest \
+            cargo fmt --all -- --check
+
+      - name: Restore backend Cargo cache
+        uses: actions/cache@v4
+        with:
+          path: .cache/backend-target
+          key: pdm-provider-${{ runner.os }}-${{ hashFiles('Cargo.lock', 'Cargo.toml', 'server/Cargo.toml', 'debian/control') }}
+          restore-keys: |
+            pdm-provider-${{ runner.os }}-
+
+      - name: Build PDM backend package
+        shell: bash
+        run: |
+          set -euo pipefail
+          docker run --rm \
+            --label nexus-ci-build=1 \
+            --memory=6g \
+            --memory-swap=7g \
+            -e HOST_UID="$(id -u)" \
+            -e HOST_GID="$(id -g)" \
+            -e CARGO_BUILD_JOBS=1 \
+            -e CARGO_INCREMENTAL=0 \
+            -e CARGO_TARGET_DIR=/workspace/.cache/backend-target \
+            -v "$GITHUB_WORKSPACE:/workspace" \
+            -w /workspace \
+            debian:trixie \
+            bash tools/nexus/build-backend-container.sh
+
+      - name: Validate artifact provenance
+        shell: bash
+        run: |
+          set -euo pipefail
+          test "$(cat artifacts/backend/BUILD_COMMIT)" = "$GITHUB_SHA"
+          (cd artifacts/backend && sha256sum --check SHA256SUMS)
+          dpkg-deb --info artifacts/backend/proxmox-datacenter-manager_*.deb >/dev/null
+
+      - name: Upload commit-addressed PDM backend
+        uses: actions/upload-artifact@v4
+        with:
+          name: nexus-pdm-provider-${{ github.sha }}
+          path: |
+            artifacts/backend/*.deb
+            artifacts/backend/SHA256SUMS
+            artifacts/backend/BUILD_COMMIT
+          if-no-files-found: error
+          retention-days: 30
