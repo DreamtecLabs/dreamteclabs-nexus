@@ -1,5 +1,37 @@
 <!doctype html>
 <html lang="en">
-<head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1"><meta name="color-scheme" content="light"><title>{% block title %}DreamtecLabs Nexus{% endblock %}</title><link rel="stylesheet" href="/static/nexus.css"></head>
-<body><header class="topbar"><a class="brand" href="/"><span class="brand-mark">N</span><span>DreamtecLabs <strong>Nexus</strong></span></a><nav><a href="/">Overview</a><a href="/infrastructure/estate">Estate</a><a href="/infrastructure">Inventory</a><a href="/infrastructure/power">Power</a><a href="/monitoring">Monitoring</a><a href="/domains">Domains & Hosting</a></nav></header><main class="page">{% block content %}{% endblock %}</main></body>
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="color-scheme" content="light">
+  <title>{% block title %}DreamtecLabs Nexus{% endblock %}</title>
+  <link rel="stylesheet" href="/static/nexus.css">
+</head>
+<body>
+<header class="app-header">
+  <div class="header-main">
+    <a class="brand" href="/">
+      <span class="brand-mark">N</span>
+      <span class="brand-copy"><span>DreamtecLabs <strong>Nexus</strong></span><small>Your Infrastructure. Unified.</small></span>
+    </a>
+    <div class="header-tools">
+      <div class="global-search">⌕ <span>Search resources, domains, metrics...</span><kbd>⌘ K</kbd></div>
+      <span class="header-icon">♧</span>
+      <div class="profile"><span class="avatar">CK</span><span><strong>Claudio Kaist</strong><small>Administrator</small></span></div>
+    </div>
+  </div>
+  <div class="header-nav-row">
+    <nav class="primary-nav">
+      <a class="{{ 'active' if request.url.path == '/' else '' }}" href="/">⌂ Overview</a>
+      <a class="{{ 'active' if request.url.path.startswith('/infrastructure/estate') else '' }}" href="/infrastructure/estate">▤ Estate</a>
+      <a class="{{ 'active' if request.url.path == '/infrastructure' or request.url.path.startswith('/infrastructure/resource') else '' }}" href="/infrastructure">▦ Inventory</a>
+      <a class="{{ 'active' if request.url.path.startswith('/infrastructure/power') else '' }}" href="/infrastructure/power">◉ Power</a>
+      <a class="{{ 'active' if request.url.path.startswith('/monitoring') else '' }}" href="/monitoring">▥ Monitoring</a>
+      <a class="{{ 'active' if request.url.path.startswith('/domains') else '' }}" href="/domains">◉ Domains & Hosting</a>
+    </nav>
+    <div class="header-status"><span class="status-dot"></span> Nexus Online</div>
+  </div>
+</header>
+<main class="page">{% block content %}{% endblock %}</main>
+</body>
 </html>
