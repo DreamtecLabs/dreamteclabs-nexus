@@ -7,15 +7,15 @@ This document classifies legacy capabilities before implementation work begins. 
 | Legacy capability | Decision | vNext owner | Provider / source | Notes |
 |---|---|---|---|---|
 | Dashboard / operational overview | Redesign | Platform + UI | Nexus domain APIs | Recover useful overview concepts; do not reuse NiceGUI page coupling. |
-| Assets / inventory | Migrate | Infrastructure | PDM | **In progress:** canonical PDM-backed read model and standalone searchable Inventory workspace are implemented. PDM is authoritative for Proxmox/PBS runtime state; Nexus may persist annotations or business metadata only. |
+| Assets / inventory | Migrate | Infrastructure | PDM | **Implemented:** canonical PDM-backed read model and standalone searchable Inventory workspace are production-validated. PDM is authoritative for Proxmox/PBS runtime state; Nexus may persist annotations or business metadata only. |
 | Resource detail / relationships | Redesign | Infrastructure | PDM + Nexus metadata | Preserve useful resource-centric UX; rebuild relationship model around stable provider identities. |
-| Resource Power Center | Migrate | Infrastructure | PDM | **In progress:** vNext supports state-aware start, graceful shutdown and hard stop for QEMU/LXC through the PDM port, with configuration gating, hard-stop confirmation, post-mutation read-back and durable operation audit. Reboot remains deferred until task lifecycle verification is modeled rather than reporting success from a still-running pre-reboot state. |
+| Resource Power Center | Migrate | Infrastructure | PDM | **Implemented, gated:** vNext supports state-aware start, graceful shutdown and hard stop for QEMU/LXC through the PDM port, with configuration gating, hard-stop confirmation, post-mutation read-back and durable operation audit. Reboot remains deferred until task lifecycle verification is modeled. |
 | Direct Proxmox providers / `proxmoxer` paths | Replace by provider | Infrastructure | PDM | Do not migrate direct cluster-specific access into vNext. |
 | Infrastructure graph | Redesign | Infrastructure | PDM + Nexus metadata | Build only after inventory/resource identities are stable. |
 | Discovery | Replace by provider / Redesign | Infrastructure | PDM first | Avoid a second broad discovery engine where PDM already knows the estate. Add non-PDM discovery only for explicit gaps. |
-| Monitoring center | Migrate | Observability | SigNoz | Preserve operational UX, but queries/alerts/maintenance belong to SigNoz. |
-| Prometheus target ownership | Redesign | Observability | Nexus target intent + OTel/SigNoz | Keep the simple target inventory/file_sd mechanism already validated in current Nexus Core. |
-| Alertmanager provider / silence reconciler | Replace by provider | Observability | SigNoz planned maintenance | Do not carry forward a second alert/suppression control plane. |
+| Monitoring center | Migrate | Observability | SigNoz | **Implemented:** standalone Monitoring Control Center exposes SigNoz-backed live health, provider readiness, lifecycle controls and per-target health metrics. |
+| Prometheus target ownership | Redesign | Observability | Nexus target intent + OTel/SigNoz | **Implemented:** Nexus target inventory/file_sd remains the single target-intent path; only enabled targets are published and stable Nexus labels are attached. |
+| Alertmanager provider / silence reconciler | Replace by provider | Observability | SigNoz planned maintenance | **Implemented for maintenance:** target Maintenance/Resume uses SigNoz planned-maintenance schedules; no second Alertmanager/silence control plane is carried forward. |
 | Blackbox exporter management | Redesign | Observability | SigNoz/OTel where required | Add probe-style monitoring only when a concrete service requires it. |
 | Monitoring monkey patches / embedded/navigation patches | Discard | — | — | These are compatibility debt, not product capability. |
 | IPAM | Redesign | Infrastructure / Networking | provider to be selected | Recover UX and use cases only after defining an authoritative IPAM source. Do not migrate ambiguous ownership. |
@@ -44,9 +44,9 @@ This document classifies legacy capabilities before implementation work begins. 
 ## Migration order
 
 1. Foundation and enforceable architecture boundaries. **Done.**
-2. Infrastructure inventory/resource identities through PDM. **Production read model validated; Inventory workspace implemented.**
-3. Infrastructure power/lifecycle operations through PDM. **Core safe Power Center slice implemented; additional lifecycle operations remain intentionally deferred.**
-4. Observability read model through SigNoz, followed by maintenance and alert management.
+2. Infrastructure inventory/resource identities through PDM. **Done and production validated.**
+3. Infrastructure power/lifecycle operations through PDM. **Implemented behind an explicit production safety gate.**
+4. Observability read model through SigNoz and planned maintenance. **Implemented; production deployment validation pending.** Alert-rule authoring remains a separate follow-up because Nexus must not guess provider contracts or notification-channel policy.
 5. Resource-centric UI expansion using domain APIs only.
 6. Domains & Hosting through Cloudflare/Hestia.
 7. Applications/services, backups and networking/IPAM after authoritative data ownership is decided.

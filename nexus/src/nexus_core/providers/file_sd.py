@@ -29,6 +29,7 @@ class FileSdTelemetryRuntime:
                         "nexus_resource_type": "service",
                         "nexus_site": target.site,
                         "nexus_monitoring_profile": "prometheus",
+                        "nexus_health_metric": target.health_metric,
                     },
                 }
             )
