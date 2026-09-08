@@ -56,10 +56,7 @@ async def power_center(request: Request) -> HTMLResponse:
     snapshot = await _infrastructure_snapshot(request)
     service = request.app.state.infrastructure_service
     guests = [resource for resource in snapshot.resources if resource.type in {"pve-lxc", "pve-qemu"}]
-    rows = [
-        {"resource": resource, "actions": service.available_power_actions(resource)}
-        for resource in guests
-    ]
+    rows = [{"resource": resource, "actions": service.available_power_actions(resource)} for resource in guests]
     summary = {
         "guests": len(guests),
         "running": sum(resource.status == "running" for resource in guests),
@@ -80,9 +77,17 @@ async def power_center(request: Request) -> HTMLResponse:
 
 @router.get("/monitoring", response_class=HTMLResponse)
 async def monitoring(request: Request) -> HTMLResponse:
-    targets = request.app.state.monitoring_service.list_targets()
+    service = request.app.state.monitoring_service
+    targets = service.list_targets()
+    statuses = await service.list_statuses()
+    status_by_id = {status.target_id: status for status in statuses}
+    rows = [{"target": target, "status": status_by_id.get(target.id)} for target in targets]
     return _templates.TemplateResponse(
         request=request,
         name="monitoring.html",
-        context={"targets": targets},
+        context={
+            "rows": rows,
+            "summary": service.summarize(statuses),
+            "provider": await service.provider_diagnostics(),
+        },
     )

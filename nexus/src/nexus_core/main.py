@@ -7,10 +7,10 @@ from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field
 
 from nexus_core.config import Settings, get_settings
-from nexus_core.providers.alerting import UnconfiguredAlertingProvider
+from nexus_core.providers.alerting import UnconfiguredAlertingProvider, UnconfiguredMetricsProvider
 from nexus_core.providers.file_sd import FileSdTelemetryRuntime
 from nexus_core.providers.pdm import PdmProvider
-from nexus_core.providers.signoz import SigNozAlertingProvider
+from nexus_core.providers.signoz import SigNozAlertingProvider, SigNozMetricsProvider
 from nexus_core.repositories.monitoring_json import JsonMonitoringRepository
 from nexus_core.repositories.power_audit_jsonl import JsonlPowerAuditRepository
 from nexus_core.services.infrastructure import (
@@ -32,6 +32,11 @@ class MonitoringTargetInput(BaseModel):
     metrics_path: str = Field(default="/metrics", max_length=128)
     site: str = Field(min_length=1, max_length=64)
     state: str = "enabled"
+    health_metric: str = Field(default="up", min_length=1, max_length=128)
+
+
+class MonitoringStateInput(BaseModel):
+    state: str = Field(min_length=1, max_length=16)
 
 
 class PowerActionInput(BaseModel):
@@ -60,15 +65,21 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             api_key=settings.signoz_api_key,
             timeout_seconds=settings.provider_timeout_seconds,
         )
+        metrics = SigNozMetricsProvider(
+            base_url=settings.signoz_url,
+            api_key=settings.signoz_api_key,
+            timeout_seconds=settings.provider_timeout_seconds,
+        )
     else:
         alerting = UnconfiguredAlertingProvider()
+        metrics = UnconfiguredMetricsProvider()
 
     @asynccontextmanager
     async def lifespan(_: FastAPI):
         await telemetry_runtime.reconcile(monitoring_repository.list_targets())
         yield
 
-    app = FastAPI(title="DreamtecLabs Nexus", version="0.5.0", lifespan=lifespan)
+    app = FastAPI(title="DreamtecLabs Nexus", version="0.6.0", lifespan=lifespan)
     app.state.provider_service = ProviderService({pdm.name: pdm})
     app.state.infrastructure_service = InfrastructureService(
         pdm,
@@ -77,7 +88,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         verification_interval_seconds=settings.power_verification_interval_seconds,
         audit_repository=power_audit_repository,
     )
-    app.state.monitoring_service = MonitoringService(monitoring_repository, alerting, telemetry_runtime)
+    app.state.monitoring_service = MonitoringService(monitoring_repository, alerting, telemetry_runtime, metrics)
 
     static_dir = Path(__file__).resolve().parent / "static"
     app.mount("/static", StaticFiles(directory=str(static_dir)), name="static")
@@ -134,10 +145,45 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         targets = request.app.state.monitoring_service.list_targets()
         return {"targets": [asdict(target) for target in targets], "count": len(targets)}
 
+    @app.get("/api/v1/monitoring/status")
+    async def monitoring_status(request: Request) -> dict[str, object]:
+        service = request.app.state.monitoring_service
+        statuses = await service.list_statuses()
+        diagnostics = await service.provider_diagnostics()
+        return {
+            "statuses": [asdict(status) for status in statuses],
+            "summary": service.summarize(statuses),
+            "provider": asdict(diagnostics),
+        }
+
+    @app.get("/api/v1/monitoring/targets/{target_id}/status")
+    async def monitoring_target_status(target_id: str, request: Request) -> dict[str, object]:
+        service = request.app.state.monitoring_service
+        target = next((item for item in service.list_targets() if item.id == target_id), None)
+        if target is None:
+            raise HTTPException(status_code=404, detail=f"monitoring target '{target_id}' was not found")
+        return asdict(await service.get_status(target))
+
     @app.put("/api/v1/monitoring/targets")
     async def upsert_monitoring_target(payload: MonitoringTargetInput, request: Request) -> dict[str, object]:
         try:
             target = await request.app.state.monitoring_service.upsert_target(**payload.model_dump())
+        except ValueError as exc:
+            raise HTTPException(status_code=422, detail=str(exc)) from exc
+        except RuntimeError as exc:
+            raise HTTPException(status_code=503, detail=str(exc)) from exc
+        return asdict(target)
+
+    @app.patch("/api/v1/monitoring/targets/{target_id}/state")
+    async def set_monitoring_target_state(
+        target_id: str,
+        payload: MonitoringStateInput,
+        request: Request,
+    ) -> dict[str, object]:
+        try:
+            target = await request.app.state.monitoring_service.set_state(target_id, payload.state)
+        except KeyError as exc:
+            raise HTTPException(status_code=404, detail=f"monitoring target '{target_id}' was not found") from exc
         except ValueError as exc:
             raise HTTPException(status_code=422, detail=str(exc)) from exc
         except RuntimeError as exc:
