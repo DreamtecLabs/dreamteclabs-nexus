@@ -7,6 +7,7 @@ from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field
 
 from nexus_core.config import Settings, get_settings
+from nexus_core.provisioning_api import install_provisioning
 from nexus_core.providers.alerting import UnconfiguredAlertingProvider, UnconfiguredMetricsProvider
 from nexus_core.providers.domain_diagnostics import PublicDomainDiagnosticsProvider
 from nexus_core.providers.domain_helper import DomainHelperProvider
@@ -76,11 +77,12 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         await telemetry_runtime.reconcile(monitoring_repository.list_targets())
         yield
 
-    app = FastAPI(title="DreamtecLabs Nexus", version="0.8.0", lifespan=lifespan)
+    app = FastAPI(title="DreamtecLabs Nexus", version="0.9.0", lifespan=lifespan)
     app.state.provider_service = ProviderService({pdm.name: pdm})
     app.state.infrastructure_service = InfrastructureService(pdm, power_operations_enabled=settings.power_operations_enabled, verification_attempts=settings.power_verification_attempts, verification_interval_seconds=settings.power_verification_interval_seconds, audit_repository=power_audit_repository)
     app.state.monitoring_service = MonitoringService(monitoring_repository, alerting, telemetry_runtime, metrics)
     app.state.domain_service = DomainService(domain_repository, domain_diagnostics, domain_orchestrator, domain_audit, operations_enabled=settings.domains_operations_enabled, verification_attempts=settings.domains_verification_attempts, verification_interval_seconds=settings.domains_verification_interval_seconds)
+    install_provisioning(app, settings, app.state.infrastructure_service, app.state.monitoring_service)
     static_dir = Path(__file__).resolve().parent / "static"
     app.mount("/static", StaticFiles(directory=str(static_dir)), name="static")
     app.include_router(web_router)
