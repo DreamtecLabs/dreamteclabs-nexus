@@ -8,8 +8,7 @@ use proxmox_sortable_macro::sortable;
 use serde_json::Value;
 
 use pdm_api_types::{
-    NODE_SCHEMA, PRIV_RESOURCE_AUDIT, PRIV_RESOURCE_MANAGE, RemoteUpid,
-    remotes::REMOTE_ID_SCHEMA,
+    NODE_SCHEMA, PRIV_RESOURCE_AUDIT, PRIV_RESOURCE_MANAGE, RemoteUpid, remotes::REMOTE_ID_SCHEMA,
 };
 use pve_api_types::{NodeConfig, StorageContent};
 
