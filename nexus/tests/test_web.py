@@ -40,8 +40,8 @@ def test_overview_uses_approved_compact_dashboard_shell(tmp_path: Path) -> None:
         "Infrastructure Estate",
         "Recent Activity",
         "System Status",
-        "Domains &amp; Hosting",
-        "Upcoming &amp; Alerts",
+        "Domains & Hosting",
+        "Upcoming & Alerts",
     ):
         assert text in response.text
     assert "Operations without coupling product logic to PDM" not in response.text
