@@ -57,13 +57,7 @@ class PdmProvider:
         return {}
 
     def _client(self) -> httpx.AsyncClient:
-        return httpx.AsyncClient(
-            base_url=self._base_url,
-            verify=self._verify_tls,
-            timeout=self._timeout_seconds,
-            transport=self._transport,
-            headers=self._headers(),
-        )
+        return httpx.AsyncClient(base_url=self._base_url, verify=self._verify_tls, timeout=self._timeout_seconds, transport=self._transport, headers=self._headers())
 
     async def health(self) -> ProviderStatus:
         try:
@@ -88,7 +82,6 @@ class PdmProvider:
             raise RuntimeError(f"PDM resources API failed: {type(exc).__name__}") from exc
         except ValueError as exc:
             raise RuntimeError("PDM resources API returned invalid JSON") from exc
-
         try:
             remote_groups = payload["data"]
             if not isinstance(remote_groups, list):
@@ -97,11 +90,7 @@ class PdmProvider:
         except (KeyError, TypeError, ValueError) as exc:
             raise RuntimeError("PDM resources API returned an unsupported payload") from exc
 
-    async def execute_power_action(
-        self,
-        resource: InfrastructureResource,
-        action: str,
-    ) -> str | None:
+    async def execute_power_action(self, resource: InfrastructureResource, action: str) -> str | None:
         action = action.strip().lower()
         if action not in POWER_ACTIONS:
             raise RuntimeError(f"PDM power action '{action}' is not supported")
@@ -113,13 +102,11 @@ class PdmProvider:
             raise RuntimeError(f"PDM power operations do not support resource type '{resource.type}'")
         if resource.vmid is None:
             raise RuntimeError("PDM power operation requires a VMID")
-
         remote = quote(resource.remote, safe="")
         path = f"/api2/json/pve/remotes/{remote}/{guest_kind}/{resource.vmid}/{action}"
         body: dict[str, object] = {}
         if resource.node:
             body["node"] = resource.node
-
         try:
             async with self._client() as client:
                 response = await client.post(path, json=body)
@@ -131,7 +118,6 @@ class PdmProvider:
             raise RuntimeError(f"PDM power API failed for {action}: {type(exc).__name__}") from exc
         except ValueError as exc:
             raise RuntimeError("PDM power API returned invalid JSON") from exc
-
         data = payload.get("data") if isinstance(payload, dict) else None
         if data is None:
             return None
@@ -172,7 +158,6 @@ class PdmProvider:
         resource_id = cls._required_string(raw, "id")
         resource_type = cls._canonical_resource_type(raw_type, raw)
         status = cls._optional_string(raw.get("status")) or "unknown"
-
         if resource_type in {"pve-qemu", "pve-lxc"}:
             name = cls._optional_string(raw.get("name")) or resource_id
         elif resource_type == "pve-node":
@@ -187,14 +172,12 @@ class PdmProvider:
             name = cls._optional_string(raw.get("name")) or cls._name_from_id(resource_id) or resource_id
         else:
             name = cls._optional_string(raw.get("name")) or cls._name_from_id(resource_id) or resource_id
-
         vmid = raw.get("vmid")
         if not isinstance(vmid, int) or isinstance(vmid, bool):
             vmid = None
         template = raw.get("template")
         if not isinstance(template, bool):
             template = None
-
         return InfrastructureResource(
             id=resource_id,
             provider=cls.name,
@@ -205,6 +188,13 @@ class PdmProvider:
             node=cls._optional_string(raw.get("node")),
             vmid=vmid,
             template=template,
+            cpu_usage=cls._optional_float(raw.get("cpu")),
+            cpu_total=cls._optional_float(raw.get("maxcpu")),
+            memory_used_bytes=cls._optional_int(raw.get("mem")),
+            memory_total_bytes=cls._optional_int(raw.get("maxmem")),
+            disk_used_bytes=cls._optional_int(raw.get("disk")),
+            disk_total_bytes=cls._optional_int(raw.get("maxdisk")),
+            uptime_seconds=cls._optional_int(raw.get("uptime")),
         )
 
     @classmethod
@@ -231,3 +221,17 @@ class PdmProvider:
             return None
         normalized = value.strip()
         return normalized or None
+
+    @staticmethod
+    def _optional_float(value: object) -> float | None:
+        if isinstance(value, bool) or not isinstance(value, (int, float)):
+            return None
+        result = float(value)
+        return result if result >= 0 else None
+
+    @staticmethod
+    def _optional_int(value: object) -> int | None:
+        if isinstance(value, bool) or not isinstance(value, (int, float)):
+            return None
+        result = int(value)
+        return result if result >= 0 else None
