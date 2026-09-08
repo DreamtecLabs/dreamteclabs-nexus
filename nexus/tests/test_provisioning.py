@@ -78,8 +78,13 @@ class FakeInfrastructure:
         return InfrastructureSnapshot(self.resources)
 
 
-class CreatedInfrastructure:
+class AppearingInfrastructure:
+    def __init__(self) -> None:
+        self.calls = 0
     async def list_resources(self) -> InfrastructureSnapshot:
+        self.calls += 1
+        if self.calls == 1:
+            return InfrastructureSnapshot(())
         return InfrastructureSnapshot((InfrastructureResource(id="remote/homelab/guest/150", provider="pdm", remote="homelab", type="pve-lxc", name="demo-01", status="running", node="pve-01", vmid=150),))
 
 
@@ -106,7 +111,7 @@ async def test_plan_rejects_duplicate_vmid_before_mutation() -> None:
 @pytest.mark.asyncio
 async def test_post_create_monitoring_failure_returns_ready_with_warnings() -> None:
     provider = FakeProvider()
-    service = ProvisioningService(provider, CreatedInfrastructure(), FakeMonitoring(fail=True), enabled=True, verification_attempts=1)
+    service = ProvisioningService(provider, AppearingInfrastructure(), FakeMonitoring(fail=True), enabled=True, verification_attempts=1)
     result = await service.provision(_request(monitoring="prometheus", advanced={"monitoring_port":9100,"monitoring_path":"/metrics"}))
     assert provider.created is True
     assert result.status == "ready-with-warnings"
