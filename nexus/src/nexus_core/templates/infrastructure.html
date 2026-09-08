@@ -1,94 +1,10 @@
 {% extends "base.html" %}
 {% block title %}Infrastructure · DreamtecLabs Nexus{% endblock %}
 {% block content %}
-<section class="page-head">
-  <div>
-    <div class="eyebrow">Infrastructure</div>
-    <h1>Inventory</h1>
-    <p class="muted">Live infrastructure inventory sourced through the PDM provider.</p>
-  </div>
-  <a class="button" href="/infrastructure/power">Open Power Center</a>
-</section>
-
-<section class="grid inventory-summary">
-  <article class="card"><span class="label">Resources</span><strong class="metric">{{ summary.total }}</strong></article>
-  <article class="card"><span class="label">Guests</span><strong class="metric">{{ summary.guests }}</strong><span class="muted small">{{ summary.running }} running · {{ summary.stopped }} stopped</span></article>
-  <article class="card"><span class="label">PVE nodes</span><strong class="metric">{{ summary.nodes }}</strong></article>
-  <article class="card"><span class="label">PBS resources</span><strong class="metric">{{ summary.pbs }}</strong></article>
-</section>
-
-{% if remote_errors %}
-<section class="card warning-card">
-  <strong>Provider warnings</strong>
-  {% for error in remote_errors %}<p class="muted small">{{ error.remote }}: {{ error.detail }}</p>{% endfor %}
-</section>
-{% endif %}
-
-<section class="toolbar card">
-  <input id="inventory-search" class="control" type="search" placeholder="Search name, VMID, node or remote…" autocomplete="off">
-  <select id="inventory-type" class="control">
-    <option value="">All resource types</option>
-    <option value="pve-lxc">LXC</option>
-    <option value="pve-qemu">QEMU VM</option>
-    <option value="pve-node">PVE node</option>
-    <option value="pve-storage">PVE storage</option>
-    <option value="pve-network">PVE network</option>
-    <option value="pbs-node">PBS node</option>
-    <option value="pbs-datastore">PBS datastore</option>
-  </select>
-  <select id="inventory-status" class="control">
-    <option value="">All statuses</option>
-    <option value="running">Running</option>
-    <option value="stopped">Stopped</option>
-    <option value="online">Online</option>
-    <option value="available">Available</option>
-    <option value="unknown">Unknown</option>
-  </select>
-  <span id="inventory-visible" class="muted small">{{ summary.total }} visible</span>
-</section>
-
-<section class="card table-card">
-  <div class="table-wrap">
-    <table id="inventory-table">
-      <thead><tr><th>Resource</th><th>Type</th><th>Remote</th><th>Node</th><th>VMID</th><th>Status</th></tr></thead>
-      <tbody>
-      {% for resource in resources %}
-        <tr data-type="{{ resource.type }}" data-status="{{ resource.status }}" data-search="{{ (resource.name ~ ' ' ~ resource.id ~ ' ' ~ resource.remote ~ ' ' ~ (resource.node or '') ~ ' ' ~ (resource.vmid or ''))|lower }}">
-          <td><strong>{{ resource.name }}</strong><div class="muted small">{{ resource.id }}</div></td>
-          <td>{{ resource.type }}</td>
-          <td>{{ resource.remote }}</td>
-          <td>{{ resource.node or "—" }}</td>
-          <td>{{ resource.vmid if resource.vmid is not none else "—" }}</td>
-          <td><span class="pill {{ resource.status }}">{{ resource.status }}</span></td>
-        </tr>
-      {% else %}
-        <tr><td class="empty" colspan="6">No infrastructure resources were returned by PDM.</td></tr>
-      {% endfor %}
-      </tbody>
-    </table>
-  </div>
-</section>
-
-<script>
-(() => {
-  const search = document.getElementById('inventory-search');
-  const type = document.getElementById('inventory-type');
-  const status = document.getElementById('inventory-status');
-  const rows = [...document.querySelectorAll('#inventory-table tbody tr[data-type]')];
-  const visible = document.getElementById('inventory-visible');
-  const apply = () => {
-    const query = search.value.trim().toLowerCase();
-    let count = 0;
-    for (const row of rows) {
-      const show = (!query || row.dataset.search.includes(query)) && (!type.value || row.dataset.type === type.value) && (!status.value || row.dataset.status === status.value);
-      row.hidden = !show;
-      if (show) count += 1;
-    }
-    visible.textContent = `${count} visible`;
-  };
-  search.addEventListener('input', apply);
-  type.addEventListener('change', apply);
-  status.addEventListener('change', apply);
-})();
-</script>
+<section class="page-head"><div><div class="eyebrow">Infrastructure</div><h1>Inventory</h1><p class="muted">Live infrastructure inventory sourced through the PDM provider.</p></div><div class="actions"><a class="button secondary" href="/infrastructure/estate">Open Estate</a><a class="button" href="/infrastructure/power">Open Power Center</a></div></section>
+<section class="grid inventory-summary"><article class="card"><span class="label">Resources</span><strong class="metric">{{ summary.total }}</strong></article><article class="card"><span class="label">Guests</span><strong class="metric">{{ summary.guests }}</strong><span class="muted small">{{ summary.running }} running · {{ summary.stopped }} stopped</span></article><article class="card"><span class="label">PVE nodes</span><strong class="metric">{{ summary.nodes }}</strong></article><article class="card"><span class="label">PBS resources</span><strong class="metric">{{ summary.pbs }}</strong></article></section>
+{% if remote_errors %}<section class="card warning-card"><strong>Provider warnings</strong>{% for error in remote_errors %}<p class="muted small">{{ error.remote }}: {{ error.detail }}</p>{% endfor %}</section>{% endif %}
+<section class="toolbar card"><input id="inventory-search" class="control" type="search" placeholder="Search name, VMID, node or remote…" autocomplete="off"><select id="inventory-type" class="control"><option value="">All resource types</option><option value="pve-lxc">LXC</option><option value="pve-qemu">QEMU VM</option><option value="pve-node">PVE node</option><option value="pve-storage">PVE storage</option><option value="pve-network">PVE network</option><option value="pbs-node">PBS node</option><option value="pbs-datastore">PBS datastore</option></select><select id="inventory-status" class="control"><option value="">All statuses</option><option value="running">Running</option><option value="stopped">Stopped</option><option value="online">Online</option><option value="available">Available</option><option value="unknown">Unknown</option></select><span id="inventory-visible" class="muted small">{{ summary.total }} visible</span></section>
+<section class="card table-card"><div class="table-wrap"><table id="inventory-table"><thead><tr><th>Resource</th><th>Type</th><th>Remote</th><th>Node</th><th>VMID</th><th>Status</th></tr></thead><tbody>{% for resource in resources %}<tr data-type="{{ resource.type }}" data-status="{{ resource.status }}" data-search="{{ (resource.name ~ ' ' ~ resource.id ~ ' ' ~ resource.remote ~ ' ' ~ (resource.node or '') ~ ' ' ~ (resource.vmid or ''))|lower }}"><td><strong><a href="/infrastructure/resource?id={{ resource.id|urlencode }}">{{ resource.name }}</a></strong><div class="muted small">{{ resource.id }}</div></td><td>{{ resource.type }}</td><td>{{ resource.remote }}</td><td>{{ resource.node or "—" }}</td><td>{{ resource.vmid if resource.vmid is not none else "—" }}</td><td><span class="pill {{ resource.status }}">{{ resource.status }}</span></td></tr>{% else %}<tr><td class="empty" colspan="6">No infrastructure resources were returned by PDM.</td></tr>{% endfor %}</tbody></table></div></section>
+<script>(()=>{const search=document.getElementById('inventory-search'),type=document.getElementById('inventory-type'),status=document.getElementById('inventory-status'),rows=[...document.querySelectorAll('#inventory-table tbody tr[data-type]')],visible=document.getElementById('inventory-visible');const apply=()=>{const query=search.value.trim().toLowerCase();let count=0;for(const row of rows){const show=(!query||row.dataset.search.includes(query))&&(!type.value||row.dataset.type===type.value)&&(!status.value||row.dataset.status===status.value);row.hidden=!show;if(show)count+=1;}visible.textContent=`${count} visible`;};search.addEventListener('input',apply);type.addEventListener('change',apply);status.addEventListener('change',apply);})();</script>
 {% endblock %}
