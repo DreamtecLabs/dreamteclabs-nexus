@@ -80,7 +80,7 @@ async fn create_guest(
     let remote_config = super::get_remote(&remotes, &remote)?;
     let client = crate::connection::make_raw_client(remote_config)?;
     let path = format!("/api2/extjs/nodes/{node}/{kind}");
-    let response = client.request(Method::POST, &path, Some(params)).await?;
+    let response = client.request(Method::POST, &path, None).await?;
     let upid: String = response.expect_json()?.data;
     super::new_remote_upid(remote, upid.parse()?).await
 }
