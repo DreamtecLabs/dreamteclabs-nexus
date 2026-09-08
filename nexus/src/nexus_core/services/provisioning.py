@@ -4,13 +4,7 @@ import asyncio
 from collections.abc import Awaitable, Callable
 
 from nexus_core.ports.infrastructure import InfrastructureResource
-from nexus_core.ports.provisioning import (
-    GuestProvisionRequest,
-    ProvisioningOptions,
-    ProvisioningProvider,
-    ProvisioningResult,
-    ProvisioningStep,
-)
+from nexus_core.ports.provisioning import GuestProvisionRequest, ProvisioningOptions, ProvisioningProvider, ProvisioningResult, ProvisioningStep
 
 
 class ProvisioningError(RuntimeError):
@@ -30,17 +24,7 @@ class ProvisioningVerificationTimeout(ProvisioningError):
 
 
 class ProvisioningService:
-    def __init__(
-        self,
-        provider: ProvisioningProvider,
-        infrastructure_service,
-        monitoring_service,
-        *,
-        enabled: bool = False,
-        verification_attempts: int = 60,
-        verification_interval_seconds: float = 1.0,
-        sleep: Callable[[float], Awaitable[None]] = asyncio.sleep,
-    ) -> None:
+    def __init__(self, provider: ProvisioningProvider, infrastructure_service, monitoring_service, *, enabled: bool = False, verification_attempts: int = 60, verification_interval_seconds: float = 1.0, sleep: Callable[[float], Awaitable[None]] = asyncio.sleep) -> None:
         self._provider = provider
         self._infrastructure = infrastructure_service
         self._monitoring = monitoring_service
@@ -62,23 +46,7 @@ class ProvisioningService:
         self._validate_selection(request, options)
         snapshot = await self._infrastructure.list_resources()
         self._ensure_available(request, snapshot.resources)
-        return {
-            "kind": request.kind,
-            "remote": request.remote,
-            "node": request.node,
-            "vmid": request.vmid,
-            "name": request.name,
-            "cpu": f"{request.cores} cores",
-            "memory_mb": request.memory_mb,
-            "disk": f"{request.disk_gb} GiB on {request.storage}",
-            "network": request.bridge,
-            "ip": request.ip_config,
-            "onboot": request.onboot,
-            "start": request.start,
-            "ssh": request.ssh_enabled,
-            "monitoring": request.monitoring,
-            "advanced_count": len(request.advanced),
-        }
+        return {"kind": request.kind, "remote": request.remote, "node": request.node, "vmid": request.vmid, "name": request.name, "cpu": f"{request.cores} cores", "memory_mb": request.memory_mb, "disk": f"{request.disk_gb} GiB on {request.storage}", "network": request.bridge, "ip": request.ip_config, "onboot": request.onboot, "start": request.start, "ssh": request.ssh_enabled, "monitoring": request.monitoring, "advanced_count": len(request.advanced)}
 
     async def provision(self, request: GuestProvisionRequest) -> ProvisioningResult:
         if not self._enabled:
@@ -86,14 +54,12 @@ class ProvisioningService:
         await self.plan(request)
         steps: list[ProvisioningStep] = []
         warnings: list[str] = []
-
         try:
             created = await self._provider.create_guest(request)
             steps.append(ProvisioningStep("create", "success", "PDM accepted the PVE guest creation task"))
         except Exception as exc:
             steps.append(ProvisioningStep("create", "failed", str(exc)))
             raise
-
         resource: InfrastructureResource | None = None
         for attempt in range(self._verification_attempts):
             snapshot = await self._infrastructure.list_resources()
@@ -103,19 +69,9 @@ class ProvisioningService:
             if attempt + 1 < self._verification_attempts:
                 await self._sleep(self._verification_interval_seconds)
         else:
-            raise ProvisioningVerificationTimeout(
-                f"PDM accepted creation of {request.name}, but Nexus could not verify the expected resource state"
-            )
-
+            raise ProvisioningVerificationTimeout(f"PDM accepted creation of {request.name}, but Nexus could not verify the expected resource state")
         assert resource is not None
-        steps.append(
-            ProvisioningStep(
-                "verify",
-                "success",
-                f"Read-back verified {resource.id} with state {resource.status}",
-            )
-        )
-
+        steps.append(ProvisioningStep("verify", "success", f"Read-back verified {resource.id} with state {resource.status}"))
         if request.ssh_enabled:
             if request.kind == "lxc" and request.ssh_public_key:
                 steps.append(ProvisioningStep("ssh", "success", "SSH public key injected into the LXC creation request"))
@@ -124,18 +80,11 @@ class ProvisioningService:
                 steps.append(ProvisioningStep("ssh", "warning", warnings[-1]))
         else:
             steps.append(ProvisioningStep("ssh", "skipped", "SSH bootstrap not selected"))
-
         monitoring_mode = request.monitoring.strip().lower()
         if monitoring_mode == "none":
             steps.append(ProvisioningStep("monitoring", "skipped", "Monitoring not selected"))
         elif monitoring_mode == "pdm":
-            steps.append(
-                ProvisioningStep(
-                    "monitoring",
-                    "success",
-                    "PDM-native state and resource telemetry are available immediately in Nexus",
-                )
-            )
+            steps.append(ProvisioningStep("monitoring", "success", "PDM-native state and resource telemetry are available immediately in Nexus"))
         elif monitoring_mode == "prometheus":
             address = self._prometheus_address(request)
             port = self._advanced_int(request.advanced.get("monitoring_port"), 9100)
@@ -145,30 +94,20 @@ class ProvisioningService:
                 warnings.append(warning)
                 steps.append(ProvisioningStep("monitoring", "warning", warning))
             else:
-                await self._monitoring.upsert_target(
-                    name=request.name,
-                    address=address,
-                    port=port,
-                    metrics_path=path,
-                    site=str(request.advanced.get("monitoring_site") or "home"),
-                    state="enabled",
-                    health_metric=str(request.advanced.get("health_metric") or "up"),
-                )
-                steps.append(ProvisioningStep("monitoring", "success", f"Prometheus target registered at {address}:{port}{path}"))
+                try:
+                    await self._monitoring.upsert_target(name=request.name, address=address, port=port, metrics_path=path, site=str(request.advanced.get("monitoring_site") or "home"), state="enabled", health_metric=str(request.advanced.get("health_metric") or "up"))
+                except Exception as exc:
+                    warning = f"Guest was created, but monitoring registration failed ({type(exc).__name__})"
+                    warnings.append(warning)
+                    steps.append(ProvisioningStep("monitoring", "warning", warning))
+                else:
+                    steps.append(ProvisioningStep("monitoring", "success", f"Prometheus target registered at {address}:{port}{path}"))
         else:
             warning = f"Unknown monitoring mode '{request.monitoring}' was ignored"
             warnings.append(warning)
             steps.append(ProvisioningStep("monitoring", "warning", warning))
-
         result_status = "ready" if not warnings else "ready-with-warnings"
-        return ProvisioningResult(
-            resource_id=resource.id,
-            resource_name=resource.name,
-            status=result_status,
-            task_reference=created.task_reference,
-            steps=tuple(steps),
-            warnings=tuple(warnings),
-        )
+        return ProvisioningResult(resource_id=resource.id, resource_name=resource.name, status=result_status, task_reference=created.task_reference, steps=tuple(steps), warnings=tuple(warnings))
 
     @staticmethod
     def _validate_request(request: GuestProvisionRequest) -> None:
