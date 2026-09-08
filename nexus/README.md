@@ -47,6 +47,16 @@ Reboot is intentionally not in this first vNext slice: a guest may remain `runni
 
 The PDM token must have only the lifecycle permissions Nexus actually needs. A token that can read inventory but cannot mutate guests is valid for normal read-only operation; keep the power gate disabled in that case.
 
+## Monitoring Control Center
+
+`/monitoring` is the standalone vNext Monitoring Control Center. Nexus owns target intent and lifecycle; the standalone OTel collector consumes Nexus-generated Prometheus file discovery; SigNoz remains authoritative for telemetry queries and planned maintenance.
+
+Every target has a Prometheus `health_metric` (default `up`). Enabled targets are queried through SigNoz `POST /api/v5/query_range` using the stable `nexus_service_id` label and are classified as `healthy`, `down` or `unknown`. Maintenance and disabled targets are not queried and are removed from active file discovery. `GET /api/v1/monitoring/status` exposes the complete live read model plus safe SigNoz service-account diagnostics; `GET /api/v1/monitoring/targets/{id}/status` exposes one target.
+
+Target lifecycle is explicit: `PATCH /api/v1/monitoring/targets/{id}/state` accepts `enabled`, `maintenance` or `disabled`. Entering maintenance first creates a service-scoped SigNoz planned-maintenance schedule and only then removes the target from active scraping. Leaving maintenance deletes that schedule before resuming discovery. Failures are fail-visible and do not silently report a successful state transition. The UI provides the same Maintenance/Resume/Disable controls for internal operations.
+
+The SigNoz API key belongs only in `.env` as `NEXUS_SIGNOZ_API_KEY`. Provider errors expose HTTP status/type diagnostics only; response bodies and credentials are never returned by the Nexus adapter.
+
 ## Runtime deployment
 
 The standalone runtime supports both Compose and the native systemd deployment used by `nexus-01`. `deploy.sh` chooses native deployment automatically when Docker Compose is unavailable. On a new host, copy `.env.example` to `.env`, set environment-specific values and keep secrets only in `.env`.
