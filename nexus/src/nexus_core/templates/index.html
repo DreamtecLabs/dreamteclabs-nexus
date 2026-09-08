@@ -1,25 +1,93 @@
 {% extends "base.html" %}
 {% block title %}Nexus Overview{% endblock %}
 {% block content %}
-<section class="hero">
-  <div>
-    <p class="eyebrow">CONTROL PLANE</p>
-    <h1>Operations without coupling product logic to PDM.</h1>
-    <p class="muted">Nexus owns orchestration. Infrastructure systems remain providers behind stable adapters.</p>
-  </div>
+<section class="kpi-grid">
+  <article class="kpi-card blue"><span class="kpi-icon">▦</span><div><span>Total Resources</span><strong>{{ summary.resources }}</strong></div></article>
+  <article class="kpi-card green"><span class="kpi-icon">▶</span><div><span>Running</span><strong>{{ summary.running }}</strong></div></article>
+  <article class="kpi-card red"><span class="kpi-icon">■</span><div><span>Stopped</span><strong>{{ summary.stopped }}</strong></div></article>
+  <article class="kpi-card purple"><span class="kpi-icon">ϟ</span><div><span>Monitoring Targets</span><strong>{{ summary.monitoring }}</strong></div></article>
+  <article class="kpi-card orange"><span class="kpi-icon">◎</span><div><span>Domains</span><strong>{{ summary.domains }}</strong></div></article>
+  <article class="kpi-card violet"><span class="kpi-icon">◉</span><div><span>Storage</span><strong>{{ summary.storage }}</strong></div></article>
 </section>
-<section class="grid">
-  <article class="card">
-    <span class="label">Monitoring targets</span>
-    <strong class="metric">{{ monitoring_count }}</strong>
-    <a href="/monitoring">Open monitoring →</a>
+
+<section class="dashboard-grid dashboard-grid-primary">
+  <article class="dashboard-card">
+    <div class="card-heading"><h2>▤ Infrastructure Estate</h2><a href="/infrastructure/estate">View all →</a></div>
+    <div class="estate-list">
+      <div><span>▣ Proxmox Nodes</span><strong>{{ estate.nodes }}</strong></div>
+      <div><span>▭ Virtual Machines (QEMU)</span><strong>{{ estate.qemu }}</strong></div>
+      <div><span>⬡ LXC Containers</span><strong>{{ estate.lxc }}</strong></div>
+      <div><span>◉ Storage</span><strong>{{ estate.storage }}</strong></div>
+      <div><span>⌘ Networks</span><strong>{{ estate.networks }}</strong></div>
+      <div><span>▱ Proxmox Backup Server</span><strong>{{ estate.pbs }}</strong></div>
+    </div>
   </article>
-  {% for provider in providers %}
-  <article class="card">
-    <span class="label">Provider · {{ provider.name }}</span>
-    <strong class="status {{ 'ok' if provider.healthy else 'bad' }}">{{ 'Healthy' if provider.healthy else 'Unavailable' }}</strong>
-    {% if provider.detail %}<p class="muted small">{{ provider.detail }}</p>{% endif %}
+
+  <article class="dashboard-card">
+    <div class="card-heading"><h2>◷ Recent Activity</h2></div>
+    <div class="activity-list">
+      {% for item in recent_activity %}
+      <div class="activity-item">
+        <span class="activity-icon {{ item.kind }}">{{ '◉' if item.kind == 'domain' else '▶' }}</span>
+        <div><strong>{{ item.title }}</strong><small>{{ item.detail }}</small></div>
+        <span class="result-badge {{ item.result }}">{{ item.result }}</span>
+      </div>
+      {% else %}
+      <div class="empty-compact">No recent Nexus operations yet.</div>
+      {% endfor %}
+    </div>
   </article>
-  {% endfor %}
+
+  <article class="dashboard-card">
+    <div class="card-heading"><h2>ϟ System Status</h2><span class="health-badge {{ 'ok' if all_systems_healthy else 'bad' }}">● {{ 'All Systems Operational' if all_systems_healthy else 'Attention Required' }}</span></div>
+    <div class="system-list">
+      {% for item in system_rows %}
+      <div><span><i class="dot {{ 'ok' if item.healthy else 'bad' }}"></i>{{ item.name }}</span><strong class="{{ 'healthy-text' if item.healthy else 'danger-text' }}">{{ 'Healthy' if item.healthy else 'Unavailable' }}</strong></div>
+      {% endfor %}
+    </div>
+  </article>
+</section>
+
+<section class="dashboard-grid dashboard-grid-secondary">
+  <article class="dashboard-card">
+    <div class="card-heading"><h2>Top Nodes by Resource Usage</h2><a href="/infrastructure/estate">View all →</a></div>
+    <div class="node-usage">
+      <div class="usage-head"><span>Node</span><span>CPU</span><span>Memory</span></div>
+      {% for node in nodes %}
+      <div class="usage-row">
+        <strong>{{ node.name }}</strong>
+        <span>{{ '%.0f%%'|format((node.cpu_usage or 0) * 100) if node.cpu_usage is not none else '—' }}</span>
+        <span>{{ '%.0f%%'|format((node.memory_used_bytes / node.memory_total_bytes) * 100) if node.memory_used_bytes is not none and node.memory_total_bytes else '—' }}</span>
+      </div>
+      {% else %}<div class="empty-compact">No PVE node telemetry available.</div>{% endfor %}
+    </div>
+  </article>
+
+  <article class="dashboard-card">
+    <div class="card-heading"><h2>◎ Domains & Hosting</h2><a href="/domains">View all →</a></div>
+    <div class="domain-mini-table">
+      <div class="mini-head"><span>Domain</span><span>Mail</span><span>Webmail</span><span>Status</span></div>
+      {% for domain in domains %}
+      <div class="mini-row"><strong>{{ domain.name }}</strong><span>{{ '●' if domain.mail else '○' }}</span><span>{{ '●' if domain.webmail else '○' }}</span><span class="pill {{ domain.configuration_mode }}">{{ domain.configuration_mode }}</span></div>
+      {% endfor %}
+    </div>
+  </article>
+
+  <article class="dashboard-card">
+    <div class="card-heading"><h2>♧ Upcoming & Alerts</h2></div>
+    <div class="alerts-list">
+      {% if remote_errors %}{% for error in remote_errors %}<div class="alert-row warning"><strong>{{ error.remote }}</strong><span>{{ error.detail }}</span></div>{% endfor %}{% endif %}
+      {% if monitoring_summary.down %}<div class="alert-row danger"><strong>Monitoring needs attention</strong><span>{{ monitoring_summary.down }} target(s) down</span></div>{% endif %}
+      {% if monitoring_summary.unknown %}<div class="alert-row info"><strong>Monitoring unknown</strong><span>{{ monitoring_summary.unknown }} target(s) without a current health signal</span></div>{% endif %}
+      {% if not remote_errors and not monitoring_summary.down and not monitoring_summary.unknown %}<div class="alert-row success"><strong>No active operational alerts</strong><span>Nexus providers and monitored targets are healthy.</span></div>{% endif %}
+    </div>
+  </article>
+</section>
+
+<section class="quick-links">
+  <a class="quick-card blue" href="/infrastructure"><span>▦</span><div><strong>Infrastructure</strong><small>Nodes, VMs, LXCs, storage and networks</small></div><b>›</b></a>
+  <a class="quick-card green" href="/monitoring"><span>ϟ</span><div><strong>Monitoring</strong><small>Service health and metrics</small></div><b>›</b></a>
+  <a class="quick-card orange" href="/infrastructure/power"><span>◉</span><div><strong>Power</strong><small>Start, stop and manage resources</small></div><b>›</b></a>
+  <a class="quick-card purple" href="/domains"><span>◎</span><div><strong>Domains & Hosting</strong><small>Domains, DNS, email and websites</small></div><b>›</b></a>
 </section>
 {% endblock %}
