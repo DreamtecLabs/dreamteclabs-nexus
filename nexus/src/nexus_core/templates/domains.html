@@ -1,0 +1,32 @@
+{% extends "base.html" %}
+{% block title %}Domains & Hosting · DreamtecLabs Nexus{% endblock %}
+{% block content %}
+<section class="page-head">
+  <div><div class="eyebrow accent-purple">Domains & Hosting</div><h1>Domains & Hosting</h1><p class="muted">Cloudflare DNS, Hestia mail/webmail and lifecycle intent owned by Nexus.</p></div>
+  <span class="pill {{ 'enabled' if operations_enabled else 'disabled' }}">Mutations {{ 'enabled' if operations_enabled else 'locked' }}</span>
+</section>
+<section class="grid inventory-summary">
+  <article class="card tint-blue"><span class="label">Domains</span><strong class="metric">{{ summary.total }}</strong></article>
+  <article class="card tint-green"><span class="label">Mail enabled</span><strong class="metric">{{ summary.mail }}</strong></article>
+  <article class="card tint-purple"><span class="label">Webmail</span><strong class="metric">{{ summary.webmail }}</strong></article>
+  <article class="card tint-orange"><span class="label">Nexus managed</span><strong class="metric">{{ summary.managed }}</strong></article>
+</section>
+<section class="card form-card">
+  <div><strong>Add or migrate a domain</strong><p class="muted small">Operations stay locked unless NEXUS_DOMAINS_OPERATIONS_ENABLED=true. Merely opening this page never changes Cloudflare or Hestia.</p></div>
+  <div class="domain-form-row"><input class="control" id="domain-name" placeholder="example.com"><input class="control" id="hestia-user" value="admin" placeholder="Hestia user"><button class="button" id="onboard-domain" {% if not operations_enabled %}disabled{% endif %}>Onboard</button><button class="button secondary" id="migrate-domain" {% if not operations_enabled %}disabled{% endif %}>Migrate existing</button></div>
+  <p id="domain-message" class="operation-message" hidden></p>
+</section>
+<section class="card table-card"><div class="table-wrap"><table id="domains-table"><thead><tr><th>Domain</th><th>Mode</th><th>Mail</th><th>Webmail</th><th>DDNS</th><th>Tunnel</th><th>Validation</th></tr></thead><tbody>
+{% for domain in domains %}<tr data-domain="{{ domain.name }}"><td><strong>{{ domain.name }}</strong><div class="muted small">Hestia: {{ domain.hestia_user }}</div></td><td><span class="pill {{ domain.configuration_mode }}">{{ domain.configuration_mode }}</span></td><td>{{ 'Yes' if domain.mail else '—' }}</td><td>{{ 'Yes' if domain.webmail else '—' }}</td><td>{{ 'Yes' if domain.ddns else '—' }}</td><td>{{ 'Yes' if domain.tunnel else '—' }}</td><td><button class="action-button validate-domain">Validate</button><div class="validation-result muted small"></div></td></tr>{% endfor %}
+</tbody></table></div></section>
+{% if audit %}<section class="card"><div class="section-title"><strong>Recent operations</strong></div><div class="table-wrap"><table><thead><tr><th>Time</th><th>Domain</th><th>Action</th><th>Result</th><th>Detail</th></tr></thead><tbody>{% for item in audit %}<tr><td class="small">{{ item.timestamp }}</td><td>{{ item.domain }}</td><td>{{ item.action }}</td><td><span class="pill {{ 'healthy' if item.result == 'success' else 'down' }}">{{ item.result }}</span></td><td class="small">{{ item.detail }}</td></tr>{% endfor %}</tbody></table></div></section>{% endif %}
+<script>
+(() => {
+ const message=document.getElementById('domain-message');
+ const show=(text,kind)=>{message.hidden=false;message.textContent=text;message.className=`operation-message ${kind}`};
+ document.querySelectorAll('.validate-domain').forEach(button=>button.addEventListener('click',async()=>{const row=button.closest('tr');const box=row.querySelector('.validation-result');button.disabled=true;box.textContent='Checking…';try{const response=await fetch('/api/v1/domains/validate',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({domain:row.dataset.domain})});const data=await response.json();if(!response.ok)throw new Error(data.detail||'Validation failed');box.className=`validation-result small ${data.healthy?'status-ok':'status-bad'}`;box.textContent=`${data.healthy?'Healthy':'Needs attention'} · ${data.checks.filter(c=>c.ok).length}/${data.checks.length} checks`; }catch(error){box.className='validation-result small status-bad';box.textContent=error.message}finally{button.disabled=false}}));
+ const run=async(migrate)=>{const domain=document.getElementById('domain-name').value.trim();const hestia_user=document.getElementById('hestia-user').value.trim();if(!domain)return show('Enter a domain name.','error');show(`${migrate?'Migration':'Onboarding'} in progress…`,'pending');try{const response=await fetch('/api/v1/domains/reconcile',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({domain,hestia_user,migrate})});const data=await response.json();if(!response.ok)throw new Error(data.detail||'Operation failed');show(`${domain} completed and passed ${data.validation.checks.length} validation checks.`,'success');setTimeout(()=>location.reload(),900)}catch(error){show(error.message,'error')}};
+ document.getElementById('onboard-domain').addEventListener('click',()=>run(false));document.getElementById('migrate-domain').addEventListener('click',()=>run(true));
+})();
+</script>
+{% endblock %}

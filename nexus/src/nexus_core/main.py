@@ -8,18 +8,17 @@ from pydantic import BaseModel, Field
 
 from nexus_core.config import Settings, get_settings
 from nexus_core.providers.alerting import UnconfiguredAlertingProvider, UnconfiguredMetricsProvider
+from nexus_core.providers.domain_diagnostics import PublicDomainDiagnosticsProvider
+from nexus_core.providers.domain_helper import DomainHelperProvider
 from nexus_core.providers.file_sd import FileSdTelemetryRuntime
 from nexus_core.providers.pdm import PdmProvider
 from nexus_core.providers.signoz import SigNozAlertingProvider, SigNozMetricsProvider
+from nexus_core.repositories.domain_audit_jsonl import JsonlDomainAuditRepository
+from nexus_core.repositories.domains_json import JsonDomainRepository
 from nexus_core.repositories.monitoring_json import JsonMonitoringRepository
 from nexus_core.repositories.power_audit_jsonl import JsonlPowerAuditRepository
-from nexus_core.services.infrastructure import (
-    InfrastructureResourceNotFound,
-    InfrastructureService,
-    PowerActionNotAllowed,
-    PowerOperationsDisabled,
-    PowerVerificationTimeout,
-)
+from nexus_core.services.domains import DomainOperationsDisabled, DomainService, DomainVerificationFailed
+from nexus_core.services.infrastructure import InfrastructureResourceNotFound, InfrastructureService, PowerActionNotAllowed, PowerOperationsDisabled, PowerVerificationTimeout
 from nexus_core.services.monitoring import MonitoringService
 from nexus_core.services.providers import ProviderService
 from nexus_core.web import router as web_router
@@ -45,12 +44,26 @@ class PowerActionInput(BaseModel):
     confirmation: str | None = Field(default=None, max_length=128)
 
 
+class DomainValidateInput(BaseModel):
+    domain: str = Field(min_length=3, max_length=253)
+
+
+class DomainReconcileInput(BaseModel):
+    domain: str = Field(min_length=3, max_length=253)
+    hestia_user: str = Field(default="admin", min_length=1, max_length=64)
+    migrate: bool = False
+
+
 def create_app(settings: Settings | None = None) -> FastAPI:
     settings = settings or get_settings()
     pdm = PdmProvider(base_url=settings.pdm_base_url, verify_tls=settings.pdm_verify_tls, health_path=settings.pdm_health_path, timeout_seconds=settings.provider_timeout_seconds, api_token_id=settings.pdm_api_token_id, api_token_secret=settings.pdm_api_token_secret)
     monitoring_repository = JsonMonitoringRepository(settings.monitoring_inventory_path)
     telemetry_runtime = FileSdTelemetryRuntime(settings.monitoring_file_sd_path)
     power_audit_repository = JsonlPowerAuditRepository(settings.power_audit_path)
+    domain_repository = JsonDomainRepository(settings.domains_inventory_path)
+    domain_audit = JsonlDomainAuditRepository(settings.domains_audit_path)
+    domain_diagnostics = PublicDomainDiagnosticsProvider(settings.provider_timeout_seconds)
+    domain_orchestrator = DomainHelperProvider(settings.domains_helper_path, settings.domains_helper_timeout_seconds)
     if settings.signoz_api_key:
         alerting = SigNozAlertingProvider(base_url=settings.signoz_url, api_key=settings.signoz_api_key, timeout_seconds=settings.provider_timeout_seconds)
         metrics = SigNozMetricsProvider(base_url=settings.signoz_url, api_key=settings.signoz_api_key, timeout_seconds=settings.provider_timeout_seconds)
@@ -63,10 +76,11 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         await telemetry_runtime.reconcile(monitoring_repository.list_targets())
         yield
 
-    app = FastAPI(title="DreamtecLabs Nexus", version="0.7.0", lifespan=lifespan)
+    app = FastAPI(title="DreamtecLabs Nexus", version="0.8.0", lifespan=lifespan)
     app.state.provider_service = ProviderService({pdm.name: pdm})
     app.state.infrastructure_service = InfrastructureService(pdm, power_operations_enabled=settings.power_operations_enabled, verification_attempts=settings.power_verification_attempts, verification_interval_seconds=settings.power_verification_interval_seconds, audit_repository=power_audit_repository)
     app.state.monitoring_service = MonitoringService(monitoring_repository, alerting, telemetry_runtime, metrics)
+    app.state.domain_service = DomainService(domain_repository, domain_diagnostics, domain_orchestrator, domain_audit, operations_enabled=settings.domains_operations_enabled, verification_attempts=settings.domains_verification_attempts, verification_interval_seconds=settings.domains_verification_interval_seconds)
     static_dir = Path(__file__).resolve().parent / "static"
     app.mount("/static", StaticFiles(directory=str(static_dir)), name="static")
     app.include_router(web_router)
@@ -181,6 +195,41 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         except RuntimeError as exc:
             raise HTTPException(status_code=503, detail=str(exc)) from exc
         return asdict(target)
+
+    @app.get("/api/v1/domains")
+    async def domains(request: Request) -> dict[str, object]:
+        service = request.app.state.domain_service
+        items = service.list_domains()
+        return {"domains": [asdict(item) for item in items], "count": len(items), "operations_enabled": service.operations_enabled}
+
+    @app.post("/api/v1/domains/validate")
+    async def validate_domain(payload: DomainValidateInput, request: Request) -> dict[str, object]:
+        try:
+            validation = await request.app.state.domain_service.validate(payload.domain)
+        except ValueError as exc:
+            raise HTTPException(status_code=422, detail=str(exc)) from exc
+        except RuntimeError as exc:
+            raise HTTPException(status_code=503, detail=str(exc)) from exc
+        return asdict(validation)
+
+    @app.get("/api/v1/domains/audit")
+    async def domains_audit(request: Request, limit: int = 25) -> dict[str, object]:
+        entries = request.app.state.domain_service.list_recent_operations(limit)
+        return {"operations": [asdict(item) for item in entries], "count": len(entries)}
+
+    @app.post("/api/v1/domains/reconcile")
+    async def reconcile_domain(payload: DomainReconcileInput, request: Request) -> dict[str, object]:
+        try:
+            result, validation = await request.app.state.domain_service.reconcile(name=payload.domain, hestia_user=payload.hestia_user, migrate=payload.migrate)
+        except DomainOperationsDisabled as exc:
+            raise HTTPException(status_code=403, detail=str(exc)) from exc
+        except ValueError as exc:
+            raise HTTPException(status_code=422, detail=str(exc)) from exc
+        except DomainVerificationFailed as exc:
+            raise HTTPException(status_code=502, detail=str(exc)) from exc
+        except RuntimeError as exc:
+            raise HTTPException(status_code=503, detail=str(exc)) from exc
+        return {"operation": asdict(result), "validation": asdict(validation)}
 
     return app
 

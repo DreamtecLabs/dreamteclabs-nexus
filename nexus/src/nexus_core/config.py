@@ -21,6 +21,11 @@ class Settings(BaseSettings):
     power_verification_interval_seconds: float = Field(default=1.0, ge=0.1, le=10.0, alias="NEXUS_POWER_VERIFY_INTERVAL_SECONDS")
     signoz_url: str = Field(default="http://192.168.0.47:8080", alias="NEXUS_SIGNOZ_URL")
     signoz_api_key: str | None = Field(default=None, alias="NEXUS_SIGNOZ_API_KEY")
+    domains_operations_enabled: bool = Field(default=False, alias="NEXUS_DOMAINS_OPERATIONS_ENABLED")
+    domains_helper_path: Path = Field(default=Path("/opt/dreamteclabs-nexus/services/nexus-domains-helper"), alias="NEXUS_DOMAINS_HELPER_PATH")
+    domains_helper_timeout_seconds: float = Field(default=300.0, ge=10, le=900, alias="NEXUS_DOMAINS_HELPER_TIMEOUT_SECONDS")
+    domains_verification_attempts: int = Field(default=3, ge=1, le=20, alias="NEXUS_DOMAINS_VERIFY_ATTEMPTS")
+    domains_verification_interval_seconds: float = Field(default=3.0, ge=0.1, le=30, alias="NEXUS_DOMAINS_VERIFY_INTERVAL_SECONDS")
 
     @property
     def monitoring_inventory_path(self) -> Path:
@@ -33,6 +38,14 @@ class Settings(BaseSettings):
     @property
     def power_audit_path(self) -> Path:
         return self.data_dir / "power-operations.jsonl"
+
+    @property
+    def domains_inventory_path(self) -> Path:
+        return self.data_dir / "domains-hosting.json"
+
+    @property
+    def domains_audit_path(self) -> Path:
+        return self.data_dir / "domains-hosting-audit.jsonl"
 
 
 @lru_cache
