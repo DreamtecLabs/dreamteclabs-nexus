@@ -24,10 +24,18 @@ def test_standalone_monitoring_ui_is_served_by_nexus_core(tmp_path: Path) -> Non
     assert response.status_code == 200
     assert "Monitoring Control Center" in response.text
     assert "Nexus owns target lifecycle and maintenance" in response.text
+    assert '<body class="workspace-page">' in response.text
+    assert 'href="/static/compact-workspaces.css"' in response.text
 
     stylesheet = client.get("/static/nexus.css")
     assert stylesheet.status_code == 200
     assert ".topbar" in stylesheet.text
+
+    compact_css = client.get("/static/compact-workspaces.css")
+    assert compact_css.status_code == 200
+    assert ".workspace-page .page-head" in compact_css.text
+    assert ".workspace-page .inventory-summary .card" in compact_css.text
+    assert ".workspace-page .monitoring-summary .card" in compact_css.text
 
 
 def test_overview_uses_approved_compact_dashboard_shell(tmp_path: Path) -> None:
@@ -46,7 +54,9 @@ def test_overview_uses_approved_compact_dashboard_shell(tmp_path: Path) -> None:
         assert text in response.text
     assert "Operations without coupling product logic to PDM" not in response.text
     assert "WELCOME TO NEXUS" not in response.text
+    assert '<body class="dashboard-page">' in response.text
     assert 'href="/static/visible-separators.css"' in response.text
+    assert 'href="/static/compact-workspaces.css"' in response.text
 
     dashboard_css = client.get("/static/dashboard.css")
     assert dashboard_css.status_code == 200

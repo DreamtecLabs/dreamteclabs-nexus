@@ -8,8 +8,9 @@
   <link rel="stylesheet" href="/static/nexus.css">
   <link rel="stylesheet" href="/static/dashboard.css">
   <link rel="stylesheet" href="/static/visible-separators.css">
+  <link rel="stylesheet" href="/static/compact-workspaces.css">
 </head>
-<body>
+<body class="{{ 'dashboard-page' if request.url.path == '/' else 'workspace-page' }}">
 <header class="app-header">
   <div class="header-main">
     <a class="brand" href="/">
