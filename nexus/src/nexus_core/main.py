@@ -47,29 +47,13 @@ class PowerActionInput(BaseModel):
 
 def create_app(settings: Settings | None = None) -> FastAPI:
     settings = settings or get_settings()
-    pdm = PdmProvider(
-        base_url=settings.pdm_base_url,
-        verify_tls=settings.pdm_verify_tls,
-        health_path=settings.pdm_health_path,
-        timeout_seconds=settings.provider_timeout_seconds,
-        api_token_id=settings.pdm_api_token_id,
-        api_token_secret=settings.pdm_api_token_secret,
-    )
-
+    pdm = PdmProvider(base_url=settings.pdm_base_url, verify_tls=settings.pdm_verify_tls, health_path=settings.pdm_health_path, timeout_seconds=settings.provider_timeout_seconds, api_token_id=settings.pdm_api_token_id, api_token_secret=settings.pdm_api_token_secret)
     monitoring_repository = JsonMonitoringRepository(settings.monitoring_inventory_path)
     telemetry_runtime = FileSdTelemetryRuntime(settings.monitoring_file_sd_path)
     power_audit_repository = JsonlPowerAuditRepository(settings.power_audit_path)
     if settings.signoz_api_key:
-        alerting = SigNozAlertingProvider(
-            base_url=settings.signoz_url,
-            api_key=settings.signoz_api_key,
-            timeout_seconds=settings.provider_timeout_seconds,
-        )
-        metrics = SigNozMetricsProvider(
-            base_url=settings.signoz_url,
-            api_key=settings.signoz_api_key,
-            timeout_seconds=settings.provider_timeout_seconds,
-        )
+        alerting = SigNozAlertingProvider(base_url=settings.signoz_url, api_key=settings.signoz_api_key, timeout_seconds=settings.provider_timeout_seconds)
+        metrics = SigNozMetricsProvider(base_url=settings.signoz_url, api_key=settings.signoz_api_key, timeout_seconds=settings.provider_timeout_seconds)
     else:
         alerting = UnconfiguredAlertingProvider()
         metrics = UnconfiguredMetricsProvider()
@@ -79,17 +63,10 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         await telemetry_runtime.reconcile(monitoring_repository.list_targets())
         yield
 
-    app = FastAPI(title="DreamtecLabs Nexus", version="0.6.0", lifespan=lifespan)
+    app = FastAPI(title="DreamtecLabs Nexus", version="0.7.0", lifespan=lifespan)
     app.state.provider_service = ProviderService({pdm.name: pdm})
-    app.state.infrastructure_service = InfrastructureService(
-        pdm,
-        power_operations_enabled=settings.power_operations_enabled,
-        verification_attempts=settings.power_verification_attempts,
-        verification_interval_seconds=settings.power_verification_interval_seconds,
-        audit_repository=power_audit_repository,
-    )
+    app.state.infrastructure_service = InfrastructureService(pdm, power_operations_enabled=settings.power_operations_enabled, verification_attempts=settings.power_verification_attempts, verification_interval_seconds=settings.power_verification_interval_seconds, audit_repository=power_audit_repository)
     app.state.monitoring_service = MonitoringService(monitoring_repository, alerting, telemetry_runtime, metrics)
-
     static_dir = Path(__file__).resolve().parent / "static"
     app.mount("/static", StaticFiles(directory=str(static_dir)), name="static")
     app.include_router(web_router)
@@ -112,12 +89,25 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             snapshot = await request.app.state.infrastructure_service.list_resources()
         except RuntimeError as exc:
             raise HTTPException(status_code=503, detail=str(exc)) from exc
-        return {
-            "resources": [asdict(resource) for resource in snapshot.resources],
-            "remote_errors": [asdict(error) for error in snapshot.remote_errors],
-            "count": len(snapshot.resources),
-            "power_operations_enabled": request.app.state.infrastructure_service.power_operations_enabled,
-        }
+        return {"resources": [asdict(resource) for resource in snapshot.resources], "remote_errors": [asdict(error) for error in snapshot.remote_errors], "count": len(snapshot.resources), "power_operations_enabled": request.app.state.infrastructure_service.power_operations_enabled}
+
+    @app.get("/api/v1/infrastructure/resources/detail/{resource_id:path}")
+    async def infrastructure_resource_detail(resource_id: str, request: Request) -> dict[str, object]:
+        try:
+            context = await request.app.state.infrastructure_service.get_resource_context(resource_id)
+        except InfrastructureResourceNotFound as exc:
+            raise HTTPException(status_code=404, detail=str(exc)) from exc
+        except RuntimeError as exc:
+            raise HTTPException(status_code=503, detail=str(exc)) from exc
+        return asdict(context)
+
+    @app.get("/api/v1/infrastructure/estate")
+    async def infrastructure_estate(request: Request) -> dict[str, object]:
+        try:
+            summaries = await request.app.state.infrastructure_service.estate_summary()
+        except RuntimeError as exc:
+            raise HTTPException(status_code=503, detail=str(exc)) from exc
+        return {"remotes": [asdict(item) for item in summaries], "count": len(summaries)}
 
     @app.get("/api/v1/infrastructure/power/history")
     async def infrastructure_power_history(request: Request, limit: int = 25) -> dict[str, object]:
@@ -150,11 +140,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         service = request.app.state.monitoring_service
         statuses = await service.list_statuses()
         diagnostics = await service.provider_diagnostics()
-        return {
-            "statuses": [asdict(status) for status in statuses],
-            "summary": service.summarize(statuses),
-            "provider": asdict(diagnostics),
-        }
+        return {"statuses": [asdict(status) for status in statuses], "summary": service.summarize(statuses), "provider": asdict(diagnostics)}
 
     @app.get("/api/v1/monitoring/targets/{target_id}/status")
     async def monitoring_target_status(target_id: str, request: Request) -> dict[str, object]:
@@ -175,11 +161,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         return asdict(target)
 
     @app.patch("/api/v1/monitoring/targets/{target_id}/state")
-    async def set_monitoring_target_state(
-        target_id: str,
-        payload: MonitoringStateInput,
-        request: Request,
-    ) -> dict[str, object]:
+    async def set_monitoring_target_state(target_id: str, payload: MonitoringStateInput, request: Request) -> dict[str, object]:
         try:
             target = await request.app.state.monitoring_service.set_state(target_id, payload.state)
         except KeyError as exc:

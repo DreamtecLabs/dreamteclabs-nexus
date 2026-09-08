@@ -37,13 +37,15 @@ uvicorn nexus_core.main:app --reload --port 8081
 
 Configuration is environment based. The PDM adapter starts with `PDM_BASE_URL=https://127.0.0.1:8443`; no credentials are stored in this repository. Production PDM access should use a dedicated least-privilege API token supplied through `PDM_API_TOKEN_ID` and `PDM_API_TOKEN_SECRET`. The adapter sends it using PDM's `PDMAPIToken TOKENID:TOKENSECRET` authorization scheme. Keep the secret only in the local `.env` file and never commit it.
 
-## Infrastructure and Resource Power Center
+## Infrastructure, Resource Center and Power Center
 
 `GET /api/v1/infrastructure/resources` and `/infrastructure` expose the canonical PDM-backed Infrastructure read model. Nexus normalizes provider-native resource names into stable types such as `pve-lxc`, `pve-qemu`, `pve-node`, `pve-storage`, `pve-network`, `pbs-node` and `pbs-datastore`. PDM remains the source of truth for runtime state.
 
+The Resource Center enriches that canonical model with optional CPU, memory, disk and uptime fields when PDM provides them. Missing provider metrics remain `null`/unavailable rather than being fabricated. `GET /api/v1/infrastructure/resources/detail/{resource_id}` and `/infrastructure/resource?id=...` expose one resource plus stable topology context: owning PVE/PBS node, sibling guests, storage and networks. `/infrastructure/estate` and `GET /api/v1/infrastructure/estate` summarize PDM remotes and nodes without introducing a second discovery database.
+
 The Resource Power Center is available at `/infrastructure/power`. Mutations are **disabled by default** with `NEXUS_POWER_OPERATIONS_ENABLED=false`. When deliberately enabled, the current safe slice supports state-aware `start`, graceful `shutdown`, and immediate `stop` for PVE QEMU/LXC guests only. Hard stop requires typing the exact resource name. Nexus does not equate an accepted PDM request with completion: it reads the PDM inventory back until the expected final state is observed or returns a verification timeout. Successful and failed submitted mutations are written to the append-only `${NEXUS_DATA_DIR}/power-operations.jsonl` audit trail and exposed through `GET /api/v1/infrastructure/power/history`.
 
-Reboot is intentionally not in this first vNext slice: a guest may remain `running` throughout a reboot, so a simple state read-back cannot prove the reboot task completed. It should be added with explicit PDM task lifecycle verification rather than a false-success shortcut.
+Reboot remains intentionally deferred: a guest may remain `running` throughout a reboot, so a simple state read-back cannot prove the reboot task completed. It should be added with explicit PDM task lifecycle verification rather than a false-success shortcut.
 
 The PDM token must have only the lifecycle permissions Nexus actually needs. A token that can read inventory but cannot mutate guests is valid for normal read-only operation; keep the power gate disabled in that case.
 
