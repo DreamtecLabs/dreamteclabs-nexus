@@ -18,8 +18,13 @@ class DomainHelperProvider:
             raise RuntimeError(f"Domains helper is not available at {self._helper_path}")
         try:
             process = await asyncio.create_subprocess_exec(
-                str(self._helper_path), action, domain.name, domain.hestia_user,
-                stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.PIPE,
+                "bash",
+                str(self._helper_path),
+                action,
+                domain.name,
+                domain.hestia_user,
+                stdout=asyncio.subprocess.PIPE,
+                stderr=asyncio.subprocess.PIPE,
             )
             stdout, stderr = await asyncio.wait_for(process.communicate(), timeout=self._timeout_seconds)
         except TimeoutError as exc:
