@@ -22,12 +22,15 @@ DEFAULT_DOMAINS = (
 class JsonDomainRepository:
     def __init__(self, path: Path) -> None:
         self._path = path
-        if not path.exists():
-            path.parent.mkdir(parents=True, exist_ok=True)
-            self._write(DEFAULT_DOMAINS)
+
+    def _seed_if_missing(self) -> None:
+        if self._path.exists():
+            return
+        self._write(DEFAULT_DOMAINS)
 
     def _read(self) -> tuple[DomainRecord, ...]:
         try:
+            self._seed_if_missing()
             raw = json.loads(self._path.read_text(encoding="utf-8"))
             items = raw.get("domains", [])
             domains = []
