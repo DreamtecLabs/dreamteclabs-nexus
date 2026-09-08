@@ -1,5 +1,4 @@
 use anyhow::{Error, bail};
-use http::Method;
 use proxmox_client::HttpApiClient;
 
 use proxmox_router::{Permission, Router, SubdirMap, list_subdirs_api_method};
@@ -80,7 +79,7 @@ async fn create_guest(
     let remote_config = super::get_remote(&remotes, &remote)?;
     let client = crate::connection::make_raw_client(remote_config)?;
     let path = format!("/api2/extjs/nodes/{node}/{kind}");
-    let response = client.request(Method::POST, &path, None).await?;
+    let response = client.post(&path, &params).await?;
     let upid: String = response.expect_json()?.data;
     super::new_remote_upid(remote, upid.parse()?).await
 }
