@@ -46,9 +46,15 @@ def test_overview_uses_approved_compact_dashboard_shell(tmp_path: Path) -> None:
         assert text in response.text
     assert "Operations without coupling product logic to PDM" not in response.text
     assert "WELCOME TO NEXUS" not in response.text
+    assert 'href="/static/visible-separators.css"' in response.text
 
     dashboard_css = client.get("/static/dashboard.css")
     assert dashboard_css.status_code == 200
     assert ".kpi-grid" in dashboard_css.text
     assert ".dashboard-grid" in dashboard_css.text
     assert "background:#fff" in dashboard_css.text
+
+    separators_css = client.get("/static/visible-separators.css")
+    assert separators_css.status_code == 200
+    assert "border-width:1.5px" in separators_css.text
+    assert ".card-heading" in separators_css.text
