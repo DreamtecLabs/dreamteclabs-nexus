@@ -24,16 +24,15 @@ class PdmProvisioningProvider:
     advanced PVE options without introducing direct PVE access in Nexus.
     """
 
-    def __init__(
-        self,
-        *,
-        base_url: str,
-        verify_tls: bool,
-        timeout_seconds: float,
-        api_token_id: str | None = None,
-        api_token_secret: str | None = None,
-        transport: httpx.AsyncBaseTransport | None = None,
-    ) -> None:
+    _NEXUS_METADATA_KEYS = {
+        "monitoring_address",
+        "monitoring_port",
+        "monitoring_path",
+        "monitoring_site",
+        "health_metric",
+    }
+
+    def __init__(self, *, base_url: str, verify_tls: bool, timeout_seconds: float, api_token_id: str | None = None, api_token_secret: str | None = None, transport: httpx.AsyncBaseTransport | None = None) -> None:
         self._base_url = base_url.rstrip("/")
         self._verify_tls = verify_tls
         self._timeout_seconds = timeout_seconds
@@ -47,21 +46,14 @@ class PdmProvisioningProvider:
         return {}
 
     def _client(self) -> httpx.AsyncClient:
-        return httpx.AsyncClient(
-            base_url=self._base_url,
-            verify=self._verify_tls,
-            timeout=self._timeout_seconds,
-            transport=self._transport,
-            headers=self._headers(),
-        )
+        return httpx.AsyncClient(base_url=self._base_url, verify=self._verify_tls, timeout=self._timeout_seconds, transport=self._transport, headers=self._headers())
 
     async def options(self) -> ProvisioningOptions:
         try:
             async with self._client() as client:
                 response = await client.get("/api2/json/resources/list")
                 response.raise_for_status()
-                payload = response.json()
-                groups = payload.get("data", [])
+                groups = response.json().get("data", [])
                 nodes: list[ProvisioningNode] = []
                 storages: list[ProvisioningStorage] = []
                 networks: list[ProvisioningNetwork] = []
@@ -89,14 +81,12 @@ class PdmProvisioningProvider:
                             name = self._text(item.get("network")) or self._tail(self._text(item.get("id")))
                             if name:
                                 networks.append(ProvisioningNetwork(remote, node, name))
-
                 next_vmids: dict[str, int] = {}
                 for remote in sorted(remotes):
                     next_response = await client.get(f"/api2/json/pve/remotes/{quote(remote, safe='')}/cluster-nextid")
                     if next_response.is_success:
-                        data = next_response.json().get("data")
                         try:
-                            next_vmids[remote] = int(data)
+                            next_vmids[remote] = int(next_response.json().get("data"))
                         except (TypeError, ValueError):
                             pass
         except httpx.HTTPStatusError as exc:
@@ -105,7 +95,6 @@ class PdmProvisioningProvider:
             raise RuntimeError(f"PDM provisioning options failed: {type(exc).__name__}") from exc
         except ValueError as exc:
             raise RuntimeError("PDM provisioning options returned invalid JSON") from exc
-
         nodes.sort(key=lambda item: (item.remote.casefold(), item.name.casefold()))
         storages.sort(key=lambda item: (item.remote.casefold(), (item.node or "").casefold(), item.name.casefold()))
         networks.sort(key=lambda item: (item.remote.casefold(), (item.node or "").casefold(), item.name.casefold()))
@@ -128,7 +117,6 @@ class PdmProvisioningProvider:
             raise RuntimeError(f"PDM guest creation failed: {type(exc).__name__}") from exc
         except ValueError as exc:
             raise RuntimeError("PDM guest creation returned invalid JSON") from exc
-
         task = payload.get("data") if isinstance(payload, dict) else None
         task_reference = task if isinstance(task, str) else json.dumps(task) if task is not None else None
         return GuestCreateResult(task_reference=task_reference, resource_id=f"remote/{request.remote}/guest/{request.vmid}")
@@ -139,13 +127,10 @@ class PdmProvisioningProvider:
             raise ValueError("kind must be 'lxc' or 'qemu'")
         if request.vmid < 100 or request.vmid > 999_999_999:
             raise ValueError("VMID is outside the PVE range")
-        if not request.name.strip():
-            raise ValueError("guest name is required")
-        if not request.source.strip():
-            raise ValueError("template/ISO source is required")
+        if not request.name.strip() or not request.source.strip():
+            raise ValueError("guest name and template/ISO source are required")
         if request.cores < 1 or request.memory_mb < 128 or request.disk_gb < 1:
             raise ValueError("CPU, memory and disk values must be positive")
-
         net_parts = ["name=eth0" if request.kind == "lxc" else "virtio", f"bridge={request.bridge}"]
         if request.vlan is not None:
             net_parts.append(f"tag={request.vlan}")
@@ -153,20 +138,7 @@ class PdmProvisioningProvider:
             net_parts.append(f"ip={request.ip_config or 'dhcp'}")
             if request.gateway:
                 net_parts.append(f"gw={request.gateway}")
-
-        if request.kind == "lxc":
-            config: dict[str, Any] = {
-                "vmid": request.vmid,
-                "hostname": request.name.strip(),
-                "ostemplate": request.source.strip(),
-                "cores": request.cores,
-                "memory": request.memory_mb,
-                "rootfs": f"{request.storage}:{request.disk_gb}",
-                "net0": ",".join(net_parts),
-                "onboot": 1 if request.onboot else 0,
-                "unprivileged": 1 if request.unprivileged else 0,
-                "start": 1 if request.start else 0,
-            }
+            config: dict[str, Any] = {"vmid": request.vmid, "hostname": request.name.strip(), "ostemplate": request.source.strip(), "cores": request.cores, "memory": request.memory_mb, "rootfs": f"{request.storage}:{request.disk_gb}", "net0": ",".join(net_parts), "onboot": 1 if request.onboot else 0, "unprivileged": 1 if request.unprivileged else 0, "start": 1 if request.start else 0}
             if request.nameserver:
                 config["nameserver"] = request.nameserver
             if request.nesting:
@@ -174,24 +146,11 @@ class PdmProvisioningProvider:
             if request.ssh_enabled and request.ssh_public_key:
                 config["ssh-public-keys"] = request.ssh_public_key.strip()
         else:
-            config = {
-                "vmid": request.vmid,
-                "name": request.name.strip(),
-                "cores": request.cores,
-                "memory": request.memory_mb,
-                "scsihw": "virtio-scsi-pci",
-                "scsi0": f"{request.storage}:{request.disk_gb}",
-                "net0": ",".join(net_parts),
-                "ide2": f"{request.source.strip()},media=cdrom",
-                "agent": 1,
-                "onboot": 1 if request.onboot else 0,
-                "start": 1 if request.start else 0,
-            }
-
+            config = {"vmid": request.vmid, "name": request.name.strip(), "cores": request.cores, "memory": request.memory_mb, "scsihw": "virtio-scsi-pci", "scsi0": f"{request.storage}:{request.disk_gb}", "net0": ",".join(net_parts), "ide2": f"{request.source.strip()},media=cdrom", "agent": 1, "onboot": 1 if request.onboot else 0, "start": 1 if request.start else 0}
         protected = {"vmid"}
         for key, value in request.advanced.items():
             normalized = str(key).strip()
-            if normalized and normalized not in protected and value is not None:
+            if normalized and normalized not in protected and normalized not in cls._NEXUS_METADATA_KEYS and value is not None:
                 config[normalized] = value
         return config
 
