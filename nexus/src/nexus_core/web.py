@@ -40,12 +40,66 @@ def _resource_view(resource):
 
 @router.get("/", response_class=HTMLResponse)
 async def index(request: Request) -> HTMLResponse:
-    providers = []
+    provider_rows = []
     for name in request.app.state.provider_service.names():
         status = await request.app.state.provider_service.health(name)
-        providers.append({"name": name, "healthy": status.healthy, "detail": status.detail})
-    targets = request.app.state.monitoring_service.list_targets()
-    return _templates.TemplateResponse(request=request, name="index.html", context={"providers": providers, "monitoring_count": len(targets)})
+        provider_rows.append({"name": name.upper(), "healthy": status.healthy, "detail": status.detail})
+
+    try:
+        snapshot = await request.app.state.infrastructure_service.list_resources()
+        resources = list(snapshot.resources)
+    except RuntimeError:
+        snapshot = None
+        resources = []
+
+    guests = [item for item in resources if item.type in {"pve-lxc", "pve-qemu"}]
+    nodes = [item for item in resources if item.type == "pve-node"]
+    storages = [item for item in resources if item.type in {"pve-storage", "pbs-datastore"}]
+    networks = [item for item in resources if item.type == "pve-network"]
+    pbs = [item for item in resources if item.type == "pbs-node"]
+
+    monitoring_service = request.app.state.monitoring_service
+    targets = monitoring_service.list_targets()
+    monitoring_statuses = await monitoring_service.list_statuses()
+    monitoring_summary = monitoring_service.summarize(monitoring_statuses)
+    monitoring_provider = await monitoring_service.provider_diagnostics()
+
+    domain_service = request.app.state.domain_service
+    domains = list(domain_service.list_domains())
+
+    recent_activity = []
+    for entry in request.app.state.infrastructure_service.list_recent_power_operations(4):
+        recent_activity.append({"kind": "power", "title": f"{entry.action.title()} {entry.resource_name}", "detail": entry.detail, "result": entry.result, "timestamp": entry.timestamp})
+    for entry in domain_service.list_recent_operations(4):
+        recent_activity.append({"kind": "domain", "title": f"{entry.action.title()} {entry.domain}", "detail": entry.detail, "result": entry.result, "timestamp": entry.timestamp})
+    recent_activity = sorted(recent_activity, key=lambda item: item["timestamp"], reverse=True)[:5]
+
+    system_rows = [{"name": "Nexus Core", "healthy": True, "detail": "Application healthy"}]
+    system_rows.extend({"name": f"{item['name']} Provider", "healthy": item["healthy"], "detail": item["detail"] or "Provider healthy"} for item in provider_rows)
+    system_rows.append({"name": "SigNoz (Monitoring)", "healthy": monitoring_provider.configured and monitoring_provider.healthy, "detail": monitoring_provider.detail or "Monitoring API ready"})
+
+    return _templates.TemplateResponse(
+        request=request,
+        name="index.html",
+        context={
+            "summary": {
+                "resources": len(resources),
+                "running": sum(item.status == "running" for item in guests),
+                "stopped": sum(item.status == "stopped" for item in guests),
+                "monitoring": len(targets),
+                "domains": len(domains),
+                "storage": len(storages),
+            },
+            "estate": {"nodes": len(nodes), "qemu": sum(item.type == "pve-qemu" for item in guests), "lxc": sum(item.type == "pve-lxc" for item in guests), "storage": len(storages), "networks": len(networks), "pbs": len(pbs)},
+            "nodes": nodes[:4],
+            "domains": domains[:4],
+            "recent_activity": recent_activity,
+            "system_rows": system_rows,
+            "all_systems_healthy": all(item["healthy"] for item in system_rows),
+            "monitoring_summary": monitoring_summary,
+            "remote_errors": tuple(snapshot.remote_errors) if snapshot else (),
+        },
+    )
 
 
 async def _infrastructure_snapshot(request: Request):
