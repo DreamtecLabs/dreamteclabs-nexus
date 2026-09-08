@@ -80,10 +80,7 @@ class DomainService:
 
     async def validate(self, name: str) -> DomainValidation:
         domain_name = self.normalize_domain(name)
-        domain = self._repository.get_domain(domain_name)
-        if domain is None:
-            domain = DomainRecord(domain_name)
-            self._repository.upsert_domain(domain)
+        domain = self._repository.get_domain(domain_name) or DomainRecord(domain_name)
         return await self._diagnostics.validate(domain)
 
     def _audit(self, *, domain: str, action: str, result: str, detail: str, steps: tuple[str, ...] = ()) -> None:
