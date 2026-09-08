@@ -47,6 +47,23 @@ def test_domain_repository_seeds_known_estate_without_overwriting(tmp_path: Path
     assert len(repo2.list_domains()) == 8
 
 
+async def test_domain_validation_does_not_mutate_inventory(tmp_path: Path) -> None:
+    repo = JsonDomainRepository(tmp_path / "domains.json")
+    service = DomainService(
+        repo,
+        FakeDiagnostics(),
+        FakeOrchestrator(),
+        JsonlDomainAuditRepository(tmp_path / "audit.jsonl"),
+        operations_enabled=False,
+    )
+    assert len(repo.list_domains()) == 7
+    validation = await service.validate("example.com")
+    assert validation.domain == "example.com"
+    assert validation.healthy is True
+    assert repo.get_domain("example.com") is None
+    assert len(repo.list_domains()) == 7
+
+
 async def test_domain_service_requires_gate_and_verifies_mutation(tmp_path: Path) -> None:
     repo = JsonDomainRepository(tmp_path / "domains.json")
     audit = JsonlDomainAuditRepository(tmp_path / "audit.jsonl")
@@ -102,7 +119,7 @@ def test_domains_api_and_light_ui(tmp_path: Path) -> None:
 
         page = client.get("/domains")
         assert page.status_code == 200
-        assert "Domains &amp; Hosting" in page.text
+        assert "Domains & Hosting" in page.text
         assert "mundoleo.co" in page.text
 
         css = client.get("/static/nexus.css").text
