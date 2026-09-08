@@ -4,69 +4,40 @@ This directory is the application boundary for DreamtecLabs Nexus.
 
 Nexus is **not** implemented as a growing set of patches inside Proxmox Datacenter Manager (PDM). PDM is an infrastructure provider. The control plane owns business/domain rules, integrations, orchestration, persistence, monitoring policy and the Nexus API.
 
-The dependency direction is:
-
-```text
-Nexus UI
-   |
-Nexus API / Domain Services
-   |
-Ports (provider/repository interfaces)
-   |
-Adapters
-   +-- PDM / Proxmox
-   +-- SigNoz
-   +-- Cloudflare
-   +-- Hestia
-   +-- DreamtecLabs Notify
-```
-
-Provider adapters may call external systems. Domain services must not import provider-specific implementation details.
+The dependency direction is `Nexus UI -> Nexus API / Domain Services -> Ports -> Adapters`. Current adapters include PDM, SigNoz, Cloudflare/Hestia orchestration and DreamtecLabs Notify telemetry. Provider adapters may call external systems; domain services must not import provider-specific implementation details.
 
 ## Local development
 
-Python 3.12+ is required.
+Python 3.12+ is required. Create a venv, install `.[dev]`, run `pytest -q`, then `uvicorn nexus_core.main:app --reload --port 8081`.
 
-```bash
-python -m venv .venv
-. .venv/bin/activate
-python -m pip install -e '.[dev]'
-pytest -q
-uvicorn nexus_core.main:app --reload --port 8081
-```
-
-Configuration is environment based. The PDM adapter starts with `PDM_BASE_URL=https://127.0.0.1:8443`; no credentials are stored in this repository. Production PDM access should use a dedicated least-privilege API token supplied through `PDM_API_TOKEN_ID` and `PDM_API_TOKEN_SECRET`. The adapter sends it using PDM's `PDMAPIToken TOKENID:TOKENSECRET` authorization scheme. Keep the secret only in the local `.env` file and never commit it.
+Configuration is environment based. Production PDM access uses a dedicated least-privilege API token through `PDM_API_TOKEN_ID` and `PDM_API_TOKEN_SECRET`. Keep all secrets only in the local `.env` file and never commit them.
 
 ## Infrastructure, Resource Center and Power Center
 
-`GET /api/v1/infrastructure/resources` and `/infrastructure` expose the canonical PDM-backed Infrastructure read model. Nexus normalizes provider-native resource names into stable types such as `pve-lxc`, `pve-qemu`, `pve-node`, `pve-storage`, `pve-network`, `pbs-node` and `pbs-datastore`. PDM remains the source of truth for runtime state.
+`GET /api/v1/infrastructure/resources` and `/infrastructure` expose the canonical PDM-backed Infrastructure read model. The Resource Center enriches it with optional CPU, memory, disk and uptime fields when PDM provides them. Missing provider metrics remain unavailable rather than being fabricated. Resource detail and Estate views provide stable topology context without introducing a second discovery database.
 
-The Resource Center enriches that canonical model with optional CPU, memory, disk and uptime fields when PDM provides them. Missing provider metrics remain `null`/unavailable rather than being fabricated. `GET /api/v1/infrastructure/resources/detail/{resource_id}` and `/infrastructure/resource?id=...` expose one resource plus stable topology context: owning PVE/PBS node, sibling guests, storage and networks. `/infrastructure/estate` and `GET /api/v1/infrastructure/estate` summarize PDM remotes and nodes without introducing a second discovery database.
-
-The Resource Power Center is available at `/infrastructure/power`. Mutations are **disabled by default** with `NEXUS_POWER_OPERATIONS_ENABLED=false`. When deliberately enabled, the current safe slice supports state-aware `start`, graceful `shutdown`, and immediate `stop` for PVE QEMU/LXC guests only. Hard stop requires typing the exact resource name. Nexus does not equate an accepted PDM request with completion: it reads the PDM inventory back until the expected final state is observed or returns a verification timeout. Successful and failed submitted mutations are written to the append-only `${NEXUS_DATA_DIR}/power-operations.jsonl` audit trail and exposed through `GET /api/v1/infrastructure/power/history`.
-
-Reboot remains intentionally deferred: a guest may remain `running` throughout a reboot, so a simple state read-back cannot prove the reboot task completed. It should be added with explicit PDM task lifecycle verification rather than a false-success shortcut.
-
-The PDM token must have only the lifecycle permissions Nexus actually needs. A token that can read inventory but cannot mutate guests is valid for normal read-only operation; keep the power gate disabled in that case.
+The Resource Power Center is available at `/infrastructure/power`. Mutations are disabled by default with `NEXUS_POWER_OPERATIONS_ENABLED=false`. Supported QEMU/LXC actions are state-aware start, graceful shutdown and immediate stop. Hard stop requires the exact resource name and all submitted mutations are read back from PDM and written to `${NEXUS_DATA_DIR}/power-operations.jsonl`.
 
 ## Monitoring Control Center
 
-`/monitoring` is the standalone vNext Monitoring Control Center. Nexus owns target intent and lifecycle; the standalone OTel collector consumes Nexus-generated Prometheus file discovery; SigNoz remains authoritative for telemetry queries and planned maintenance.
+`/monitoring` is the standalone vNext Monitoring Control Center. Nexus owns target intent and lifecycle; OTel consumes Nexus-generated Prometheus file discovery; SigNoz is authoritative for telemetry and planned maintenance. Enabled targets are queried through SigNoz v5 and classified healthy/down/unknown. Maintenance and disabled targets are removed from active discovery. Provider errors never expose API keys or response bodies.
 
-Every target has a Prometheus `health_metric` (default `up`). Enabled targets are queried through SigNoz `POST /api/v5/query_range` using the stable `nexus_service_id` label and are classified as `healthy`, `down` or `unknown`. Maintenance and disabled targets are not queried and are removed from active file discovery. `GET /api/v1/monitoring/status` exposes the complete live read model plus safe SigNoz service-account diagnostics; `GET /api/v1/monitoring/targets/{id}/status` exposes one target.
+## Domains & Hosting
 
-Target lifecycle is explicit: `PATCH /api/v1/monitoring/targets/{id}/state` accepts `enabled`, `maintenance` or `disabled`. Entering maintenance first creates a service-scoped SigNoz planned-maintenance schedule and only then removes the target from active scraping. Leaving maintenance deletes that schedule before resuming discovery. Failures are fail-visible and do not silently report a successful state transition. The UI provides the same Maintenance/Resume/Disable controls for internal operations.
+`/domains` and `GET /api/v1/domains` are the standalone Domains & Hosting control plane. Nexus owns a small JSON inventory at `${NEXUS_DATA_DIR}/domains-hosting.json`, seeded with the known DreamtecLabs estate only when no Nexus inventory exists. Opening the page or listing inventory never changes Cloudflare or Hestia.
 
-The SigNoz API key belongs only in `.env` as `NEXUS_SIGNOZ_API_KEY`. Provider errors expose HTTP status/type diagnostics only; response bodies and credentials are never returned by the Nexus adapter.
+Read-only validation uses public DNS plus SMTP submission, IMAP TLS and webmail HTTPS checks. `POST /api/v1/domains/validate` is safe while mutations are locked. Cloudflare/Hestia mutation remains behind the `DomainOrchestratorProvider` and currently invokes the already validated `services/nexus-domains-helper`; the PDM Rust Domains module is not imported by Nexus Core.
+
+Mutations are disabled by default with `NEXUS_DOMAINS_OPERATIONS_ENABLED=false`. When deliberately enabled, onboard/migrate calls the helper, persists a `pending` Nexus record, then repeats independent Nexus diagnostics. Success is reported only after all applicable post-operation checks pass; partial external success remains fail-visible as `pending`. Operations are appended to `${NEXUS_DATA_DIR}/domains-hosting-audit.jsonl`.
+
+## Visual system
+
+The standalone Nexus UI is light-first: white surfaces, dark readable text and colorful accents/statuses. Dark application surfaces are not part of the vNext visual baseline.
 
 ## Runtime deployment
 
-The standalone runtime supports both Compose and the native systemd deployment used by `nexus-01`. `deploy.sh` chooses native deployment automatically when Docker Compose is unavailable. On a new host, copy `.env.example` to `.env`, set environment-specific values and keep secrets only in `.env`.
-
-The native runtime installs Nexus Core into its venv, writes `nexus-core.service` and `nexus-otel.service`, restarts them and verifies health. Monitoring discovery is rebuilt from the Nexus-owned inventory on every Nexus Core startup, so collector state is not dependent on a previous API write.
-
-Existing PDM services remain in place during migration. Deploying Nexus Core does not replace or stop PDM; production cutover happens domain-by-domain only after parity validation.
+The standalone runtime supports Compose and the native systemd deployment used by `nexus-01`. `deploy.sh` chooses native deployment when Docker Compose is unavailable. The native runtime installs Nexus Core into its venv, writes `nexus-core.service` and `nexus-otel.service`, restarts them and verifies health. Existing PDM services remain in place during migration; cutover happens domain-by-domain after parity validation.
 
 ## Change policy
 
-New Nexus features belong here, not under the upstream PDM backend/UI trees. Existing PDM customizations remain supported while they are migrated. Changes inside PDM should be limited to provider compatibility, security fixes, packaging and migration work.
+New Nexus features belong under `nexus/`, not in upstream PDM backend/UI trees. Existing PDM customizations remain supported while migrated. Changes inside PDM are limited to provider compatibility, security, packaging and migration work.
