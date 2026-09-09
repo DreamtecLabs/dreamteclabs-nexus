@@ -41,15 +41,7 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          # A prior attempt's build container can be left running (e.g.
-          # cancelled by this workflow's own concurrency group) and keep
-          # writing root-owned files into the bind-mounted workspace after
-          # the job that started it is gone. Stop any such stragglers first,
-          # then delete the workspace contents outright instead of chowning
-          # them: checkout re-clones from scratch either way, and deletion
-          # as root sidesteps edge cases a recursive chown can trip on
-          # (partial writes, temp dirs mid-rename).
-          docker ps -q --filter label=nexus-ci-build | xargs -r docker kill
+          docker ps -q --filter label=nexus-ui-ci-build | xargs -r docker kill
           docker run --rm \
             -v "$GITHUB_WORKSPACE:/workspace" \
             debian:trixie \
@@ -58,7 +50,7 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v4
         with:
-          fetch-depth: 2
+          fetch-depth: 0
           submodules: recursive
 
       - name: Detect UI changes
@@ -66,7 +58,10 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          if git rev-parse HEAD^1 >/dev/null 2>&1; then
+          if [[ "${{ github.event_name }}" == "pull_request" ]]; then
+            base="${{ github.event.pull_request.base.sha }}"
+            changed="$(git diff --name-only "$base" "$GITHUB_SHA")"
+          elif git rev-parse HEAD^1 >/dev/null 2>&1; then
             changed="$(git diff --name-only HEAD^1 HEAD)"
           else
             changed="$(git show --pretty='' --name-only HEAD)"
@@ -99,7 +94,10 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          if git rev-parse HEAD^1 >/dev/null 2>&1; then
+          if [[ "${{ github.event_name }}" == "pull_request" ]]; then
+            base="${{ github.event.pull_request.base.sha }}"
+            changed="$(git diff --name-only "$base" "$GITHUB_SHA")"
+          elif git rev-parse HEAD^1 >/dev/null 2>&1; then
             changed="$(git diff --name-only HEAD^1 HEAD)"
           else
             changed="$(git show --pretty='' --name-only HEAD)"
@@ -107,9 +105,9 @@ jobs:
           printf '%s\n' "$changed"
 
           engine_changes="$(printf '%s\n' "$changed" | grep -E '^(server/|lib/|cli/|pdm-config/|pdm-api/)' || true)"
-          forbidden="$(printf '%s\n' "$engine_changes" | grep -Ev '^server/src/api/nexus/|^server/src/api/mod.rs$' || true)"
+          forbidden="$(printf '%s\n' "$engine_changes" | grep -Ev '^server/src/api/nexus/|^server/src/api/mod.rs$|^server/src/api/pve/node\.rs$' || true)"
           if [[ -n "$forbidden" ]]; then
-            echo "Nexus changes must not modify PDM engine paths outside the explicit Nexus backend seam:" >&2
+            echo "Nexus changes must not modify PDM engine paths outside the explicit Nexus/PDM provider seams:" >&2
             printf '%s\n' "$forbidden" >&2
             exit 1
           fi
@@ -120,7 +118,13 @@ jobs:
             grep -q 'nexus::domains::ROUTER' server/src/api/mod.rs
           fi
 
-          if git rev-parse HEAD^1 >/dev/null 2>&1 && ! git diff --quiet HEAD^1 HEAD -- ui/src/lib.rs; then
+          if [[ "${{ github.event_name }}" == "pull_request" ]]; then
+            base="${{ github.event.pull_request.base.sha }}"
+            if ! git diff --quiet "$base" "$GITHUB_SHA" -- ui/src/lib.rs; then
+              echo "ui/src/lib.rs must stay identical to upstream for this integration seam" >&2
+              exit 1
+            fi
+          elif git rev-parse HEAD^1 >/dev/null 2>&1 && ! git diff --quiet HEAD^1 HEAD -- ui/src/lib.rs; then
             echo "ui/src/lib.rs must stay identical to upstream for this integration seam" >&2
             exit 1
           fi
@@ -152,7 +156,7 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          docker ps -q --filter label=nexus-ci-build | xargs -r docker kill
+          docker ps -q --filter label=nexus-ui-ci-build | xargs -r docker kill
           docker run --rm \
             -v "$GITHUB_WORKSPACE:/workspace" \
             debian:trixie \
@@ -162,10 +166,6 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          # Long-running builds share this persistent runner with other jobs.
-          # Reclaim only Docker objects that are not in use, including stale
-          # anonymous volumes; otherwise overlay storage can leave too little
-          # headroom even before apt or Cargo starts.
           docker container prune -f
           docker image prune -af
           docker builder prune -af
@@ -195,10 +195,6 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          # Incremental state is both large and unsuitable for this release CI
-          # build. Old cache entries were able to consume the runner filesystem
-          # while rustc wrote query-cache.bin even though the source was valid.
-          # Keep reusable compiled dependencies, but drop all incremental trees.
           if [[ -d .cache/ui-target ]]; then
             find .cache/ui-target -type d -name incremental -prune -exec rm -rf {} +
             du -sh .cache/ui-target || true
@@ -214,7 +210,7 @@ jobs:
           set -o pipefail
           mkdir -p artifacts
           docker run --rm \
-            --label nexus-ci-build=1 \
+            --label nexus-ui-ci-build=1 \
             --memory=6g \
             --memory-swap=7g \
             -e HOST_UID="$(id -u)" \
@@ -240,27 +236,12 @@ jobs:
             const excerpt = lines.slice(start, Math.min(lines.length, start + 120)).join('\n').slice(-50000);
             const marker = '<!-- nexus-ui-build-diagnostics -->';
             const body = `${marker}\n### Nexus UI build diagnostics\n\nCommit: \`${context.sha}\`\n\n\`\`\`text\n${excerpt}\n\`\`\``;
-            const { data: comments } = await github.rest.issues.listComments({
-              owner: context.repo.owner,
-              repo: context.repo.repo,
-              issue_number: context.issue.number,
-              per_page: 100,
-            });
+            const { data: comments } = await github.rest.issues.listComments({ owner: context.repo.owner, repo: context.repo.repo, issue_number: context.issue.number, per_page: 100 });
             const existing = comments.find(comment => comment.body?.includes(marker));
             if (existing) {
-              await github.rest.issues.updateComment({
-                owner: context.repo.owner,
-                repo: context.repo.repo,
-                comment_id: existing.id,
-                body,
-              });
+              await github.rest.issues.updateComment({ owner: context.repo.owner, repo: context.repo.repo, comment_id: existing.id, body });
             } else {
-              await github.rest.issues.createComment({
-                owner: context.repo.owner,
-                repo: context.repo.repo,
-                issue_number: context.issue.number,
-                body,
-              });
+              await github.rest.issues.createComment({ owner: context.repo.owner, repo: context.repo.repo, issue_number: context.issue.number, body });
             }
 
       - name: Fail when package build fails
