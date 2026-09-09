@@ -58,7 +58,7 @@ jobs:
             --label nexus-ci-build=1 \
             -e HOST_UID="$(id -u)" \
             -e HOST_GID="$(id -g)" \
-            -e CARGO_BUILD_JOBS=1 \
+            -e CARGO_BUILD_JOBS=2 \
             -e CARGO_INCREMENTAL=0 \
             -e CARGO_TARGET_DIR=/cargo-cache/target \
             -v "$GITHUB_WORKSPACE:/workspace" \
