@@ -27,7 +27,7 @@ permissions:
 jobs:
   backend-package:
     runs-on: self-hosted
-    timeout-minutes: 90
+    timeout-minutes: 120
     steps:
       - name: Recover workspace ownership
         shell: bash
