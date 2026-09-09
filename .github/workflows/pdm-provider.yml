@@ -58,13 +58,15 @@ jobs:
           docker run --rm -v "$GITHUB_WORKSPACE:/workspace" -w /workspace rust:latest \
             sh -c 'rustup component add rustfmt && cargo fmt --all -- --check'
 
-      - name: Restore backend Cargo cache
-        uses: actions/cache@v4
-        with:
-          path: .cache/backend-target
-          key: pdm-provider-${{ runner.os }}-${{ hashFiles('Cargo.lock', 'Cargo.toml', 'server/Cargo.toml', 'debian/control') }}
-          restore-keys: |
-            pdm-provider-${{ runner.os }}-
+      - name: Prepare persistent backend Cargo target
+        shell: bash
+        run: |
+          set -euo pipefail
+          cache_root="$RUNNER_WORKSPACE/.nexus-cache/pdm-provider"
+          mkdir -p "$cache_root/target"
+          chmod -R a+rwX "$cache_root"
+          echo "PDM_CARGO_TARGET=$cache_root/target" >> "$GITHUB_ENV"
+          du -sh "$cache_root/target" || true
 
       - name: Build PDM backend package
         shell: bash
@@ -78,8 +80,9 @@ jobs:
             -e HOST_GID="$(id -g)" \
             -e CARGO_BUILD_JOBS=2 \
             -e CARGO_INCREMENTAL=0 \
-            -e CARGO_TARGET_DIR=/workspace/.cache/backend-target \
+            -e CARGO_TARGET_DIR=/cargo-target \
             -v "$GITHUB_WORKSPACE:/workspace" \
+            -v "$PDM_CARGO_TARGET:/cargo-target" \
             -w /workspace \
             debian:trixie \
             bash tools/nexus/build-backend-container.sh
