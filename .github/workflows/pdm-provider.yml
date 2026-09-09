@@ -26,23 +26,12 @@ permissions:
 
 jobs:
   backend-package:
-    runs-on: self-hosted
-    timeout-minutes: 120
+    # The PDM Debian build is CPU/RAM intensive. Running it on the shared
+    # homelab runners caused multi-hour queues, runner contention and SIGKILLs.
+    # Use an isolated GitHub-hosted runner so this provider gate is predictable.
+    runs-on: ubuntu-24.04
+    timeout-minutes: 90
     steps:
-      - name: Recover workspace ownership
-        shell: bash
-        run: |
-          set -euo pipefail
-          docker ps -q --filter label=nexus-ci-build | xargs -r docker kill
-          docker run --rm -v "$GITHUB_WORKSPACE:/workspace" debian:trixie find /workspace -mindepth 1 -delete
-      - name: Free disk space
-        shell: bash
-        run: |
-          set -euo pipefail
-          docker container prune -f
-          docker builder prune -af
-          docker volume prune -f
-          df -h /
       - name: Checkout
         uses: actions/checkout@v4
         with:
@@ -52,32 +41,27 @@ jobs:
         shell: bash
         run: |
           docker run --rm -v "$GITHUB_WORKSPACE:/workspace" -w /workspace rust:latest sh -c 'rustup component add rustfmt && cargo fmt --all -- --check'
-      - name: Prepare persistent backend Cargo target
-        shell: bash
-        run: |
-          set -euo pipefail
-          cache_root="$RUNNER_WORKSPACE/.nexus-cache/pdm-provider"
-          mkdir -p "$cache_root/target"
-          chmod -R a+rwX "$cache_root"
-          echo "PDM_CARGO_TARGET=$cache_root/target" >> "$GITHUB_ENV"
-          du -sh "$cache_root/target" || true
+      - name: Restore backend Cargo target
+        uses: actions/cache@v4
+        with:
+          path: .cache/backend-target
+          key: pdm-backend-${{ runner.os }}-${{ hashFiles('Cargo.lock') }}-${{ github.sha }}
+          restore-keys: |
+            pdm-backend-${{ runner.os }}-${{ hashFiles('Cargo.lock') }}-
       - name: Build PDM backend package
         shell: bash
         run: |
           set -euo pipefail
-          # Do not impose a Docker cgroup memory ceiling here. The Debian
-          # dependency installation itself was being SIGKILLed (exit 137)
-          # before Cargo started when the container was capped at 6 GiB.
-          # Cargo remains single-threaded to keep peak compile memory bounded.
+          mkdir -p "$GITHUB_WORKSPACE/.cache/backend-target"
           docker run --rm \
             --label nexus-ci-build=1 \
             -e HOST_UID="$(id -u)" \
             -e HOST_GID="$(id -g)" \
-            -e CARGO_BUILD_JOBS=1 \
+            -e CARGO_BUILD_JOBS=2 \
             -e CARGO_INCREMENTAL=0 \
             -e CARGO_TARGET_DIR=/cargo-target \
             -v "$GITHUB_WORKSPACE:/workspace" \
-            -v "$PDM_CARGO_TARGET:/cargo-target" \
+            -v "$GITHUB_WORKSPACE/.cache/backend-target:/cargo-target" \
             -w /workspace \
             debian:trixie \
             bash tools/nexus/build-backend-container.sh
