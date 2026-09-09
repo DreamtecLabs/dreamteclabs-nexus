@@ -6,13 +6,14 @@ This document classifies legacy capabilities before implementation work begins. 
 
 | Legacy capability | Decision | vNext owner | Provider / source | Notes |
 |---|---|---|---|---|
-| Dashboard / operational overview | Redesign | Platform + UI | Nexus domain APIs | Recover useful overview concepts; do not reuse NiceGUI page coupling. |
+| Dashboard / operational overview | Redesign | Platform + UI | Nexus domain APIs | **Implemented:** approved compact light operational dashboard driven by Nexus domain APIs. |
 | Assets / inventory | Migrate | Infrastructure | PDM | **Implemented:** canonical PDM-backed read model and standalone searchable Inventory workspace are production-validated. PDM is authoritative for Proxmox/PBS runtime state. |
 | Resource detail / relationships | Redesign | Infrastructure | PDM + Nexus metadata | **Implemented from provider state:** Resource Center exposes per-resource telemetry and node/guest/storage/network relationships using stable PDM identities. |
 | Resource Power Center | Migrate | Infrastructure | PDM | **Implemented, gated:** state-aware start, graceful shutdown and hard stop with confirmation, post-mutation read-back and durable audit. |
 | Direct Proxmox providers / `proxmoxer` paths | Replace by provider | Infrastructure | PDM | Do not migrate direct cluster-specific access into vNext. |
-| Infrastructure graph | Redesign | Infrastructure | PDM + Nexus metadata | **Started safely:** Estate view provides deterministic remote/node topology from PDM without a graph database. |
+| Infrastructure graph | Redesign | Infrastructure | PDM + Nexus metadata | **Implemented safely:** Estate view provides deterministic remote/node topology from PDM without a graph database. |
 | Discovery | Replace by provider / Redesign | Infrastructure | PDM first | Avoid a second broad discovery engine where PDM already knows the estate. |
+| Guest provisioning / deployment | Redesign and prioritize | Infrastructure | PDM | **In implementation:** Proxmox-style LXC/VM wizard, native PVE creation options forwarded through PDM, read-back verification, optional SSH public-key injection and monitoring selection. Mutations remain gated. |
 | Monitoring center | Migrate | Observability | SigNoz | **Implemented:** standalone Monitoring Control Center exposes SigNoz-backed live health, provider readiness and lifecycle controls. |
 | Prometheus target ownership | Redesign | Observability | Nexus + OTel/SigNoz | **Implemented:** Nexus target inventory/file_sd remains the single target-intent path. |
 | Alertmanager provider / silence reconciler | Replace by provider | Observability | SigNoz planned maintenance | **Implemented for maintenance:** no second silence control plane. |
@@ -24,8 +25,8 @@ This document classifies legacy capabilities before implementation work begins. 
 | Website / hosting management | Migrate | Domains & Hosting | Hestia | **Foundation migrated:** Hestia stays behind the orchestrator provider; website-specific lifecycle can expand later. |
 | Mail provisioning | Migrate | Domains & Hosting | Hestia | **Implemented for mail/webmail domain onboarding and migration with independent post-operation validation.** |
 | Cloudflare Tunnel publishing | Migrate | Domains & Hosting | Cloudflare | **Implemented for webmail publishing through the validated helper/provider path.** |
-| Applications / services catalog | Redesign | Platform / Infrastructure | Nexus metadata + providers | Next major candidate after Domains & Hosting production validation. |
-| Backups | Redesign | Infrastructure | PDM/PBS | Prefer PDM/PBS provider state. |
+| Applications / services catalog | Defer | Platform / Infrastructure | Nexus metadata + providers | Not a current homelab priority. Prefer resource provisioning/lifecycle workflows first. |
+| Backups | Redesign | Infrastructure | PDM/PBS | Prefer PDM/PBS provider state; integrate backup selection into provisioning after create workflow stabilizes. |
 | Compliance | Defer / Redesign | Platform | multiple | Later. |
 | Engineering / product intelligence | Defer / Redesign | Platform | multiple | Later. |
 | Product manifests | Defer | Platform | GitHub / metadata | Later. |
@@ -33,7 +34,7 @@ This document classifies legacy capabilities before implementation work begins. 
 | Collector engine / multiple collector services | Replace / Minimize | Observability | OTel + explicit adapters | Prefer one collection path. |
 | Edge agent | Defer / Selective migrate | Platform / Networking | edge agent | Only explicit gaps. |
 | Docker-specific control plane | Defer | Infrastructure | future provider | Not part of initial bounded contexts. |
-| Bootstrap / provisioning workflows | Redesign | Infrastructure | PDM + providers | Reintroduce only after lifecycle contracts stabilize. |
+| Bootstrap / provisioning workflows | Redesign | Infrastructure | PDM + explicit post-provision adapters | **Started:** creation stays PDM-owned; Nexus orchestrates SSH/monitoring/post-create verification without direct PVE access. |
 | Legacy UI / UI v2 | Discard implementation | UI | — | Functional reference only. |
 | NiceGUI runtime coupling | Discard | UI | — | vNext stays lightweight and server-rendered. |
 | Legacy composition root startup jobs/workers | Redesign | Platform | explicit services | Each background job gets one owner and isolated failure behavior. |
@@ -47,9 +48,10 @@ This document classifies legacy capabilities before implementation work begins. 
 3. Infrastructure power/lifecycle operations through PDM — **implemented behind a production safety gate**.
 4. Observability read model through SigNoz and planned maintenance — **implemented**.
 5. Resource-centric UI expansion using domain APIs only — **implemented**.
-6. Domains & Hosting through Cloudflare/Hestia — **implemented as a gated standalone vNext slice; production deployment validation pending**.
-7. Applications/services, backups and networking/IPAM after authoritative data ownership is decided.
-8. Deferred capabilities only after the core control plane has demonstrated production stability.
+6. Domains & Hosting through Cloudflare/Hestia — **implemented as a gated standalone vNext slice**.
+7. Proxmox-style LXC/VM provisioning through PDM, with Nexus post-provision SSH and monitoring — **current priority**.
+8. PBS backup/restore integration and Networking/IPAM after authoritative ownership is decided.
+9. Deferred capabilities only after the core control plane has demonstrated production stability.
 
 ## Explicit non-goals
 

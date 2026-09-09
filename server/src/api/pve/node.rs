@@ -1,10 +1,14 @@
-use anyhow::Error;
+use anyhow::{Error, bail};
+use proxmox_client::HttpApiClient;
 
 use proxmox_router::{Permission, Router, SubdirMap, list_subdirs_api_method};
 use proxmox_schema::api;
 use proxmox_sortable_macro::sortable;
+use serde_json::Value;
 
-use pdm_api_types::{NODE_SCHEMA, PRIV_RESOURCE_AUDIT, remotes::REMOTE_ID_SCHEMA};
+use pdm_api_types::{
+    NODE_SCHEMA, PRIV_RESOURCE_AUDIT, PRIV_RESOURCE_MANAGE, RemoteUpid, remotes::REMOTE_ID_SCHEMA,
+};
 use pve_api_types::{NodeConfig, StorageContent};
 
 use crate::api::{nodes::sdn, pve::storage};
@@ -17,6 +21,8 @@ pub const ROUTER: Router = Router::new()
 const SUBDIRS: SubdirMap = &sorted!([
     ("apt", &crate::api::remotes::updates::APT_ROUTER),
     ("config", &Router::new().get(&API_METHOD_GET_CONFIG)),
+    ("create-lxc", &Router::new().post(&API_METHOD_CREATE_LXC)),
+    ("create-qemu", &Router::new().post(&API_METHOD_CREATE_QEMU)),
     ("firewall", &super::firewall::NODE_FW_ROUTER),
     ("rrddata", &super::rrddata::NODE_RRD_ROUTER),
     ("network", &Router::new().get(&API_METHOD_GET_NETWORK)),
@@ -53,6 +59,71 @@ async fn get_config(remote: String, node: String) -> Result<NodeConfig, Error> {
     let client = super::connect_to_remote_by_id(&remote)?;
     let result = client.node_config(&node, None).await?;
     Ok(result)
+}
+
+/// Forward a validated guest-creation payload to the selected PVE node while keeping
+/// Nexus behind the PDM provider boundary. The payload remains PVE-native so new PVE
+/// creation options do not require Nexus to bypass PDM.
+async fn create_guest(
+    remote: String,
+    node: String,
+    kind: &str,
+    config: String,
+) -> Result<RemoteUpid, Error> {
+    let params: Value = serde_json::from_str(&config)?;
+    if !params.is_object() {
+        bail!("guest creation config must be a JSON object");
+    }
+
+    let (remotes, _) = pdm_config::remotes::config()?;
+    let remote_config = super::get_remote(&remotes, &remote)?;
+    let client = crate::connection::make_raw_client(remote_config)?;
+    let path = format!("/api2/extjs/nodes/{node}/{kind}");
+    let response = client.post(&path, &params).await?;
+    let upid: String = response.expect_json()?.data;
+    super::new_remote_upid(remote, upid.parse()?).await
+}
+
+#[api(
+    input: {
+        properties: {
+            remote: { schema: REMOTE_ID_SCHEMA },
+            node: { schema: NODE_SCHEMA },
+            config: {
+                type: String,
+                description: "JSON object containing the native PVE LXC creation parameters.",
+            },
+        },
+    },
+    returns: { type: RemoteUpid },
+    access: {
+        permission: &Permission::Privilege(&["resource", "{remote}", "node", "{node}"], PRIV_RESOURCE_MANAGE, false),
+    },
+)]
+/// Create an LXC guest on a PVE remote.
+async fn create_lxc(remote: String, node: String, config: String) -> Result<RemoteUpid, Error> {
+    create_guest(remote, node, "lxc", config).await
+}
+
+#[api(
+    input: {
+        properties: {
+            remote: { schema: REMOTE_ID_SCHEMA },
+            node: { schema: NODE_SCHEMA },
+            config: {
+                type: String,
+                description: "JSON object containing the native PVE QEMU creation parameters.",
+            },
+        },
+    },
+    returns: { type: RemoteUpid },
+    access: {
+        permission: &Permission::Privilege(&["resource", "{remote}", "node", "{node}"], PRIV_RESOURCE_MANAGE, false),
+    },
+)]
+/// Create a QEMU guest on a PVE remote.
+async fn create_qemu(remote: String, node: String, config: String) -> Result<RemoteUpid, Error> {
+    create_guest(remote, node, "qemu", config).await
 }
 
 const STORAGE_ROUTER: Router = Router::new()

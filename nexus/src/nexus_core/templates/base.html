@@ -9,6 +9,7 @@
   <link rel="stylesheet" href="/static/dashboard.css">
   <link rel="stylesheet" href="/static/visible-separators.css">
   <link rel="stylesheet" href="/static/compact-workspaces.css">
+  <link rel="stylesheet" href="/static/provisioning.css">
 </head>
 <body class="{{ 'dashboard-page' if request.url.path == '/' else 'workspace-page' }}">
 <header class="app-header">
@@ -28,6 +29,7 @@
       <a class="{{ 'active' if request.url.path == '/' else '' }}" href="/">⌂ Overview</a>
       <a class="{{ 'active' if request.url.path.startswith('/infrastructure/estate') else '' }}" href="/infrastructure/estate">▤ Estate</a>
       <a class="{{ 'active' if request.url.path == '/infrastructure' or request.url.path.startswith('/infrastructure/resource') else '' }}" href="/infrastructure">▦ Inventory</a>
+      <a class="{{ 'active' if request.url.path.startswith('/provisioning') else '' }}" href="/provisioning">＋ Provision</a>
       <a class="{{ 'active' if request.url.path.startswith('/infrastructure/power') else '' }}" href="/infrastructure/power">◉ Power</a>
       <a class="{{ 'active' if request.url.path.startswith('/monitoring') else '' }}" href="/monitoring">▥ Monitoring</a>
       <a class="{{ 'active' if request.url.path.startswith('/domains') else '' }}" href="/domains">◉ Domains & Hosting</a>

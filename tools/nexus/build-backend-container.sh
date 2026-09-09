@@ -57,9 +57,12 @@ mkdir -p "$CARGO_TARGET_DIR"
 # workspace writable before creating that build tree; ownership is restored to
 # the host runner by the EXIT trap above.
 chmod -R a+rwX /workspace
-export CARGO_BUILD_JOBS=1
-export CARGO_INCREMENTAL=0
-export MAKEFLAGS=-j1
+# Keep parallelism conservative for the 6 GiB CI container, but honor an
+# explicit caller override instead of silently forcing the full Debian/Rust
+# package build to run single-threaded.
+export CARGO_BUILD_JOBS="${CARGO_BUILD_JOBS:-2}"
+export CARGO_INCREMENTAL="${CARGO_INCREMENTAL:-0}"
+export MAKEFLAGS="-j${CARGO_BUILD_JOBS}"
 
 # Debian packaging occasionally returns non-zero only in the final lintian
 # pass while the installable main package has already been produced. Capture
