@@ -76,7 +76,7 @@ jobs:
             --memory-swap=7g \
             -e HOST_UID="$(id -u)" \
             -e HOST_GID="$(id -g)" \
-            -e CARGO_BUILD_JOBS=1 \
+            -e CARGO_BUILD_JOBS=2 \
             -e CARGO_INCREMENTAL=0 \
             -e CARGO_TARGET_DIR=/workspace/.cache/backend-target \
             -v "$GITHUB_WORKSPACE:/workspace" \
