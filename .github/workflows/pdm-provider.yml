@@ -60,9 +60,9 @@ jobs:
             -e HOST_GID="$(id -g)" \
             -e CARGO_BUILD_JOBS=1 \
             -e CARGO_INCREMENTAL=0 \
-            -e CARGO_TARGET_DIR=/cargo-target \
+            -e CARGO_TARGET_DIR=/cargo-cache/target \
             -v "$GITHUB_WORKSPACE:/workspace" \
-            -v "$GITHUB_WORKSPACE/.cache/backend-target:/cargo-target" \
+            -v "$GITHUB_WORKSPACE/.cache/backend-target:/cargo-cache" \
             -w /workspace \
             debian:trixie \
             bash tools/nexus/build-backend-container.sh 2>&1 | tee artifacts/backend-build.log
@@ -84,7 +84,7 @@ jobs:
             const start = errorStart >= 0 ? Math.max(0, errorStart - 45) : Math.max(0, lines.length - 160);
             const excerpt = lines.slice(start, Math.min(lines.length, start + 160)).join('\n').slice(-50000);
             const marker = '<!-- pdm-provider-build-diagnostics -->';
-            const body = `${marker}\n### PDM Provider build diagnostics\n\nCommit: \`${context.sha}\`\n\n\`\`\`text\n${excerpt}\n\`\`\``;
+            const body = `${marker}\n### PDM Provider build diagnostics\n\nHead: \`${{ github.event.pull_request.head.sha || github.sha }}\`\n\n\`\`\`text\n${excerpt}\n\`\`\``;
             const { data: comments } = await github.rest.issues.listComments({ owner: context.repo.owner, repo: context.repo.repo, issue_number: context.issue.number, per_page: 100 });
             const existing = comments.find(comment => comment.body?.includes(marker));
             if (existing) await github.rest.issues.updateComment({ owner: context.repo.owner, repo: context.repo.repo, comment_id: existing.id, body });
