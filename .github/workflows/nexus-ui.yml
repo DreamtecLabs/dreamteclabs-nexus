@@ -42,17 +42,12 @@ jobs:
         run: |
           set -euo pipefail
           docker ps -q --filter label=nexus-ui-ci-build | xargs -r docker kill
-          docker run --rm \
-            -v "$GITHUB_WORKSPACE:/workspace" \
-            debian:trixie \
-            find /workspace -mindepth 1 -delete
-
+          docker run --rm -v "$GITHUB_WORKSPACE:/workspace" debian:trixie find /workspace -mindepth 1 -delete
       - name: Checkout
         uses: actions/checkout@v4
         with:
           fetch-depth: 0
           submodules: recursive
-
       - name: Detect UI changes
         id: changes
         shell: bash
@@ -66,20 +61,13 @@ jobs:
           else
             changed="$(git show --pretty='' --name-only HEAD)"
           fi
-          if printf '%s\n' "$changed" | grep -Eq '^(ui/|tools/nexus/|\.github/workflows/nexus-ui\.yml$)'; then
-            echo 'ui_changed=true' >> "$GITHUB_OUTPUT"
-          else
-            echo 'ui_changed=false' >> "$GITHUB_OUTPUT"
-          fi
-
+          if printf '%s\n' "$changed" | grep -Eq '^(ui/|tools/nexus/|\.github/workflows/nexus-ui\.yml$)'; then echo 'ui_changed=true' >> "$GITHUB_OUTPUT"; else echo 'ui_changed=false' >> "$GITHUB_OUTPUT"; fi
       - name: Install Rust stable
         uses: dtolnay/rust-toolchain@stable
         with:
           components: rustfmt
-
       - name: Check formatting
         run: cargo fmt --manifest-path ui/Cargo.toml --all -- --check
-
       - name: Check helper syntax
         run: |
           bash -n tools/nexus/build-install-ui.sh
@@ -89,7 +77,6 @@ jobs:
           bash -n tools/nexus/deploy-ui.sh
           bash -n tools/nexus/deploy-backend.sh
           bash -n tools/nexus/validate-domains-ci.sh
-
       - name: Enforce Nexus ownership boundary
         shell: bash
         run: |
@@ -103,7 +90,6 @@ jobs:
             changed="$(git show --pretty='' --name-only HEAD)"
           fi
           printf '%s\n' "$changed"
-
           engine_changes="$(printf '%s\n' "$changed" | grep -E '^(server/|lib/|cli/|pdm-config/|pdm-api/)' || true)"
           forbidden="$(printf '%s\n' "$engine_changes" | grep -Ev '^server/src/api/nexus/|^server/src/api/mod.rs$|^server/src/api/pve/node\.rs$' || true)"
           if [[ -n "$forbidden" ]]; then
@@ -111,24 +97,12 @@ jobs:
             printf '%s\n' "$forbidden" >&2
             exit 1
           fi
-
           api_wiring="$(printf '%s\n' "$engine_changes" | grep '^server/src/api/mod.rs$' || true)"
-          if [[ -n "$api_wiring" ]]; then
-            grep -q '^pub mod nexus;' server/src/api/mod.rs
-            grep -q 'nexus::domains::ROUTER' server/src/api/mod.rs
-          fi
-
+          if [[ -n "$api_wiring" ]]; then grep -q '^pub mod nexus;' server/src/api/mod.rs; grep -q 'nexus::domains::ROUTER' server/src/api/mod.rs; fi
           if [[ "${{ github.event_name }}" == "pull_request" ]]; then
             base="${{ github.event.pull_request.base.sha }}"
-            if ! git diff --quiet "$base" "$GITHUB_SHA" -- ui/src/lib.rs; then
-              echo "ui/src/lib.rs must stay identical to upstream for this integration seam" >&2
-              exit 1
-            fi
-          elif git rev-parse HEAD^1 >/dev/null 2>&1 && ! git diff --quiet HEAD^1 HEAD -- ui/src/lib.rs; then
-            echo "ui/src/lib.rs must stay identical to upstream for this integration seam" >&2
-            exit 1
-          fi
-
+            if ! git diff --quiet "$base" "$GITHUB_SHA" -- ui/src/lib.rs; then echo "ui/src/lib.rs must stay identical to upstream for this integration seam" >&2; exit 1; fi
+          elif git rev-parse HEAD^1 >/dev/null 2>&1 && ! git diff --quiet HEAD^1 HEAD -- ui/src/lib.rs; then echo "ui/src/lib.rs must stay identical to upstream for this integration seam" >&2; exit 1; fi
       - name: Verify Nexus ownership seam
         shell: bash
         run: |
@@ -140,7 +114,6 @@ jobs:
           grep -q 'mod nexus;' ui/src/main_menu.rs
           grep -q 'NexusHome' ui/src/main_menu.rs
           grep -q 'NexusInventory' ui/src/main_menu.rs
-
       - name: Validate Domains & Hosting backend
         shell: bash
         run: bash tools/nexus/validate-domains-ci.sh
@@ -157,11 +130,7 @@ jobs:
         run: |
           set -euo pipefail
           docker ps -q --filter label=nexus-ui-ci-build | xargs -r docker kill
-          docker run --rm \
-            -v "$GITHUB_WORKSPACE:/workspace" \
-            debian:trixie \
-            find /workspace -mindepth 1 -delete
-
+          docker run --rm -v "$GITHUB_WORKSPACE:/workspace" debian:trixie find /workspace -mindepth 1 -delete
       - name: Free disk space
         shell: bash
         run: |
@@ -174,14 +143,12 @@ jobs:
           df -h /
           df -ih /
           free -h
-
       - name: Checkout
         uses: actions/checkout@v4
         with:
           clean: true
           fetch-depth: 2
           submodules: recursive
-
       - name: Restore UI Cargo cache
         uses: actions/cache@v4
         with:
@@ -190,18 +157,13 @@ jobs:
           restore-keys: |
             ui-cargo-${{ runner.os }}-${{ hashFiles('Cargo.lock', 'Cargo.toml', 'ui/Cargo.toml', 'ui/debian/control') }}-
             ui-cargo-${{ runner.os }}-
-
       - name: Prune non-reusable Cargo cache
         shell: bash
         run: |
           set -euo pipefail
-          if [[ -d .cache/ui-target ]]; then
-            find .cache/ui-target -type d -name incremental -prune -exec rm -rf {} +
-            du -sh .cache/ui-target || true
-          fi
+          if [[ -d .cache/ui-target ]]; then find .cache/ui-target -type d -name incremental -prune -exec rm -rf {} +; du -sh .cache/ui-target || true; fi
           df -h /
           df -ih /
-
       - name: Build package in Debian Trixie
         id: package_build
         continue-on-error: true
@@ -209,20 +171,7 @@ jobs:
         run: |
           set -o pipefail
           mkdir -p artifacts
-          docker run --rm \
-            --label nexus-ui-ci-build=1 \
-            --memory=6g \
-            --memory-swap=7g \
-            -e HOST_UID="$(id -u)" \
-            -e HOST_GID="$(id -g)" \
-            -e CARGO_BUILD_JOBS=1 \
-            -e CARGO_INCREMENTAL=0 \
-            -e CARGO_TARGET_DIR=/workspace/.cache/ui-target \
-            -v "$GITHUB_WORKSPACE:/workspace" \
-            -w /workspace \
-            debian:trixie \
-            bash tools/nexus/build-ui-container.sh 2>&1 | tee artifacts/build.log
-
+          docker run --rm --label nexus-ui-ci-build=1 --memory=6g --memory-swap=7g -e HOST_UID="$(id -u)" -e HOST_GID="$(id -g)" -e CARGO_BUILD_JOBS=1 -e CARGO_INCREMENTAL=0 -e CARGO_TARGET_DIR=/workspace/.cache/ui-target -v "$GITHUB_WORKSPACE:/workspace" -w /workspace debian:trixie bash tools/nexus/build-ui-container.sh 2>&1 | tee artifacts/build.log
       - name: Publish build failure diagnostics
         if: steps.package_build.outcome == 'failure' && github.event_name == 'pull_request'
         uses: actions/github-script@v7
@@ -238,16 +187,10 @@ jobs:
             const body = `${marker}\n### Nexus UI build diagnostics\n\nCommit: \`${context.sha}\`\n\n\`\`\`text\n${excerpt}\n\`\`\``;
             const { data: comments } = await github.rest.issues.listComments({ owner: context.repo.owner, repo: context.repo.repo, issue_number: context.issue.number, per_page: 100 });
             const existing = comments.find(comment => comment.body?.includes(marker));
-            if (existing) {
-              await github.rest.issues.updateComment({ owner: context.repo.owner, repo: context.repo.repo, comment_id: existing.id, body });
-            } else {
-              await github.rest.issues.createComment({ owner: context.repo.owner, repo: context.repo.repo, issue_number: context.issue.number, body });
-            }
-
+            if (existing) await github.rest.issues.updateComment({ owner: context.repo.owner, repo: context.repo.repo, comment_id: existing.id, body }); else await github.rest.issues.createComment({ owner: context.repo.owner, repo: context.repo.repo, issue_number: context.issue.number, body });
       - name: Fail when package build fails
         if: steps.package_build.outcome == 'failure'
         run: exit 1
-
       - name: Validate artifact provenance
         shell: bash
         run: |
@@ -255,7 +198,6 @@ jobs:
           test "$(cat artifacts/BUILD_COMMIT)" = "$GITHUB_SHA"
           (cd artifacts && sha256sum --check SHA256SUMS)
           dpkg-deb --info artifacts/proxmox-datacenter-manager-ui_*.deb >/dev/null
-
       - name: Upload commit-addressed package
         uses: actions/upload-artifact@v4
         with:
