@@ -65,10 +65,12 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
+          # Do not impose a Docker cgroup memory ceiling here. The Debian
+          # dependency installation itself was being SIGKILLed (exit 137)
+          # before Cargo started when the container was capped at 6 GiB.
+          # Cargo remains single-threaded to keep peak compile memory bounded.
           docker run --rm \
             --label nexus-ci-build=1 \
-            --memory=6g \
-            --memory-swap=7g \
             -e HOST_UID="$(id -u)" \
             -e HOST_GID="$(id -g)" \
             -e CARGO_BUILD_JOBS=1 \
