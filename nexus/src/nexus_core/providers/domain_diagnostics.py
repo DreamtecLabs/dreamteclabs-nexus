@@ -25,10 +25,19 @@ class PublicDomainDiagnosticsProvider:
     async def _tcp(self, host: str, port: int, *, tls: bool = False) -> tuple[bool, str]:
         context = ssl.create_default_context() if tls else None
         try:
-            _reader, writer = await asyncio.wait_for(
+            reader, writer = await asyncio.wait_for(
                 asyncio.open_connection(host, port, ssl=context, server_hostname=host if tls else None),
                 timeout=self._timeout,
             )
+            if tls:
+                # Mail protocols (IMAP, POP3, ...) push a greeting banner immediately after
+                # the TLS handshake completes. Closing before draining it races the server's
+                # write against our close_notify and OpenSSL raises APPLICATION_DATA_AFTER_
+                # CLOSE_NOTIFY even though the handshake (and certificate) were fine.
+                try:
+                    await asyncio.wait_for(reader.read(1), timeout=self._timeout)
+                except (TimeoutError, OSError):
+                    pass
             writer.close()
             await writer.wait_closed()
             return True, f"{host}:{port} reachable"

@@ -7,6 +7,7 @@ from fastapi.testclient import TestClient
 from nexus_core.config import Settings
 from nexus_core.main import create_app
 from nexus_core.ports.domains import DomainCheck, DomainOperationResult, DomainRecord, DomainValidation
+from nexus_core.providers.domain_diagnostics import PublicDomainDiagnosticsProvider
 from nexus_core.repositories.domain_audit_jsonl import JsonlDomainAuditRepository
 from nexus_core.repositories.domains_json import JsonDomainRepository
 from nexus_core.services.domains import DomainOperationsDisabled, DomainService
@@ -36,6 +37,63 @@ class FakeOrchestrator:
 
 async def _no_sleep(_: float) -> None:
     return None
+
+
+async def test_tls_check_drains_the_server_greeting_before_closing(monkeypatch) -> None:
+    # Mail protocols push a greeting the instant the TLS handshake completes (e.g. IMAP's
+    # "* OK ... ready"). Closing before reading it races our close_notify against that data
+    # and OpenSSL raises APPLICATION_DATA_AFTER_CLOSE_NOTIFY even though the handshake and
+    # certificate were fine — this reproduces that ordering without a real TLS socket.
+    calls: list[str] = []
+
+    class FakeReader:
+        async def read(self, _n: int) -> bytes:
+            calls.append("read")
+            return b"* OK IMAP4rev1 ready\r\n"
+
+    class FakeWriter:
+        def close(self) -> None:
+            calls.append("close")
+
+        async def wait_closed(self) -> None:
+            calls.append("wait_closed")
+
+    async def fake_open_connection(_host, _port, *, ssl=None, server_hostname=None):
+        return FakeReader(), FakeWriter()
+
+    monkeypatch.setattr("nexus_core.providers.domain_diagnostics.asyncio.open_connection", fake_open_connection)
+
+    provider = PublicDomainDiagnosticsProvider()
+    ok, detail = await provider._tcp("mail.example.com", 993, tls=True)
+    assert ok is True
+    assert detail == "mail.example.com:993 reachable"
+    assert calls == ["read", "close", "wait_closed"]
+
+
+async def test_non_tls_check_does_not_attempt_to_drain(monkeypatch) -> None:
+    calls: list[str] = []
+
+    class FakeReader:
+        async def read(self, _n: int) -> bytes:
+            calls.append("read")
+            return b""
+
+    class FakeWriter:
+        def close(self) -> None:
+            calls.append("close")
+
+        async def wait_closed(self) -> None:
+            calls.append("wait_closed")
+
+    async def fake_open_connection(_host, _port, *, ssl=None, server_hostname=None):
+        return FakeReader(), FakeWriter()
+
+    monkeypatch.setattr("nexus_core.providers.domain_diagnostics.asyncio.open_connection", fake_open_connection)
+
+    provider = PublicDomainDiagnosticsProvider()
+    ok, _detail = await provider._tcp("mail.example.com", 587, tls=False)
+    assert ok is True
+    assert calls == ["close", "wait_closed"]
 
 
 def test_domain_repository_seeds_known_estate_without_overwriting(tmp_path: Path) -> None:
