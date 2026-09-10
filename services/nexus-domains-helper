@@ -180,8 +180,28 @@ cf_delete_record() {
 
 cf_upsert_single_dns() {
     local zone_id="$1" type="$2" name="$3" content="$4" proxied="$5" priority="${6:-}" replace_existing="${7:-false}"
-    local list count record_id payload conflicts
-    list="$(cf_request GET "/zones/${zone_id}/dns_records?type=${type}&name=${name}")"
+    local list count record_id payload conflicts other_type_ids other_types
+
+    # A CNAME cannot coexist with any other record type at the same name (and vice
+    # versa), but non-CNAME types (A, MX, TXT, ...) coexist fine with each other.
+    # Fetch by name (not type) first so a pre-existing A/AAAA record from before
+    # Nexus managed this domain is detected as a real conflict instead of silently
+    # missed by a type-scoped lookup, which would let Cloudflare reject the write.
+    list="$(cf_request GET "/zones/${zone_id}/dns_records?name=${name}")"
+
+    other_type_ids="$(jq -r --arg type "$type" '.result[] | select(.type != $type) | select(.type == "CNAME" or $type == "CNAME") | .id' <<<"$list")"
+    if [[ -n "$other_type_ids" ]]; then
+        if [[ "$replace_existing" != "true" ]]; then
+            other_types="$(jq -r --arg type "$type" '[.result[] | select(.type != $type) | select(.type == "CNAME" or $type == "CNAME") | .type] | unique | join(", ")' <<<"$list")"
+            echo "existing ${other_types} record(s) for ${name} conflict with desired ${type} record (CNAME cannot coexist with other records); refusing destructive replacement" >&2
+            exit 5
+        fi
+        while IFS= read -r record_id; do
+            [[ -n "$record_id" ]] && cf_delete_record "$zone_id" "$record_id"
+        done <<<"$other_type_ids"
+    fi
+
+    list="$(jq --arg type "$type" '{result: [.result[] | select(.type == $type)]}' <<<"$list")"
     count="$(jq '.result | length' <<<"$list")"
 
     if [[ "$count" -gt 1 ]]; then
