@@ -22,6 +22,7 @@ _LABEL_RE = re.compile(r"^[a-z0-9_-]{1,64}$")
 _METRIC_RE = re.compile(r"^[A-Za-z_:][A-Za-z0-9_:]{0,127}$")
 _PATH_RE = re.compile(r"^/[A-Za-z0-9_./-]*$")
 _HOST_LABEL_RE = re.compile(r"^[A-Za-z0-9](?:[A-Za-z0-9-]{0,61}[A-Za-z0-9])?$")
+_AGENT_HOST_NAME_RE = re.compile(r"^[A-Za-z0-9](?:[A-Za-z0-9_.-]{0,253}[A-Za-z0-9])?$")
 _VALID_STATES = {"enabled", "maintenance", "disabled"}
 _VALID_PROFILES = {"prometheus", "icmp"}
 
@@ -48,15 +49,33 @@ class MonitoringService:
         return await self._metrics.diagnostics()
 
     async def list_hosts(self) -> list[HostSummary]:
-        # Read-only visibility into every host SigNoz's own infra-monitoring agent tracks,
-        # independent of Nexus-managed targets. A failure here is surfaced via the existing
+        # Visibility into every host SigNoz's own infra-monitoring agent tracks, independent
+        # of Nexus-managed targets. A failure here is surfaced via the existing
         # provider_diagnostics() card rather than raising through the page.
         if self._metrics is None:
             return []
         try:
-            return await self._metrics.list_hosts()
+            hosts = await self._metrics.list_hosts()
         except RuntimeError:
             return []
+        try:
+            maintained = await self._alerting.list_maintained_hosts()
+        except RuntimeError:
+            maintained = {}
+        if not maintained:
+            return hosts
+        return [replace(host, maintenance=host.name in maintained) for host in hosts]
+
+    async def set_host_maintenance(self, host_name: str, maintenance: bool) -> None:
+        normalized = host_name.strip()
+        if not _AGENT_HOST_NAME_RE.fullmatch(normalized) or len(normalized) > 255:
+            raise ValueError("invalid host name")
+        maintained = await self._alerting.list_maintained_hosts()
+        downtime_id = maintained.get(normalized)
+        if maintenance and not downtime_id:
+            await self._alerting.create_host_maintenance(normalized)
+        elif not maintenance and downtime_id:
+            await self._alerting.delete_maintenance(downtime_id)
 
     async def list_active_alerts(self) -> list[ActiveAlert]:
         if self._metrics is None:

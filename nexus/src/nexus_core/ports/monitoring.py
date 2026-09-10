@@ -53,6 +53,7 @@ class HostSummary:
     memory: float | None = None
     disk_usage: float | None = None
     load15: float | None = None
+    maintenance: bool = False
 
 
 @dataclass(frozen=True, slots=True)
@@ -78,6 +79,12 @@ class AlertingProvider(Protocol):
     async def create_maintenance(self, target: MonitoringTarget) -> str: ...
 
     async def delete_maintenance(self, downtime_id: str) -> None: ...
+
+    async def create_host_maintenance(self, host_name: str) -> str: ...
+
+    async def list_maintained_hosts(self) -> dict[str, str]:
+        """Map SigNoz-agent host name -> downtime id, for hosts Nexus put into maintenance."""
+        ...
 
 
 class MetricsProvider(Protocol):

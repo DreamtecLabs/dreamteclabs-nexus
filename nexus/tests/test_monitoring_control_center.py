@@ -11,15 +11,17 @@ from nexus_core.config import Settings
 from nexus_core.main import create_app
 from nexus_core.ports.monitoring import ActiveAlert, HostSummary, MetricSample, MonitoringProviderDiagnostics, MonitoringTarget
 from nexus_core.providers.file_sd import FileSdTelemetryRuntime
-from nexus_core.providers.signoz import SigNozMetricsProvider
+from nexus_core.providers.signoz import SigNozAlertingProvider, SigNozMetricsProvider
 from nexus_core.repositories.monitoring_json import JsonMonitoringRepository
 from nexus_core.services.monitoring import MonitoringService
 
 
 class FakeAlerting:
-    def __init__(self) -> None:
+    def __init__(self, maintained_hosts: dict[str, str] | None = None) -> None:
         self.created: list[str] = []
         self.deleted: list[str] = []
+        self.host_created: list[str] = []
+        self._maintained_hosts = dict(maintained_hosts or {})
 
     async def create_maintenance(self, target: MonitoringTarget) -> str:
         self.created.append(target.id)
@@ -27,6 +29,16 @@ class FakeAlerting:
 
     async def delete_maintenance(self, downtime_id: str) -> None:
         self.deleted.append(downtime_id)
+        self._maintained_hosts = {name: dtid for name, dtid in self._maintained_hosts.items() if dtid != downtime_id}
+
+    async def create_host_maintenance(self, host_name: str) -> str:
+        self.host_created.append(host_name)
+        downtime_id = f"dt-host-{host_name}"
+        self._maintained_hosts[host_name] = downtime_id
+        return downtime_id
+
+    async def list_maintained_hosts(self) -> dict[str, str]:
+        return dict(self._maintained_hosts)
 
 
 class FakeMetrics:
@@ -277,3 +289,144 @@ async def test_signoz_list_active_alerts_excludes_inactive_rules() -> None:
     alerts = await provider.list_active_alerts()
     assert {alert.id for alert in alerts} == {"r2", "r3"}
     assert all(alert.state != "inactive" for alert in alerts)
+
+
+@pytest.mark.asyncio
+async def test_signoz_list_hosts_treats_negative_sentinel_as_no_data() -> None:
+    def handler(request: httpx.Request) -> httpx.Response:
+        return httpx.Response(
+            200,
+            json={
+                "status": "success",
+                "data": {
+                    "type": "list",
+                    "records": [
+                        {"hostName": "flaky-01.internal", "status": "active", "cpu": -1, "memory": 0.5, "diskUsage": -1, "load15": 0.1},
+                    ],
+                    "total": 1,
+                },
+            },
+        )
+
+    provider = SigNozMetricsProvider(base_url="http://signoz.test", api_key="secret", transport=httpx.MockTransport(handler))
+    hosts = await provider.list_hosts()
+    assert hosts[0].cpu is None
+    assert hosts[0].disk_usage is None
+    assert hosts[0].memory == 0.5
+
+
+@pytest.mark.asyncio
+async def test_signoz_create_host_maintenance_scopes_by_host_name() -> None:
+    captured: list[dict[str, object]] = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        captured.append(json.loads(request.content))
+        return httpx.Response(200, json={"data": {"id": "dt-42"}})
+
+    provider = SigNozAlertingProvider(base_url="http://signoz.test", api_key="secret", transport=httpx.MockTransport(handler))
+    downtime_id = await provider.create_host_maintenance("pve-02.internal")
+    assert downtime_id == "dt-42"
+    assert captured[0]["scope"] == 'host.name="pve-02.internal"'
+
+
+@pytest.mark.asyncio
+async def test_signoz_list_maintained_hosts_parses_nested_shape_and_extracts_host_name() -> None:
+    def handler(request: httpx.Request) -> httpx.Response:
+        assert request.url.path == "/api/v1/downtime_schedules"
+        return httpx.Response(
+            200,
+            json={
+                "data": {
+                    "downtimeSchedules": [
+                        {"id": "dt-1", "scope": 'host.name="pve-02.internal"'},
+                        {"id": "dt-2", "scope": 'nexus_service_id="dreamteclabs-notify"'},
+                    ]
+                }
+            },
+        )
+
+    provider = SigNozAlertingProvider(base_url="http://signoz.test", api_key="secret", transport=httpx.MockTransport(handler))
+    mapping = await provider.list_maintained_hosts()
+    assert mapping == {"pve-02.internal": "dt-1"}
+
+
+@pytest.mark.asyncio
+async def test_signoz_list_maintained_hosts_tolerates_flat_list_shape() -> None:
+    def handler(request: httpx.Request) -> httpx.Response:
+        return httpx.Response(200, json={"data": [{"id": "dt-9", "scope": 'host.name="web-01.internal"'}]})
+
+    provider = SigNozAlertingProvider(base_url="http://signoz.test", api_key="secret", transport=httpx.MockTransport(handler))
+    mapping = await provider.list_maintained_hosts()
+    assert mapping == {"web-01.internal": "dt-9"}
+
+
+@pytest.mark.asyncio
+async def test_service_list_hosts_marks_maintained_hosts(tmp_path: Path) -> None:
+    repository = JsonMonitoringRepository(tmp_path / "monitoring.json")
+    runtime = FileSdTelemetryRuntime(tmp_path / "targets.json")
+    metrics = FakeMetrics(
+        {},
+        hosts=[
+            HostSummary(name="pve-02.internal", status="active", cpu=0.99),
+            HostSummary(name="pve-01.internal", status="active", cpu=0.04),
+        ],
+    )
+    alerting = FakeAlerting(maintained_hosts={"pve-02.internal": "dt-1"})
+    service = MonitoringService(repository, alerting, runtime, metrics)
+
+    hosts = await service.list_hosts()
+    by_name = {host.name: host for host in hosts}
+    assert by_name["pve-02.internal"].maintenance is True
+    assert by_name["pve-01.internal"].maintenance is False
+
+
+@pytest.mark.asyncio
+async def test_service_set_host_maintenance_creates_and_clears_downtime(tmp_path: Path) -> None:
+    repository = JsonMonitoringRepository(tmp_path / "monitoring.json")
+    runtime = FileSdTelemetryRuntime(tmp_path / "targets.json")
+    alerting = FakeAlerting()
+    service = MonitoringService(repository, alerting, runtime, FakeMetrics({}))
+
+    await service.set_host_maintenance("pve-02.internal", True)
+    assert alerting.host_created == ["pve-02.internal"]
+
+    await service.set_host_maintenance("pve-02.internal", True)
+    assert alerting.host_created == ["pve-02.internal"]
+
+    await service.set_host_maintenance("pve-02.internal", False)
+    assert alerting.deleted == ["dt-host-pve-02.internal"]
+
+
+@pytest.mark.asyncio
+async def test_service_set_host_maintenance_rejects_invalid_host_name(tmp_path: Path) -> None:
+    repository = JsonMonitoringRepository(tmp_path / "monitoring.json")
+    runtime = FileSdTelemetryRuntime(tmp_path / "targets.json")
+    service = MonitoringService(repository, FakeAlerting(), runtime, FakeMetrics({}))
+
+    with pytest.raises(ValueError):
+        await service.set_host_maintenance('pve-02" OR 1=1--', True)
+
+
+def test_control_center_host_maintenance_route_toggles_state(tmp_path: Path) -> None:
+    app = create_app(Settings(NEXUS_DATA_DIR=tmp_path, PDM_BASE_URL="https://pdm.invalid", PDM_VERIFY_TLS=False, NEXUS_SIGNOZ_API_KEY=None))
+    alerting = FakeAlerting()
+    app.state.monitoring_service = MonitoringService(
+        JsonMonitoringRepository(tmp_path / "monitoring.json"),
+        alerting,
+        FileSdTelemetryRuntime(tmp_path / "targets.json"),
+        FakeMetrics({}, hosts=[HostSummary(name="pve-02.internal", status="active", cpu=0.5)]),
+    )
+    with TestClient(app) as client:
+        page = client.get("/monitoring")
+        assert "Maintenance" in page.text
+
+        response = client.patch("/api/v1/monitoring/hosts/pve-02.internal/maintenance", json={"maintenance": True})
+        assert response.status_code == 200
+        assert alerting.host_created == ["pve-02.internal"]
+
+        response = client.patch("/api/v1/monitoring/hosts/pve-02.internal/maintenance", json={"maintenance": False})
+        assert response.status_code == 200
+        assert alerting.deleted == ["dt-host-pve-02.internal"]
+
+        bad = client.patch("/api/v1/monitoring/hosts/not valid host/maintenance", json={"maintenance": True})
+        assert bad.status_code == 422

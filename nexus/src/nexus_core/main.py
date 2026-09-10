@@ -40,6 +40,10 @@ class MonitoringStateInput(BaseModel):
     state: str = Field(min_length=1, max_length=16)
 
 
+class MonitoringHostMaintenanceInput(BaseModel):
+    maintenance: bool
+
+
 class PowerActionInput(BaseModel):
     resource_id: str = Field(min_length=1, max_length=255)
     action: str = Field(min_length=1, max_length=16)
@@ -193,6 +197,16 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         except RuntimeError as exc:
             raise HTTPException(status_code=503, detail=str(exc)) from exc
         return asdict(target)
+
+    @app.patch("/api/v1/monitoring/hosts/{host_name}/maintenance")
+    async def set_monitoring_host_maintenance(host_name: str, payload: MonitoringHostMaintenanceInput, request: Request) -> dict[str, object]:
+        try:
+            await request.app.state.monitoring_service.set_host_maintenance(host_name, payload.maintenance)
+        except ValueError as exc:
+            raise HTTPException(status_code=422, detail=str(exc)) from exc
+        except RuntimeError as exc:
+            raise HTTPException(status_code=503, detail=str(exc)) from exc
+        return {"host": host_name, "maintenance": payload.maintenance}
 
     @app.delete("/api/v1/monitoring/targets/{target_id}")
     async def delete_monitoring_target(target_id: str, request: Request) -> dict[str, object]:

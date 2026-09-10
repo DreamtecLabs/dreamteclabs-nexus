@@ -51,12 +51,12 @@
   </div>
   <div class="table-wrap">
     <table>
-      <thead><tr><th>Host</th><th>Status</th><th>CPU</th><th>Memory</th><th>Disk</th><th>Load (15m)</th></tr></thead>
+      <thead><tr><th>Host</th><th>Status</th><th>CPU</th><th>Memory</th><th>Disk</th><th>Load (15m)</th><th>Actions</th></tr></thead>
       <tbody>
       {% for host in hosts %}
       <tr>
         <td><strong>{{ host.name }}</strong></td>
-        <td><span class="pill {{ 'enabled' if host.status == 'active' else 'disabled' }}">{{ host.status }}</span></td>
+        <td><span class="pill {{ 'maintenance' if host.maintenance else ('enabled' if host.status == 'active' else 'disabled') }}">{{ 'maintenance' if host.maintenance else host.status }}</span></td>
         <td>
           {% if host.cpu is not none %}
           <div class="meter-row" style="grid-template-columns:1fr 42px">
@@ -82,9 +82,18 @@
           {% else %}<span class="muted small">&mdash;</span>{% endif %}
         </td>
         <td class="muted small">{{ '%.2f'|format(host.load15) if host.load15 is not none else '—' }}</td>
+        <td>
+          <div class="actions">
+            {% if host.maintenance %}
+              <button class="action-button start" data-host-maintenance="false" data-host-name="{{ host.name }}">Resume</button>
+            {% else %}
+              <button class="action-button maintenance" data-host-maintenance="true" data-host-name="{{ host.name }}">Maintenance</button>
+            {% endif %}
+          </div>
+        </td>
       </tr>
       {% else %}
-      <tr><td colspan="6" class="empty">No hosts reported by SigNoz.</td></tr>
+      <tr><td colspan="7" class="empty">No hosts reported by SigNoz.</td></tr>
       {% endfor %}
       </tbody>
     </table>
@@ -158,6 +167,34 @@ for (const button of document.querySelectorAll('[data-monitoring-state]')) {
       if (!response.ok) throw new Error(payload.detail || `HTTP ${response.status}`);
       message.className = 'operation-message success';
       message.textContent = `${targetId} is now ${payload.state}.`;
+      window.setTimeout(() => window.location.reload(), 500);
+    } catch (error) {
+      button.disabled = false;
+      message.className = 'operation-message error';
+      message.textContent = String(error.message || error);
+    }
+  });
+}
+
+for (const button of document.querySelectorAll('[data-host-maintenance]')) {
+  button.addEventListener('click', async () => {
+    const message = document.getElementById('monitoring-message');
+    const hostName = button.dataset.hostName;
+    const maintenance = button.dataset.hostMaintenance === 'true';
+    button.disabled = true;
+    message.hidden = false;
+    message.className = 'operation-message pending';
+    message.textContent = `${maintenance ? 'Putting' : 'Resuming'} ${hostName}…`;
+    try {
+      const response = await fetch(`/api/v1/monitoring/hosts/${encodeURIComponent(hostName)}/maintenance`, {
+        method: 'PATCH',
+        headers: {'Content-Type': 'application/json'},
+        body: JSON.stringify({maintenance}),
+      });
+      const payload = await response.json();
+      if (!response.ok) throw new Error(payload.detail || `HTTP ${response.status}`);
+      message.className = 'operation-message success';
+      message.textContent = `${hostName} is ${maintenance ? 'now in maintenance' : 'no longer in maintenance'}.`;
       window.setTimeout(() => window.location.reload(), 500);
     } catch (error) {
       button.disabled = false;

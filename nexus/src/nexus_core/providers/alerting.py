@@ -8,6 +8,12 @@ class UnconfiguredAlertingProvider:
     async def delete_maintenance(self, downtime_id: str) -> None:
         raise RuntimeError("NEXUS_SIGNOZ_API_KEY is not configured")
 
+    async def create_host_maintenance(self, host_name: str) -> str:
+        raise RuntimeError("NEXUS_SIGNOZ_API_KEY is not configured")
+
+    async def list_maintained_hosts(self) -> dict[str, str]:
+        return {}
+
 
 class UnconfiguredMetricsProvider:
     async def latest_metric(

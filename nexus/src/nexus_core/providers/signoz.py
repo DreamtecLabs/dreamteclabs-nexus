@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from datetime import UTC, datetime, timedelta
+import re
 import time
 from typing import Any
 
@@ -49,19 +50,36 @@ class _SigNozClient:
         return data
 
 
+_HOST_SCOPE_RE = re.compile(r'host\.name\s*=\s*"([^"]+)"')
+
+
 class SigNozAlertingProvider(_SigNozClient):
     async def create_maintenance(self, target: MonitoringTarget) -> str:
+        return await self._create_downtime(
+            name=f"Nexus maintenance: {target.name}",
+            description=f"Automatically created by Nexus while service '{target.id}' is in Maintenance.",
+            scope=f'nexus_service_id="{target.id}"',
+        )
+
+    async def create_host_maintenance(self, host_name: str) -> str:
+        return await self._create_downtime(
+            name=f"Nexus maintenance: {host_name}",
+            description=f"Automatically created by Nexus while host '{host_name}' is in Maintenance.",
+            scope=f'host.name="{host_name}"',
+        )
+
+    async def _create_downtime(self, *, name: str, description: str, scope: str) -> str:
         now = datetime.now(UTC)
         payload = {
-            "name": f"Nexus maintenance: {target.name}",
-            "description": f"Automatically created by Nexus while service '{target.id}' is in Maintenance.",
+            "name": name,
+            "description": description,
             "schedule": {
                 "timezone": "UTC",
                 "startTime": now.isoformat().replace("+00:00", "Z"),
                 "endTime": (now + timedelta(days=3650)).isoformat().replace("+00:00", "Z"),
             },
             "alertIds": [],
-            "scope": f'nexus_service_id="{target.id}"',
+            "scope": scope,
         }
         data = await self._request("POST", "/api/v1/downtime_schedules", json=payload)
         for path in (("id",), ("data", "id"), ("data", "downtimeSchedule", "id"), ("downtimeSchedule", "id")):
@@ -77,6 +95,38 @@ class SigNozAlertingProvider(_SigNozClient):
 
     async def delete_maintenance(self, downtime_id: str) -> None:
         await self._request("DELETE", f"/api/v1/downtime_schedules/{downtime_id}")
+
+    async def list_maintained_hosts(self) -> dict[str, str]:
+        data = await self._request("GET", "/api/v1/downtime_schedules")
+        records = self._extract_list(
+            data,
+            (("data", "downtimeSchedules"), ("data", "downtime_schedules"), ("downtimeSchedules",), ("downtime_schedules",), ("data",)),
+        )
+        mapping: dict[str, str] = {}
+        for record in records:
+            if not isinstance(record, dict):
+                continue
+            downtime_id = record.get("id")
+            scope = record.get("scope")
+            if downtime_id is None or not isinstance(scope, str):
+                continue
+            match = _HOST_SCOPE_RE.search(scope)
+            if match:
+                mapping[match.group(1)] = str(downtime_id)
+        return mapping
+
+    @staticmethod
+    def _extract_list(data: object, paths: tuple[tuple[str, ...], ...]) -> list[object]:
+        for path in paths:
+            value: object = data
+            for key in path:
+                if not isinstance(value, dict) or key not in value:
+                    value = None
+                    break
+                value = value[key]
+            if isinstance(value, list):
+                return value
+        return []
 
 
 class SigNozMetricsProvider(_SigNozClient):
@@ -168,7 +218,13 @@ class SigNozMetricsProvider(_SigNozClient):
 
     @staticmethod
     def _as_float(value: object) -> float | None:
-        return float(value) if isinstance(value, (int, float)) else None
+        # SigNoz returns a negative sentinel (observed: -1) when a host doesn't have
+        # enough samples in the window for a stable rate() calculation. Treat that as
+        # "no data" rather than displaying a nonsensical negative percentage.
+        if not isinstance(value, (int, float)):
+            return None
+        result = float(value)
+        return result if result >= 0 else None
 
     async def diagnostics(self) -> MonitoringProviderDiagnostics:
         try:
