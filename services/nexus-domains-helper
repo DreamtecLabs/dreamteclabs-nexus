@@ -420,7 +420,14 @@ onboard() {
     RECONCILE_STEP="hestia:letsencrypt"
     public_ip="$(wait_for_mail_a "$mail_host")"
     hestia_disable_mail_forcessl "$hestia_user" "$domain"
-    trap 'hestia_restore_mail_forcessl "$hestia_user" "$domain"' EXIT
+    # Use globals, not $hestia_user/$domain, in the trap body: if
+    # hestia_issue_mail_certificate fails, set -e unwinds this function before
+    # the EXIT trap actually runs, and by then its `local`s are already gone
+    # ("unbound variable" under set -u) even though the trap text was written
+    # while they were still in scope.
+    NEXUS_FORCESSL_USER="$hestia_user"
+    NEXUS_FORCESSL_DOMAIN="$domain"
+    trap 'hestia_restore_mail_forcessl "$NEXUS_FORCESSL_USER" "$NEXUS_FORCESSL_DOMAIN"' EXIT
     hestia_issue_mail_certificate "$hestia_user" "$domain"
     hestia_restore_mail_forcessl "$hestia_user" "$domain"
     trap - EXIT
