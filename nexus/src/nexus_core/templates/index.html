@@ -1,93 +1,200 @@
 {% extends "base.html" %}
 {% block title %}Nexus Overview{% endblock %}
 {% block content %}
-<section class="kpi-grid">
-  <article class="kpi-card blue"><span class="kpi-icon">▦</span><div><span>Total Resources</span><strong>{{ summary.resources }}</strong></div></article>
-  <article class="kpi-card green"><span class="kpi-icon">▶</span><div><span>Running</span><strong>{{ summary.running }}</strong></div></article>
-  <article class="kpi-card red"><span class="kpi-icon">■</span><div><span>Stopped</span><strong>{{ summary.stopped }}</strong></div></article>
-  <article class="kpi-card purple"><span class="kpi-icon">ϟ</span><div><span>Monitoring Targets</span><strong>{{ summary.monitoring }}</strong></div></article>
-  <article class="kpi-card orange"><span class="kpi-icon">◎</span><div><span>Domains</span><strong>{{ summary.domains }}</strong></div></article>
-  <article class="kpi-card violet"><span class="kpi-icon">◉</span><div><span>Storage</span><strong>{{ summary.storage }}</strong></div></article>
+<section class="page-head">
+  <div>
+    <h1>Overview</h1>
+    <p>Your infrastructure, unified across PDM, SigNoz and Cloudflare/Hestia.</p>
+  </div>
+  <div class="status-pill">
+    <span class="dot success"></span>
+    {{ 'All systems operational' if all_systems_healthy else 'Attention required' }}
+  </div>
 </section>
 
-<section class="dashboard-grid dashboard-grid-primary">
-  <article class="dashboard-card">
-    <div class="card-heading"><h2>▤ Infrastructure Estate</h2><a href="/infrastructure/estate">View all →</a></div>
-    <div class="estate-list">
-      <div><span>▣ Proxmox Nodes</span><strong>{{ estate.nodes }}</strong></div>
-      <div><span>▭ Virtual Machines (QEMU)</span><strong>{{ estate.qemu }}</strong></div>
-      <div><span>⬡ LXC Containers</span><strong>{{ estate.lxc }}</strong></div>
-      <div><span>◉ Storage</span><strong>{{ estate.storage }}</strong></div>
-      <div><span>⌘ Networks</span><strong>{{ estate.networks }}</strong></div>
-      <div><span>▱ Proxmox Backup Server</span><strong>{{ estate.pbs }}</strong></div>
-    </div>
-  </article>
+<section class="kpi-row">
+  <div class="kpi">
+    <span class="kpi-label">Resources</span>
+    <span class="kpi-value">{{ summary.resources }}</span>
+    <div class="kpi-bar"><span style="width:{{ '%.0f'|format((summary.running / summary.resources * 100) if summary.resources else 0) }}%"></span></div>
+    <span class="kpi-sub">{{ summary.running }} running &middot; {{ summary.stopped }} stopped</span>
+  </div>
+  <div class="kpi">
+    <span class="kpi-label">Running</span>
+    <span class="kpi-value" style="color:var(--success)">{{ summary.running }}</span>
+    <span class="kpi-sub">across {{ estate.nodes }} node{{ 's' if estate.nodes != 1 else '' }}</span>
+  </div>
+  <div class="kpi">
+    <span class="kpi-label">Stopped</span>
+    <span class="kpi-value" style="color:var(--text-muted)">{{ summary.stopped }}</span>
+    <span class="kpi-sub">idle guests</span>
+  </div>
+  <div class="kpi">
+    <span class="kpi-label">Monitoring targets</span>
+    <span class="kpi-value">{{ summary.monitoring }}</span>
+    <span class="kpi-sub">via SigNoz</span>
+  </div>
+  <div class="kpi">
+    <span class="kpi-label">Domains</span>
+    <span class="kpi-value">{{ summary.domains }}</span>
+    <span class="kpi-sub">{{ domains|selectattr('mail')|selectattr('webmail')|list|length }} with mail + webmail</span>
+  </div>
+  <div class="kpi">
+    <span class="kpi-label">Storage</span>
+    <span class="kpi-value">{{ summary.storage }}</span>
+    <span class="kpi-sub">volumes & datastores</span>
+  </div>
+</section>
 
-  <article class="dashboard-card">
-    <div class="card-heading"><h2>◷ Recent Activity</h2></div>
-    <div class="activity-list">
-      {% for item in recent_activity %}
-      <div class="activity-item">
-        <span class="activity-icon {{ item.kind }}">{{ '◉' if item.kind == 'domain' else '▶' }}</span>
-        <div><strong>{{ item.title }}</strong><small>{{ item.detail }}</small></div>
-        <span class="result-badge {{ item.result }}">{{ item.result }}</span>
+<section class="grid-2col">
+  <div class="col">
+    <article class="dashboard-card">
+      <div class="card-heading"><h2>Infrastructure estate</h2><a href="/infrastructure/estate">View all &rarr;</a></div>
+      {% set estate_total = estate.nodes + estate.qemu + estate.lxc + estate.storage + estate.networks + estate.pbs %}
+      <div class="stack-bar" title="{{ estate_total }} resources">
+        <span style="width:{{ '%.4f'|format((estate.nodes / estate_total * 100) if estate_total else 0) }}%;background:var(--text-faint)"></span>
+        <span style="width:{{ '%.4f'|format((estate.qemu / estate_total * 100) if estate_total else 0) }}%;background:var(--accent-soft-strong)"></span>
+        <span style="width:{{ '%.4f'|format((estate.lxc / estate_total * 100) if estate_total else 0) }}%;background:var(--accent)"></span>
+        <span style="width:{{ '%.4f'|format((estate.storage / estate_total * 100) if estate_total else 0) }}%;background:var(--accent-strong)"></span>
+        <span style="width:{{ '%.4f'|format((estate.networks / estate_total * 100) if estate_total else 0) }}%;background:var(--border-strong)"></span>
+        <span style="width:{{ '%.4f'|format((estate.pbs / estate_total * 100) if estate_total else 0) }}%;background:var(--text)"></span>
+      </div>
+      <div class="estate-legend">
+        <div class="estate-legend-item"><span class="estate-legend-swatch" style="background:var(--text-faint)"></span><span class="lname">Proxmox nodes</span><span class="lcount">{{ estate.nodes }}</span></div>
+        <div class="estate-legend-item"><span class="estate-legend-swatch" style="background:var(--accent-soft-strong)"></span><span class="lname">VMs (QEMU)</span><span class="lcount">{{ estate.qemu }}</span></div>
+        <div class="estate-legend-item"><span class="estate-legend-swatch" style="background:var(--accent)"></span><span class="lname">LXC containers</span><span class="lcount">{{ estate.lxc }}</span></div>
+        <div class="estate-legend-item"><span class="estate-legend-swatch" style="background:var(--accent-strong)"></span><span class="lname">Storage</span><span class="lcount">{{ estate.storage }}</span></div>
+        <div class="estate-legend-item"><span class="estate-legend-swatch" style="background:var(--border-strong)"></span><span class="lname">Networks</span><span class="lcount">{{ estate.networks }}</span></div>
+        <div class="estate-legend-item"><span class="estate-legend-swatch" style="background:var(--text)"></span><span class="lname">Backup server</span><span class="lcount">{{ estate.pbs }}</span></div>
+      </div>
+    </article>
+
+    <article class="dashboard-card">
+      <div class="card-heading"><h2>Top nodes by resource usage</h2><span class="muted small">{{ nodes|length }} of {{ estate.nodes }} node{{ 's' if estate.nodes != 1 else '' }}</span></div>
+      <div class="node-usage">
+        {% for node in nodes %}
+        {% set cpu_pct = (node.cpu_usage * 100) if node.cpu_usage is not none else none %}
+        {% set mem_pct = (node.memory_used_bytes / node.memory_total_bytes * 100) if node.memory_used_bytes is not none and node.memory_total_bytes else none %}
+        <div class="node-row">
+          <div class="node-top">
+            <strong>{{ node.name }}</strong>
+            {% if cpu_pct is not none and cpu_pct >= 90 %}
+            <span class="node-flag">
+              <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2"><path d="M12 9v4M12 17h.01M10.3 3.9 1.8 18a2 2 0 0 0 1.7 3h17a2 2 0 0 0 1.7-3L13.7 3.9a2 2 0 0 0-3.4 0Z"/></svg>
+              Near CPU capacity
+            </span>
+            {% endif %}
+          </div>
+          <div class="meter-row">
+            <span class="meter-label">CPU</span>
+            <div class="meter-track"><div class="meter-fill {{ 'critical' if cpu_pct is not none and cpu_pct >= 90 else ('warning' if cpu_pct is not none and cpu_pct >= 70 else '') }}" style="width:{{ '%.0f'|format(cpu_pct) if cpu_pct is not none else 0 }}%"></div></div>
+            <span class="meter-value">{{ '%.0f%%'|format(cpu_pct) if cpu_pct is not none else '—' }}</span>
+          </div>
+          <div class="meter-row">
+            <span class="meter-label">Memory</span>
+            <div class="meter-track"><div class="meter-fill {{ 'critical' if mem_pct is not none and mem_pct >= 90 else ('warning' if mem_pct is not none and mem_pct >= 70 else '') }}" style="width:{{ '%.0f'|format(mem_pct) if mem_pct is not none else 0 }}%"></div></div>
+            <span class="meter-value">{{ '%.0f%%'|format(mem_pct) if mem_pct is not none else '—' }}</span>
+          </div>
+        </div>
+        {% else %}
+        <div class="empty-compact">No PVE node telemetry available.</div>
+        {% endfor %}
+      </div>
+    </article>
+
+    <article class="dashboard-card">
+      <div class="card-heading"><h2>Domains & hosting</h2><a href="/domains">View all {{ summary.domains }} &rarr;</a></div>
+      <div class="mini-table">
+        <div class="mini-head"><span>Domain</span><span>Mail</span><span>Webmail</span><span>Status</span></div>
+        {% for domain in domains %}
+        <div class="mini-row">
+          <span class="domain-name">{{ domain.name }}</span>
+          <span><span class="status-dot {{ 'on' if domain.mail else 'off' }}"></span></span>
+          <span><span class="status-dot {{ 'on' if domain.webmail else 'off' }}"></span></span>
+          <span><span class="chip">{{ domain.configuration_mode }}</span></span>
+        </div>
+        {% else %}
+        <div class="empty-compact">No domains registered yet.</div>
+        {% endfor %}
+      </div>
+    </article>
+  </div>
+
+  <div class="col">
+    <article class="dashboard-card">
+      <div class="card-heading"><h2>System status</h2></div>
+      <div class="status-list">
+        {% for item in system_rows %}
+        <div class="status-item">
+          <span class="name"><span class="dot {{ 'success' if item.healthy else 'bad' }}"></span>{{ item.name }}</span>
+          <span class="state {{ '' if item.healthy else 'bad' }}">{{ 'Healthy' if item.healthy else 'Unavailable' }}</span>
+        </div>
+        {% endfor %}
+      </div>
+    </article>
+
+    <article class="dashboard-card">
+      <div class="card-heading"><h2>Recent activity</h2></div>
+      {% if recent_activity %}
+      <div class="activity-list">
+        {% for item in recent_activity %}
+        <div class="activity-item">
+          <span class="activity-icon {{ item.kind }}">
+            {% if item.kind == 'domain' %}
+            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><circle cx="12" cy="12" r="9"/><path d="M3 12h18M12 3a13 13 0 0 1 0 18 13 13 0 0 1 0-18Z"/></svg>
+            {% else %}
+            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M13 2 4 14h7l-1 8 9-12h-7l1-8Z"/></svg>
+            {% endif %}
+          </span>
+          <div><strong>{{ item.title }}</strong><small>{{ item.detail }}</small></div>
+          <span class="result-badge {{ item.result }}">{{ item.result }}</span>
+        </div>
+        {% endfor %}
       </div>
       {% else %}
-      <div class="empty-compact">No recent Nexus operations yet.</div>
-      {% endfor %}
-    </div>
-  </article>
-
-  <article class="dashboard-card">
-    <div class="card-heading"><h2>ϟ System Status</h2><span class="health-badge {{ 'ok' if all_systems_healthy else 'bad' }}">● {{ 'All Systems Operational' if all_systems_healthy else 'Attention Required' }}</span></div>
-    <div class="system-list">
-      {% for item in system_rows %}
-      <div><span><i class="dot {{ 'ok' if item.healthy else 'bad' }}"></i>{{ item.name }}</span><strong class="{{ 'healthy-text' if item.healthy else 'danger-text' }}">{{ 'Healthy' if item.healthy else 'Unavailable' }}</strong></div>
-      {% endfor %}
-    </div>
-  </article>
-</section>
-
-<section class="dashboard-grid dashboard-grid-secondary">
-  <article class="dashboard-card">
-    <div class="card-heading"><h2>Top Nodes by Resource Usage</h2><a href="/infrastructure/estate">View all →</a></div>
-    <div class="node-usage">
-      <div class="usage-head"><span>Node</span><span>CPU</span><span>Memory</span></div>
-      {% for node in nodes %}
-      <div class="usage-row">
-        <strong>{{ node.name }}</strong>
-        <span>{{ '%.0f%%'|format((node.cpu_usage or 0) * 100) if node.cpu_usage is not none else '—' }}</span>
-        <span>{{ '%.0f%%'|format((node.memory_used_bytes / node.memory_total_bytes) * 100) if node.memory_used_bytes is not none and node.memory_total_bytes else '—' }}</span>
+      <div class="empty-state">
+        <div class="icon">
+          <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M12 8v4l3 3"/><circle cx="12" cy="12" r="9"/></svg>
+        </div>
+        <strong>No recent operations</strong>
+        <span>Power actions and domain changes will show up here.</span>
       </div>
-      {% else %}<div class="empty-compact">No PVE node telemetry available.</div>{% endfor %}
-    </div>
-  </article>
+      {% endif %}
+    </article>
 
-  <article class="dashboard-card">
-    <div class="card-heading"><h2>◎ Domains & Hosting</h2><a href="/domains">View all →</a></div>
-    <div class="domain-mini-table">
-      <div class="mini-head"><span>Domain</span><span>Mail</span><span>Webmail</span><span>Status</span></div>
-      {% for domain in domains %}
-      <div class="mini-row"><strong>{{ domain.name }}</strong><span>{{ '●' if domain.mail else '○' }}</span><span>{{ '●' if domain.webmail else '○' }}</span><span class="pill {{ domain.configuration_mode }}">{{ domain.configuration_mode }}</span></div>
-      {% endfor %}
-    </div>
-  </article>
-
-  <article class="dashboard-card">
-    <div class="card-heading"><h2>♧ Upcoming & Alerts</h2></div>
-    <div class="alerts-list">
-      {% if remote_errors %}{% for error in remote_errors %}<div class="alert-row warning"><strong>{{ error.remote }}</strong><span>{{ error.detail }}</span></div>{% endfor %}{% endif %}
-      {% if monitoring_summary.down %}<div class="alert-row danger"><strong>Monitoring needs attention</strong><span>{{ monitoring_summary.down }} target(s) down</span></div>{% endif %}
-      {% if monitoring_summary.unknown %}<div class="alert-row info"><strong>Monitoring unknown</strong><span>{{ monitoring_summary.unknown }} target(s) without a current health signal</span></div>{% endif %}
-      {% if not remote_errors and not monitoring_summary.down and not monitoring_summary.unknown %}<div class="alert-row success"><strong>No active operational alerts</strong><span>Nexus providers and monitored targets are healthy.</span></div>{% endif %}
-    </div>
-  </article>
+    <article class="dashboard-card">
+      <div class="card-heading"><h2>Upcoming & alerts</h2></div>
+      {% if remote_errors or monitoring_summary.down or monitoring_summary.unknown %}
+      <div class="alerts-list">
+        {% for error in remote_errors %}<div class="alert-row warning"><strong>{{ error.remote }}</strong><span>{{ error.detail }}</span></div>{% endfor %}
+        {% if monitoring_summary.down %}<div class="alert-row danger"><strong>Monitoring needs attention</strong><span>{{ monitoring_summary.down }} target(s) down</span></div>{% endif %}
+        {% if monitoring_summary.unknown %}<div class="alert-row warning"><strong>Monitoring unknown</strong><span>{{ monitoring_summary.unknown }} target(s) without a current health signal</span></div>{% endif %}
+      </div>
+      {% else %}
+      <div class="empty-state good">
+        <div class="icon">
+          <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="m5 13 4 4L19 7"/></svg>
+        </div>
+        <strong>No active operational alerts</strong>
+        <span>Nexus providers and monitored targets are healthy.</span>
+      </div>
+      {% endif %}
+    </article>
+  </div>
 </section>
 
 <section class="quick-links">
-  <a class="quick-card blue" href="/infrastructure"><span>▦</span><div><strong>Infrastructure</strong><small>Nodes, VMs, LXCs, storage and networks</small></div><b>›</b></a>
-  <a class="quick-card green" href="/monitoring"><span>ϟ</span><div><strong>Monitoring</strong><small>Service health and metrics</small></div><b>›</b></a>
-  <a class="quick-card orange" href="/infrastructure/power"><span>◉</span><div><strong>Power</strong><small>Start, stop and manage resources</small></div><b>›</b></a>
-  <a class="quick-card purple" href="/domains"><span>◎</span><div><strong>Domains & Hosting</strong><small>Domains, DNS, email and websites</small></div><b>›</b></a>
+  <a class="quick-card" href="/infrastructure"><span>
+    <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><rect x="3" y="4" width="18" height="16" rx="2"/><path d="M3 10h18M8 4v16"/></svg>
+  </span><div><strong>Infrastructure</strong><small>Nodes, VMs, LXCs, storage and networks</small></div><b>&rsaquo;</b></a>
+  <a class="quick-card" href="/monitoring"><span>
+    <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><circle cx="12" cy="12" r="8.5"/><circle cx="12" cy="12" r="2.5"/></svg>
+  </span><div><strong>Monitoring</strong><small>Service health and metrics</small></div><b>&rsaquo;</b></a>
+  <a class="quick-card" href="/infrastructure/power"><span>
+    <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M13 2 4 14h7l-1 8 9-12h-7l1-8Z"/></svg>
+  </span><div><strong>Power</strong><small>Start, stop and manage resources</small></div><b>&rsaquo;</b></a>
+  <a class="quick-card" href="/domains"><span>
+    <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><circle cx="12" cy="12" r="9"/><path d="M3 12h18M12 3a13 13 0 0 1 0 18 13 13 0 0 1 0-18Z"/></svg>
+  </span><div><strong>Domains & Hosting</strong><small>Domains, DNS, email and websites</small></div><b>&rsaquo;</b></a>
 </section>
 {% endblock %}

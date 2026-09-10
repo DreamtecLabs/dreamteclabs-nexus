@@ -24,47 +24,42 @@ def test_standalone_monitoring_ui_is_served_by_nexus_core(tmp_path: Path) -> Non
     assert response.status_code == 200
     assert "Monitoring Control Center" in response.text
     assert "Nexus owns target lifecycle and maintenance" in response.text
-    assert '<body class="workspace-page">' in response.text
-    assert 'href="/static/compact-workspaces.css"' in response.text
+    assert 'class="rail"' in response.text
+    assert 'class="rail-link active"' in response.text
+    assert 'href="/monitoring"' in response.text
 
     stylesheet = client.get("/static/nexus.css")
     assert stylesheet.status_code == 200
     assert ".topbar" in stylesheet.text
-
-    compact_css = client.get("/static/compact-workspaces.css")
-    assert compact_css.status_code == 200
-    assert ".workspace-page .page-head" in compact_css.text
-    assert ".workspace-page .inventory-summary .card" in compact_css.text
-    assert ".workspace-page .monitoring-summary .card" in compact_css.text
+    assert ".rail{" in stylesheet.text
 
 
-def test_overview_uses_approved_compact_dashboard_shell(tmp_path: Path) -> None:
+def test_overview_uses_approved_console_shell(tmp_path: Path) -> None:
     client = _client(tmp_path)
     response = client.get("/")
     assert response.status_code == 200
     for text in (
-        "Your Infrastructure. Unified.",
-        "Total Resources",
-        "Infrastructure Estate",
-        "Recent Activity",
-        "System Status",
-        "Domains & Hosting",
-        "Upcoming & Alerts",
+        "Your infrastructure, unified",
+        "Resources",
+        "Infrastructure estate",
+        "Recent activity",
+        "System status",
+        "Domains & hosting",
+        "Upcoming & alerts",
     ):
         assert text in response.text
     assert "Operations without coupling product logic to PDM" not in response.text
     assert "WELCOME TO NEXUS" not in response.text
-    assert '<body class="dashboard-page">' in response.text
-    assert 'href="/static/visible-separators.css"' in response.text
-    assert 'href="/static/compact-workspaces.css"' in response.text
+    assert 'href="/static/dashboard.css"' in response.text
 
     dashboard_css = client.get("/static/dashboard.css")
     assert dashboard_css.status_code == 200
-    assert ".kpi-grid" in dashboard_css.text
-    assert ".dashboard-grid" in dashboard_css.text
-    assert "background:#fff" in dashboard_css.text
+    assert ".kpi-row" in dashboard_css.text
+    assert ".grid-2col" in dashboard_css.text
 
-    separators_css = client.get("/static/visible-separators.css")
-    assert separators_css.status_code == 200
-    assert "border-width:1.5px" in separators_css.text
-    assert ".card-heading" in separators_css.text
+    nexus_css = client.get("/static/nexus.css")
+    assert nexus_css.status_code == 200
+    # Light palette is the unconditional :root default; dark only applies under
+    # prefers-color-scheme or an explicit data-theme opt-in, never by default.
+    assert "--bg:#F3F4F9" in nexus_css.text
+    assert "prefers-color-scheme: dark" in nexus_css.text

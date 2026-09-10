@@ -3,40 +3,85 @@
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
-  <meta name="color-scheme" content="light">
+  <meta name="color-scheme" content="light dark">
   <title>{% block title %}DreamtecLabs Nexus{% endblock %}</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Sans:wght@400;500;600;700&family=IBM+Plex+Mono:wght@400;500;600&display=swap" rel="stylesheet">
   <link rel="stylesheet" href="/static/nexus.css">
   <link rel="stylesheet" href="/static/dashboard.css">
-  <link rel="stylesheet" href="/static/visible-separators.css">
-  <link rel="stylesheet" href="/static/compact-workspaces.css">
   <link rel="stylesheet" href="/static/provisioning.css">
 </head>
-<body class="{{ 'dashboard-page' if request.url.path == '/' else 'workspace-page' }}">
-<header class="app-header">
-  <div class="header-main">
-    <a class="brand" href="/">
-      <span class="brand-mark">N</span>
-      <span class="brand-copy"><span>DreamtecLabs <strong>Nexus</strong></span><small>Your Infrastructure. Unified.</small></span>
+<body>
+<div class="shell">
+  <aside class="rail">
+    <a class="rail-brand" href="/">
+      <span class="rail-logo">N</span>
+      <span class="rail-brand-text"><strong>DreamtecLabs Nexus</strong><small>Your Infrastructure. Unified.</small></span>
     </a>
-    <div class="header-tools">
-      <div class="global-search">⌕ <span>Search resources, domains, metrics...</span><kbd>⌘ K</kbd></div>
-      <span class="header-icon">♧</span>
-      <div class="profile"><span class="avatar">CK</span><span><strong>Claudio Kaist</strong><small>Administrator</small></span></div>
-    </div>
-  </div>
-  <div class="header-nav-row">
-    <nav class="primary-nav">
-      <a class="{{ 'active' if request.url.path == '/' else '' }}" href="/">⌂ Overview</a>
-      <a class="{{ 'active' if request.url.path.startswith('/infrastructure/estate') else '' }}" href="/infrastructure/estate">▤ Estate</a>
-      <a class="{{ 'active' if request.url.path == '/infrastructure' or request.url.path.startswith('/infrastructure/resource') else '' }}" href="/infrastructure">▦ Inventory</a>
-      <a class="{{ 'active' if request.url.path.startswith('/provisioning') else '' }}" href="/provisioning">＋ Provision</a>
-      <a class="{{ 'active' if request.url.path.startswith('/infrastructure/power') else '' }}" href="/infrastructure/power">◉ Power</a>
-      <a class="{{ 'active' if request.url.path.startswith('/monitoring') else '' }}" href="/monitoring">▥ Monitoring</a>
-      <a class="{{ 'active' if request.url.path.startswith('/domains') else '' }}" href="/domains">◉ Domains & Hosting</a>
+
+    <nav class="rail-group">
+      <div class="rail-group-label">Observe</div>
+      <a class="rail-link {{ 'active' if request.url.path == '/' else '' }}" href="/">
+        <svg class="rail-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><rect x="3" y="3" width="7" height="9" rx="1.5"/><rect x="14" y="3" width="7" height="5" rx="1.5"/><rect x="14" y="12" width="7" height="9" rx="1.5"/><rect x="3" y="16" width="7" height="5" rx="1.5"/></svg>
+        <span>Overview</span>
+      </a>
+      <a class="rail-link {{ 'active' if request.url.path.startswith('/infrastructure/estate') else '' }}" href="/infrastructure/estate">
+        <svg class="rail-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M3 12h4l3 8 4-16 3 8h4"/></svg>
+        <span>Estate</span>
+      </a>
+      <a class="rail-link {{ 'active' if request.url.path.startswith('/monitoring') else '' }}" href="/monitoring">
+        <svg class="rail-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><circle cx="12" cy="12" r="8.5"/><circle cx="12" cy="12" r="2.5"/></svg>
+        <span>Monitoring</span>
+      </a>
     </nav>
-    <div class="header-status"><span class="status-dot"></span> Nexus Online</div>
+
+    <nav class="rail-group">
+      <div class="rail-group-label">Manage</div>
+      <a class="rail-link {{ 'active' if request.url.path == '/infrastructure' or request.url.path.startswith('/infrastructure/resource') else '' }}" href="/infrastructure">
+        <svg class="rail-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><rect x="3" y="4" width="18" height="16" rx="2"/><path d="M3 10h18M8 4v16"/></svg>
+        <span>Inventory</span>
+      </a>
+      <a class="rail-link {{ 'active' if request.url.path.startswith('/infrastructure/power') else '' }}" href="/infrastructure/power">
+        <svg class="rail-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M13 2 4 14h7l-1 8 9-12h-7l1-8Z"/></svg>
+        <span>Power</span>
+      </a>
+      <a class="rail-link {{ 'active' if request.url.path.startswith('/domains') else '' }}" href="/domains">
+        <svg class="rail-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><circle cx="12" cy="12" r="9"/><path d="M3 12h18M12 3a13 13 0 0 1 0 18 13 13 0 0 1 0-18Z"/></svg>
+        <span>Domains & Hosting</span>
+      </a>
+    </nav>
+
+    <nav class="rail-group">
+      <div class="rail-group-label">Build</div>
+      <a class="rail-link {{ 'active' if request.url.path.startswith('/provisioning') else '' }}" href="/provisioning">
+        <svg class="rail-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M12 3v18M3 12h18"/></svg>
+        <span>Provision</span>
+      </a>
+    </nav>
+
+    <div class="rail-footer">
+      <span class="rail-status"><span class="dot success"></span>Nexus Online</span>
+      <span>Nexus Core v0.9.0</span>
+    </div>
+  </aside>
+
+  <div class="main">
+    <header class="topbar">
+      <div class="global-search">
+        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="11" cy="11" r="7"/><path d="m21 21-4.3-4.3"/></svg>
+        <span>Search resources, domains, metrics&hellip;</span>
+        <kbd>&#8984;K</kbd>
+      </div>
+      <div class="topbar-right">
+        <button class="icon-btn" type="button" aria-label="Notifications">
+          <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M6 8a6 6 0 0 1 12 0c0 5 2 6 2 6H4s2-1 2-6Z"/><path d="M10 21a2 2 0 0 0 4 0"/></svg>
+        </button>
+        <div class="profile"><span class="avatar">CK</span><span><strong>Claudio Kaist</strong><small>Administrator</small></span></div>
+      </div>
+    </header>
+    <main class="page">{% block content %}{% endblock %}</main>
   </div>
-</header>
-<main class="page">{% block content %}{% endblock %}</main>
+</div>
 </body>
 </html>

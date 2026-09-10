@@ -123,8 +123,9 @@ def test_domains_api_and_light_ui(tmp_path: Path) -> None:
         assert "mundoleo.co" in page.text
 
         css = client.get("/static/nexus.css").text
-        assert "background:#fff" in css
-        assert "#0d1117" not in css
+        # Light is the unconditional :root default; dark is opt-in only, never forced.
+        assert "--bg:#F3F4F9" in css
+        assert "prefers-color-scheme: dark" in css
 
         reconcile = client.post(
             "/api/v1/domains/reconcile",
