@@ -13,6 +13,7 @@ CLOUDFLARE_SSH_HOST="${NEXUS_CLOUDFLARE_SSH_HOST:-}"
 DDNS_RECORDS_FILE="${NEXUS_DDNS_RECORDS_FILE:-/etc/cloudflare-ddns/records.conf}"
 DDNS_SERVICE="${NEXUS_DDNS_SERVICE:-cloudflare-ddns.service}"
 HESTIA_BIN="${NEXUS_HESTIA_BIN:-/usr/local/hestia/bin}"
+FORCESSL_BACKUP_DIR="${NEXUS_FORCESSL_BACKUP_DIR:-/var/backups/nexus-domains-helper}"
 MAIL_RELAY_HOST="${NEXUS_MAIL_RELAY_HOST:-smtp.dreamteclabs.com}"
 MAIL_RELAY_IPV4="${NEXUS_MAIL_RELAY_IPV4:-23.254.215.34}"
 WEBMAIL_HTTP_ORIGIN="${NEXUS_WEBMAIL_HTTP_ORIGIN:-http://192.168.0.29:80}"
@@ -339,18 +340,25 @@ hestia_ensure_mail_domain() {
 # /.well-known/acme-challenge/) ever gets evaluated. That makes the ACME HTTP-01
 # challenge unreachable and Let's Encrypt sees it as a redirect loop. Disable the
 # redirect for the duration of certificate issuance and always restore it.
+#
+# The vhost's own include is a glob -- nginx.forcessl.conf* -- so renaming the
+# file alongside itself (nginx.forcessl.conf.disabled) still matches that glob
+# and nginx keeps including it. The file has to leave the domain's conf
+# directory entirely to actually stop being included.
 hestia_disable_mail_forcessl() {
     local user="$1" domain="$2"
     local path="/home/${user}/conf/mail/${domain}/nginx.forcessl.conf"
+    local backup="${FORCESSL_BACKUP_DIR}/${domain}.nginx.forcessl.conf"
     ssh "${SSH_OPTS[@]}" "$HESTIA_SSH_HOST" \
-        "test -f '$path' && mv -f '$path' '${path}.nexus-disabled' && systemctl reload nginx; true"
+        "mkdir -p '$FORCESSL_BACKUP_DIR' && test -f '$path' && mv -f '$path' '$backup' && systemctl reload nginx; true"
 }
 
 hestia_restore_mail_forcessl() {
     local user="$1" domain="$2"
     local path="/home/${user}/conf/mail/${domain}/nginx.forcessl.conf"
+    local backup="${FORCESSL_BACKUP_DIR}/${domain}.nginx.forcessl.conf"
     ssh "${SSH_OPTS[@]}" "$HESTIA_SSH_HOST" \
-        "test -f '${path}.nexus-disabled' && mv -f '${path}.nexus-disabled' '$path' && systemctl reload nginx; true"
+        "test -f '$backup' && mv -f '$backup' '$path' && systemctl reload nginx; true"
 }
 
 hestia_issue_mail_certificate() {
