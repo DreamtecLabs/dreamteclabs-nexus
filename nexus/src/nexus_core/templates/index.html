@@ -13,34 +13,52 @@
 </section>
 
 <section class="kpi-row">
-  <div class="kpi">
-    <span class="kpi-label">Resources</span>
+  <div class="kpi cat-indigo">
+    <div class="kpi-top">
+      <span class="kpi-icon"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><rect x="3" y="4" width="18" height="16" rx="2"/><path d="M3 10h18M8 4v16"/></svg></span>
+      <span class="kpi-label">Resources</span>
+    </div>
     <span class="kpi-value">{{ summary.resources }}</span>
     <div class="kpi-bar"><span style="width:{{ '%.0f'|format((summary.running / summary.resources * 100) if summary.resources else 0) }}%"></span></div>
     <span class="kpi-sub">{{ summary.running }} running &middot; {{ summary.stopped }} stopped</span>
   </div>
-  <div class="kpi">
-    <span class="kpi-label">Running</span>
-    <span class="kpi-value" style="color:var(--success)">{{ summary.running }}</span>
+  <div class="kpi cat-green">
+    <div class="kpi-top">
+      <span class="kpi-icon"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="m5 13 4 4L19 7"/></svg></span>
+      <span class="kpi-label">Running</span>
+    </div>
+    <span class="kpi-value">{{ summary.running }}</span>
     <span class="kpi-sub">across {{ estate.nodes }} node{{ 's' if estate.nodes != 1 else '' }}</span>
   </div>
-  <div class="kpi">
-    <span class="kpi-label">Stopped</span>
-    <span class="kpi-value" style="color:var(--text-muted)">{{ summary.stopped }}</span>
+  <div class="kpi cat-slate">
+    <div class="kpi-top">
+      <span class="kpi-icon"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><rect x="6" y="6" width="12" height="12" rx="2"/></svg></span>
+      <span class="kpi-label">Stopped</span>
+    </div>
+    <span class="kpi-value">{{ summary.stopped }}</span>
     <span class="kpi-sub">idle guests</span>
   </div>
-  <div class="kpi">
-    <span class="kpi-label">Monitoring targets</span>
+  <div class="kpi cat-teal">
+    <div class="kpi-top">
+      <span class="kpi-icon"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><circle cx="12" cy="12" r="8.5"/><circle cx="12" cy="12" r="2.5"/></svg></span>
+      <span class="kpi-label">Monitoring targets</span>
+    </div>
     <span class="kpi-value">{{ summary.monitoring }}</span>
     <span class="kpi-sub">via SigNoz</span>
   </div>
-  <div class="kpi">
-    <span class="kpi-label">Domains</span>
+  <div class="kpi cat-amber">
+    <div class="kpi-top">
+      <span class="kpi-icon"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><circle cx="12" cy="12" r="9"/><path d="M3 12h18M12 3a13 13 0 0 1 0 18 13 13 0 0 1 0-18Z"/></svg></span>
+      <span class="kpi-label">Domains</span>
+    </div>
     <span class="kpi-value">{{ summary.domains }}</span>
     <span class="kpi-sub">{{ domains|selectattr('mail')|selectattr('webmail')|list|length }} with mail + webmail</span>
   </div>
-  <div class="kpi">
-    <span class="kpi-label">Storage</span>
+  <div class="kpi cat-violet">
+    <div class="kpi-top">
+      <span class="kpi-icon"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><ellipse cx="12" cy="6" rx="8" ry="3"/><path d="M4 6v12c0 1.7 3.6 3 8 3s8-1.3 8-3V6M4 12c0 1.7 3.6 3 8 3s8-1.3 8-3"/></svg></span>
+      <span class="kpi-label">Storage</span>
+    </div>
     <span class="kpi-value">{{ summary.storage }}</span>
     <span class="kpi-sub">volumes & datastores</span>
   </div>
@@ -48,29 +66,35 @@
 
 <section class="grid-2col">
   <div class="col">
-    <article class="dashboard-card">
-      <div class="card-heading"><h2>Infrastructure estate</h2><a href="/infrastructure/estate">View all &rarr;</a></div>
+    <article class="dashboard-card cat-indigo">
+      <div class="card-heading">
+        <div class="heading-left"><span class="card-icon"><svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M3 12h4l3 8 4-16 3 8h4"/></svg></span><h2>Infrastructure estate</h2></div>
+        <a href="/infrastructure/estate">View all &rarr;</a>
+      </div>
       {% set estate_total = estate.nodes + estate.qemu + estate.lxc + estate.storage + estate.networks + estate.pbs %}
       <div class="stack-bar" title="{{ estate_total }} resources">
-        <span style="width:{{ '%.4f'|format((estate.nodes / estate_total * 100) if estate_total else 0) }}%;background:var(--text-faint)"></span>
-        <span style="width:{{ '%.4f'|format((estate.qemu / estate_total * 100) if estate_total else 0) }}%;background:var(--accent-soft-strong)"></span>
-        <span style="width:{{ '%.4f'|format((estate.lxc / estate_total * 100) if estate_total else 0) }}%;background:var(--accent)"></span>
-        <span style="width:{{ '%.4f'|format((estate.storage / estate_total * 100) if estate_total else 0) }}%;background:var(--accent-strong)"></span>
-        <span style="width:{{ '%.4f'|format((estate.networks / estate_total * 100) if estate_total else 0) }}%;background:var(--border-strong)"></span>
-        <span style="width:{{ '%.4f'|format((estate.pbs / estate_total * 100) if estate_total else 0) }}%;background:var(--text)"></span>
+        <span style="width:{{ '%.4f'|format((estate.nodes / estate_total * 100) if estate_total else 0) }}%;background:var(--pal-slate)"></span>
+        <span style="width:{{ '%.4f'|format((estate.qemu / estate_total * 100) if estate_total else 0) }}%;background:var(--pal-indigo)"></span>
+        <span style="width:{{ '%.4f'|format((estate.lxc / estate_total * 100) if estate_total else 0) }}%;background:var(--pal-teal)"></span>
+        <span style="width:{{ '%.4f'|format((estate.storage / estate_total * 100) if estate_total else 0) }}%;background:var(--pal-violet)"></span>
+        <span style="width:{{ '%.4f'|format((estate.networks / estate_total * 100) if estate_total else 0) }}%;background:var(--pal-amber)"></span>
+        <span style="width:{{ '%.4f'|format((estate.pbs / estate_total * 100) if estate_total else 0) }}%;background:var(--pal-rose)"></span>
       </div>
       <div class="estate-legend">
-        <div class="estate-legend-item"><span class="estate-legend-swatch" style="background:var(--text-faint)"></span><span class="lname">Proxmox nodes</span><span class="lcount">{{ estate.nodes }}</span></div>
-        <div class="estate-legend-item"><span class="estate-legend-swatch" style="background:var(--accent-soft-strong)"></span><span class="lname">VMs (QEMU)</span><span class="lcount">{{ estate.qemu }}</span></div>
-        <div class="estate-legend-item"><span class="estate-legend-swatch" style="background:var(--accent)"></span><span class="lname">LXC containers</span><span class="lcount">{{ estate.lxc }}</span></div>
-        <div class="estate-legend-item"><span class="estate-legend-swatch" style="background:var(--accent-strong)"></span><span class="lname">Storage</span><span class="lcount">{{ estate.storage }}</span></div>
-        <div class="estate-legend-item"><span class="estate-legend-swatch" style="background:var(--border-strong)"></span><span class="lname">Networks</span><span class="lcount">{{ estate.networks }}</span></div>
-        <div class="estate-legend-item"><span class="estate-legend-swatch" style="background:var(--text)"></span><span class="lname">Backup server</span><span class="lcount">{{ estate.pbs }}</span></div>
+        <div class="estate-legend-item"><span class="estate-legend-swatch" style="background:var(--pal-slate)"></span><span class="lname">Proxmox nodes</span><span class="lcount">{{ estate.nodes }}</span></div>
+        <div class="estate-legend-item"><span class="estate-legend-swatch" style="background:var(--pal-indigo)"></span><span class="lname">VMs (QEMU)</span><span class="lcount">{{ estate.qemu }}</span></div>
+        <div class="estate-legend-item"><span class="estate-legend-swatch" style="background:var(--pal-teal)"></span><span class="lname">LXC containers</span><span class="lcount">{{ estate.lxc }}</span></div>
+        <div class="estate-legend-item"><span class="estate-legend-swatch" style="background:var(--pal-violet)"></span><span class="lname">Storage</span><span class="lcount">{{ estate.storage }}</span></div>
+        <div class="estate-legend-item"><span class="estate-legend-swatch" style="background:var(--pal-amber)"></span><span class="lname">Networks</span><span class="lcount">{{ estate.networks }}</span></div>
+        <div class="estate-legend-item"><span class="estate-legend-swatch" style="background:var(--pal-rose)"></span><span class="lname">Backup server</span><span class="lcount">{{ estate.pbs }}</span></div>
       </div>
     </article>
 
-    <article class="dashboard-card">
-      <div class="card-heading"><h2>Top nodes by resource usage</h2><span class="muted small">{{ nodes|length }} of {{ estate.nodes }} node{{ 's' if estate.nodes != 1 else '' }}</span></div>
+    <article class="dashboard-card cat-teal">
+      <div class="card-heading">
+        <div class="heading-left"><span class="card-icon"><svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M13 2 4 14h7l-1 8 9-12h-7l1-8Z"/></svg></span><h2>Top nodes by resource usage</h2></div>
+        <span class="muted small">{{ nodes|length }} of {{ estate.nodes }} node{{ 's' if estate.nodes != 1 else '' }}</span>
+      </div>
       <div class="node-usage">
         {% for node in nodes %}
         {% set cpu_pct = (node.cpu_usage * 100) if node.cpu_usage is not none else none %}
@@ -102,8 +126,11 @@
       </div>
     </article>
 
-    <article class="dashboard-card">
-      <div class="card-heading"><h2>Domains & hosting</h2><a href="/domains">View all {{ summary.domains }} &rarr;</a></div>
+    <article class="dashboard-card cat-amber">
+      <div class="card-heading">
+        <div class="heading-left"><span class="card-icon"><svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><circle cx="12" cy="12" r="9"/><path d="M3 12h18M12 3a13 13 0 0 1 0 18 13 13 0 0 1 0-18Z"/></svg></span><h2>Domains & hosting</h2></div>
+        <a href="/domains">View all {{ summary.domains }} &rarr;</a>
+      </div>
       <div class="mini-table">
         <div class="mini-head"><span>Domain</span><span>Mail</span><span>Webmail</span><span>Status</span></div>
         {% for domain in domains %}
@@ -121,20 +148,24 @@
   </div>
 
   <div class="col">
-    <article class="dashboard-card">
-      <div class="card-heading"><h2>System status</h2></div>
+    <article class="dashboard-card cat-green">
+      <div class="card-heading">
+        <div class="heading-left"><span class="card-icon"><svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="m5 13 4 4L19 7"/></svg></span><h2>System status</h2></div>
+      </div>
       <div class="status-list">
         {% for item in system_rows %}
         <div class="status-item">
-          <span class="name"><span class="dot {{ 'success' if item.healthy else 'bad' }}"></span>{{ item.name }}</span>
+          <span class="name"><span class="dot {{ 'success' if item.healthy else 'bad' }}"></span><span><strong>{{ item.name }}</strong><small>{{ item.detail }}</small></span></span>
           <span class="state {{ '' if item.healthy else 'bad' }}">{{ 'Healthy' if item.healthy else 'Unavailable' }}</span>
         </div>
         {% endfor %}
       </div>
     </article>
 
-    <article class="dashboard-card">
-      <div class="card-heading"><h2>Recent activity</h2></div>
+    <article class="dashboard-card cat-slate">
+      <div class="card-heading">
+        <div class="heading-left"><span class="card-icon"><svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M12 8v4l3 3"/><circle cx="12" cy="12" r="9"/></svg></span><h2>Recent activity</h2></div>
+      </div>
       {% if recent_activity %}
       <div class="activity-list">
         {% for item in recent_activity %}
@@ -162,8 +193,10 @@
       {% endif %}
     </article>
 
-    <article class="dashboard-card">
-      <div class="card-heading"><h2>Upcoming & alerts</h2></div>
+    <article class="dashboard-card {{ 'cat-amber' if (remote_errors or monitoring_summary.down or monitoring_summary.unknown) else 'cat-green' }}">
+      <div class="card-heading">
+        <div class="heading-left"><span class="card-icon"><svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M12 9v4M12 17h.01M10.3 3.9 1.8 18a2 2 0 0 0 1.7 3h17a2 2 0 0 0 1.7-3L13.7 3.9a2 2 0 0 0-3.4 0Z"/></svg></span><h2>Upcoming & alerts</h2></div>
+      </div>
       {% if remote_errors or monitoring_summary.down or monitoring_summary.unknown %}
       <div class="alerts-list">
         {% for error in remote_errors %}<div class="alert-row warning"><strong>{{ error.remote }}</strong><span>{{ error.detail }}</span></div>{% endfor %}
@@ -184,16 +217,16 @@
 </section>
 
 <section class="quick-links">
-  <a class="quick-card" href="/infrastructure"><span>
+  <a class="quick-card cat-indigo" href="/infrastructure"><span>
     <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><rect x="3" y="4" width="18" height="16" rx="2"/><path d="M3 10h18M8 4v16"/></svg>
   </span><div><strong>Infrastructure</strong><small>Nodes, VMs, LXCs, storage and networks</small></div><b>&rsaquo;</b></a>
-  <a class="quick-card" href="/monitoring"><span>
+  <a class="quick-card cat-teal" href="/monitoring"><span>
     <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><circle cx="12" cy="12" r="8.5"/><circle cx="12" cy="12" r="2.5"/></svg>
   </span><div><strong>Monitoring</strong><small>Service health and metrics</small></div><b>&rsaquo;</b></a>
-  <a class="quick-card" href="/infrastructure/power"><span>
+  <a class="quick-card cat-violet" href="/infrastructure/power"><span>
     <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M13 2 4 14h7l-1 8 9-12h-7l1-8Z"/></svg>
   </span><div><strong>Power</strong><small>Start, stop and manage resources</small></div><b>&rsaquo;</b></a>
-  <a class="quick-card" href="/domains"><span>
+  <a class="quick-card cat-amber" href="/domains"><span>
     <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><circle cx="12" cy="12" r="9"/><path d="M3 12h18M12 3a13 13 0 0 1 0 18 13 13 0 0 1 0-18Z"/></svg>
   </span><div><strong>Domains & Hosting</strong><small>Domains, DNS, email and websites</small></div><b>&rsaquo;</b></a>
 </section>
