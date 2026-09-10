@@ -25,24 +25,24 @@ class PublicDomainDiagnosticsProvider:
     async def _tcp(self, host: str, port: int, *, tls: bool = False) -> tuple[bool, str]:
         context = ssl.create_default_context() if tls else None
         try:
-            reader, writer = await asyncio.wait_for(
+            _reader, writer = await asyncio.wait_for(
                 asyncio.open_connection(host, port, ssl=context, server_hostname=host if tls else None),
                 timeout=self._timeout,
             )
-            if tls:
-                # Mail protocols (IMAP, POP3, ...) push a greeting banner immediately after
-                # the TLS handshake completes. Closing before draining it races the server's
-                # write against our close_notify and OpenSSL raises APPLICATION_DATA_AFTER_
-                # CLOSE_NOTIFY even though the handshake (and certificate) were fine.
-                try:
-                    await asyncio.wait_for(reader.read(1), timeout=self._timeout)
-                except (TimeoutError, OSError):
-                    pass
-            writer.close()
-            await writer.wait_closed()
-            return True, f"{host}:{port} reachable"
         except (OSError, TimeoutError, ssl.SSLError) as exc:
             return False, type(exc).__name__
+        try:
+            writer.close()
+            await writer.wait_closed()
+        except (OSError, ssl.SSLError):
+            # The handshake (and certificate) already succeeded by this point, which is what
+            # this check exists to confirm. A greeting-first protocol (IMAP's "* OK ... ready"
+            # on port 993) can push data the instant TLS completes; closing without reading it
+            # races our close_notify against that write and OpenSSL rejects the leftover data
+            # as APPLICATION_DATA_AFTER_CLOSE_NOTIFY. That's a benign shutdown artifact, not a
+            # reachability or certificate problem, so it must not fail the check.
+            pass
+        return True, f"{host}:{port} reachable"
 
     async def _https(self, host: str) -> tuple[bool, str]:
         try:
