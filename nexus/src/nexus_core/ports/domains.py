@@ -69,3 +69,59 @@ class DomainOrchestratorProvider(Protocol):
 class DomainAuditRepository(Protocol):
     def record(self, entry: DomainAuditEntry) -> None: ...
     def list_recent(self, limit: int = 25) -> tuple[DomainAuditEntry, ...]: ...
+
+
+@dataclass(frozen=True, slots=True)
+class DnsRecord:
+    id: str
+    type: str
+    name: str
+    content: str
+    ttl: int
+    proxied: bool
+    priority: int | None = None
+
+
+@dataclass(frozen=True, slots=True)
+class TunnelIngressRule:
+    """One entry of a Cloudflare Tunnel's ingress list. `hostname` is None for the
+    trailing catch-all rule Cloudflare requires every ingress list to end with."""
+
+    hostname: str | None
+    service: str
+    no_tls_verify: bool = False
+
+
+class CloudflareProvider(Protocol):
+    async def list_dns_records(self, zone_name: str) -> list[DnsRecord]: ...
+
+    async def create_dns_record(
+        self,
+        zone_name: str,
+        *,
+        type: str,
+        name: str,
+        content: str,
+        ttl: int = 1,
+        proxied: bool = False,
+        priority: int | None = None,
+    ) -> DnsRecord: ...
+
+    async def update_dns_record(
+        self,
+        zone_name: str,
+        record_id: str,
+        *,
+        type: str,
+        name: str,
+        content: str,
+        ttl: int = 1,
+        proxied: bool = False,
+        priority: int | None = None,
+    ) -> DnsRecord: ...
+
+    async def delete_dns_record(self, zone_name: str, record_id: str) -> None: ...
+
+    async def list_tunnel_ingress(self) -> list[TunnelIngressRule]: ...
+
+    async def set_tunnel_ingress(self, rules: list[TunnelIngressRule]) -> None: ...

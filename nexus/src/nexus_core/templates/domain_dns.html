@@ -1,0 +1,147 @@
+{% extends "base.html" %}
+{% block title %}DNS Records · {{ zone }} · Nexus{% endblock %}
+{% block content %}
+<section class="page-head compact">
+  <div><div class="eyebrow accent-purple">Domains & Hosting</div><h1>DNS Records — {{ zone }}</h1></div>
+  <a class="button secondary" href="/domains">Back to Domains</a>
+</section>
+
+{% if error %}
+<section class="card warning-card"><div>{{ error }}</div></section>
+{% endif %}
+
+<section class="card form-card">
+  <div><strong id="dns-form-title">Add DNS record</strong><p class="muted small">Changes go straight to Cloudflare for this zone.</p></div>
+  <div class="domain-form-row">
+    <select class="control" id="dns-type">
+      <option>A</option><option>AAAA</option><option>CNAME</option><option>TXT</option><option>MX</option><option>NS</option><option>SRV</option><option>CAA</option>
+    </select>
+    <input class="control" id="dns-name" placeholder="name (e.g. www.{{ zone }})">
+    <input class="control" id="dns-content" placeholder="content">
+    <input class="control" id="dns-ttl" type="number" min="1" value="1" placeholder="TTL (1=auto)">
+    <input class="control" id="dns-priority" type="number" min="0" placeholder="priority (MX)">
+    <label class="muted small"><input type="checkbox" id="dns-proxied"> Proxied</label>
+    <button class="button" id="dns-save" {% if not operations_enabled %}disabled{% endif %}>Save</button>
+    <button class="button secondary" id="dns-cancel" hidden>Cancel edit</button>
+  </div>
+  <p id="dns-message" class="operation-message" hidden></p>
+</section>
+
+<section class="card table-card">
+  <div class="table-wrap">
+    <table id="dns-table">
+      <thead><tr><th>Type</th><th>Name</th><th>Content</th><th>TTL</th><th>Proxied</th><th>Priority</th><th>Actions</th></tr></thead>
+      <tbody>
+      {% for record in records %}
+      <tr data-id="{{ record.id }}" data-type="{{ record.type }}" data-name="{{ record.name }}" data-content="{{ record.content }}" data-ttl="{{ record.ttl }}" data-proxied="{{ 'true' if record.proxied else 'false' }}" data-priority="{{ record.priority if record.priority is not none else '' }}">
+        <td><code>{{ record.type }}</code></td>
+        <td>{{ record.name }}</td>
+        <td class="muted small">{{ record.content }}</td>
+        <td class="muted small">{{ record.ttl }}</td>
+        <td>{{ 'Yes' if record.proxied else '—' }}</td>
+        <td class="muted small">{{ record.priority if record.priority is not none else '—' }}</td>
+        <td>
+          <div class="actions">
+            <button class="action-button edit-dns" {% if not operations_enabled %}disabled{% endif %}>Edit</button>
+            <button class="action-button delete-dns" {% if not operations_enabled %}disabled{% endif %}>Delete</button>
+          </div>
+        </td>
+      </tr>
+      {% else %}
+      <tr><td colspan="7" class="empty">No DNS records found for this zone.</td></tr>
+      {% endfor %}
+      </tbody>
+    </table>
+  </div>
+</section>
+
+<script>
+(() => {
+  const zone = {{ zone|tojson }};
+  const message = document.getElementById('dns-message');
+  const show = (text, kind) => { message.hidden = false; message.textContent = text; message.className = `operation-message ${kind}`; };
+  let editingId = null;
+
+  const typeEl = document.getElementById('dns-type');
+  const nameEl = document.getElementById('dns-name');
+  const contentEl = document.getElementById('dns-content');
+  const ttlEl = document.getElementById('dns-ttl');
+  const priorityEl = document.getElementById('dns-priority');
+  const proxiedEl = document.getElementById('dns-proxied');
+  const saveBtn = document.getElementById('dns-save');
+  const cancelBtn = document.getElementById('dns-cancel');
+  const titleEl = document.getElementById('dns-form-title');
+
+  function resetForm() {
+    editingId = null;
+    titleEl.textContent = 'Add DNS record';
+    saveBtn.textContent = 'Save';
+    cancelBtn.hidden = true;
+    nameEl.value = ''; contentEl.value = ''; ttlEl.value = '1'; priorityEl.value = ''; proxiedEl.checked = false; typeEl.value = 'A';
+  }
+  cancelBtn.addEventListener('click', resetForm);
+
+  document.querySelectorAll('.edit-dns').forEach(button => button.addEventListener('click', () => {
+    const row = button.closest('tr');
+    editingId = row.dataset.id;
+    typeEl.value = row.dataset.type;
+    nameEl.value = row.dataset.name;
+    contentEl.value = row.dataset.content;
+    ttlEl.value = row.dataset.ttl;
+    priorityEl.value = row.dataset.priority;
+    proxiedEl.checked = row.dataset.proxied === 'true';
+    titleEl.textContent = `Editing ${row.dataset.type} ${row.dataset.name}`;
+    saveBtn.textContent = 'Update';
+    cancelBtn.hidden = false;
+    window.scrollTo({top: 0, behavior: 'smooth'});
+  }));
+
+  document.querySelectorAll('.delete-dns').forEach(button => button.addEventListener('click', async () => {
+    const row = button.closest('tr');
+    if (!confirm(`Delete ${row.dataset.type} record ${row.dataset.name}?`)) return;
+    button.disabled = true;
+    try {
+      const response = await fetch(`/api/v1/cloudflare/zones/${encodeURIComponent(zone)}/dns-records/${encodeURIComponent(row.dataset.id)}`, {method: 'DELETE'});
+      const data = await response.json();
+      if (!response.ok) throw new Error(data.detail || `HTTP ${response.status}`);
+      show(`Deleted ${row.dataset.type} ${row.dataset.name}.`, 'success');
+      window.setTimeout(() => window.location.reload(), 500);
+    } catch (error) {
+      button.disabled = false;
+      show(String(error.message || error), 'error');
+    }
+  }));
+
+  saveBtn.addEventListener('click', async () => {
+    const payload = {
+      type: typeEl.value,
+      name: nameEl.value.trim(),
+      content: contentEl.value.trim(),
+      ttl: parseInt(ttlEl.value, 10) || 1,
+      proxied: proxiedEl.checked,
+      priority: priorityEl.value ? parseInt(priorityEl.value, 10) : null,
+    };
+    if (!payload.name || !payload.content) return show('Name and content are required.', 'error');
+    saveBtn.disabled = true;
+    show(editingId ? 'Updating…' : 'Creating…', 'pending');
+    try {
+      const url = editingId
+        ? `/api/v1/cloudflare/zones/${encodeURIComponent(zone)}/dns-records/${encodeURIComponent(editingId)}`
+        : `/api/v1/cloudflare/zones/${encodeURIComponent(zone)}/dns-records`;
+      const response = await fetch(url, {
+        method: editingId ? 'PUT' : 'POST',
+        headers: {'Content-Type': 'application/json'},
+        body: JSON.stringify(payload),
+      });
+      const data = await response.json();
+      if (!response.ok) throw new Error(data.detail || `HTTP ${response.status}`);
+      show(`Saved ${payload.type} ${payload.name}.`, 'success');
+      window.setTimeout(() => window.location.reload(), 500);
+    } catch (error) {
+      saveBtn.disabled = false;
+      show(String(error.message || error), 'error');
+    }
+  });
+})();
+</script>
+{% endblock %}

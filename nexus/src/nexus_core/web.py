@@ -150,3 +150,35 @@ async def domains(request: Request) -> HTMLResponse:
     service = request.app.state.domain_service; items = service.list_domains()
     summary = {"total": len(items), "mail": sum(item.mail for item in items), "webmail": sum(item.webmail for item in items), "managed": sum(item.configuration_mode == "managed" for item in items)}
     return _templates.TemplateResponse(request=request, name="domains.html", context={"domains": items, "summary": summary, "operations_enabled": service.operations_enabled, "audit": service.list_recent_operations(10)})
+
+
+@router.get("/domains/dns", response_class=HTMLResponse)
+async def domain_dns(request: Request, zone: str) -> HTMLResponse:
+    service = request.app.state.cloudflare_service
+    error = None
+    try:
+        records = await service.list_dns_records(zone)
+    except (ValueError, RuntimeError) as exc:
+        records = []
+        error = str(exc)
+    return _templates.TemplateResponse(
+        request=request,
+        name="domain_dns.html",
+        context={"zone": zone, "records": records, "error": error, "operations_enabled": service.operations_enabled},
+    )
+
+
+@router.get("/domains/tunnel", response_class=HTMLResponse)
+async def domain_tunnel(request: Request) -> HTMLResponse:
+    service = request.app.state.cloudflare_service
+    error = None
+    try:
+        rules = await service.list_tunnel_ingress()
+    except RuntimeError as exc:
+        rules = []
+        error = str(exc)
+    return _templates.TemplateResponse(
+        request=request,
+        name="domain_tunnel.html",
+        context={"rules": rules, "error": error, "operations_enabled": service.operations_enabled},
+    )

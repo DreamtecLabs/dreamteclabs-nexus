@@ -3,7 +3,7 @@
 {% block content %}
 <section class="page-head">
   <div><div class="eyebrow accent-purple">Domains & Hosting</div><h1>Domains & Hosting</h1><p class="muted">Cloudflare DNS, Hestia mail/webmail and lifecycle intent owned by Nexus.</p></div>
-  <span class="pill {{ 'enabled' if operations_enabled else 'disabled' }}">Mutations {{ 'enabled' if operations_enabled else 'locked' }}</span>
+  <div class="actions"><a class="button secondary" href="/domains/tunnel">Tunnel Ingress</a><span class="pill {{ 'enabled' if operations_enabled else 'disabled' }}">Mutations {{ 'enabled' if operations_enabled else 'locked' }}</span></div>
 </section>
 <section class="grid inventory-summary">
   <article class="card tint-blue"><span class="label">Domains</span><strong class="metric">{{ summary.total }}</strong></article>
@@ -17,7 +17,7 @@
   <p id="domain-message" class="operation-message" hidden></p>
 </section>
 <section class="card table-card"><div class="table-wrap"><table id="domains-table"><thead><tr><th>Domain</th><th>Mode</th><th>Mail</th><th>Webmail</th><th>DDNS</th><th>Tunnel</th><th>Validation</th></tr></thead><tbody>
-{% for domain in domains %}<tr data-domain="{{ domain.name }}"><td><strong>{{ domain.name }}</strong><div class="muted small">Hestia: {{ domain.hestia_user }}</div></td><td><span class="pill {{ domain.configuration_mode }}">{{ domain.configuration_mode }}</span></td><td>{{ 'Yes' if domain.mail else '—' }}</td><td>{{ 'Yes' if domain.webmail else '—' }}</td><td>{{ 'Yes' if domain.ddns else '—' }}</td><td>{{ 'Yes' if domain.tunnel else '—' }}</td><td><button class="action-button validate-domain">Validate</button><div class="validation-result muted small"></div></td></tr>{% endfor %}
+{% for domain in domains %}<tr data-domain="{{ domain.name }}"><td><strong>{{ domain.name }}</strong><div class="muted small">Hestia: {{ domain.hestia_user }}</div></td><td><span class="pill {{ domain.configuration_mode }}">{{ domain.configuration_mode }}</span></td><td>{{ 'Yes' if domain.mail else '—' }}</td><td>{{ 'Yes' if domain.webmail else '—' }}</td><td>{{ 'Yes' if domain.ddns else '—' }}</td><td>{{ 'Yes' if domain.tunnel else '—' }}</td><td><div class="actions"><button class="action-button validate-domain">Validate</button><a class="action-button" href="/domains/dns?zone={{ domain.name }}">DNS</a></div><div class="validation-result muted small"></div></td></tr>{% endfor %}
 </tbody></table></div></section>
 {% if audit %}<section class="card"><div class="section-title"><strong>Recent operations</strong></div><div class="table-wrap"><table><thead><tr><th>Time</th><th>Domain</th><th>Action</th><th>Result</th><th>Detail</th></tr></thead><tbody>{% for item in audit %}<tr><td class="small">{{ item.timestamp }}</td><td>{{ item.domain }}</td><td>{{ item.action }}</td><td><span class="pill {{ 'healthy' if item.result == 'success' else 'down' }}">{{ item.result }}</span></td><td class="small">{{ item.detail }}</td></tr>{% endfor %}</tbody></table></div></section>{% endif %}
 <script>

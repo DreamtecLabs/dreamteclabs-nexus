@@ -9,15 +9,18 @@ from pydantic import BaseModel, Field
 from nexus_core.config import Settings, get_settings
 from nexus_core.provisioning_api import install_provisioning
 from nexus_core.providers.alerting import UnconfiguredAlertingProvider, UnconfiguredMetricsProvider
+from nexus_core.providers.cloudflare import CloudflareApiProvider, UnconfiguredCloudflareProvider
 from nexus_core.providers.domain_diagnostics import PublicDomainDiagnosticsProvider
 from nexus_core.providers.domain_helper import DomainHelperProvider
 from nexus_core.providers.file_sd import CompositeTelemetryRuntime, FileSdTelemetryRuntime, IcmpFileSdTelemetryRuntime
 from nexus_core.providers.pdm import PdmProvider
 from nexus_core.providers.signoz import SigNozAlertingProvider, SigNozMetricsProvider
+from nexus_core.ports.domains import TunnelIngressRule
 from nexus_core.repositories.domain_audit_jsonl import JsonlDomainAuditRepository
 from nexus_core.repositories.domains_json import JsonDomainRepository
 from nexus_core.repositories.monitoring_json import JsonMonitoringRepository
 from nexus_core.repositories.power_audit_jsonl import JsonlPowerAuditRepository
+from nexus_core.services.cloudflare import CloudflareOperationsDisabled, CloudflareService
 from nexus_core.services.domains import DomainOperationsDisabled, DomainService, DomainVerificationFailed
 from nexus_core.services.infrastructure import InfrastructureResourceNotFound, InfrastructureService, PowerActionNotAllowed, PowerOperationsDisabled, PowerVerificationTimeout
 from nexus_core.services.monitoring import MonitoringService
@@ -60,6 +63,25 @@ class DomainReconcileInput(BaseModel):
     migrate: bool = False
 
 
+class DnsRecordInput(BaseModel):
+    type: str = Field(min_length=1, max_length=16)
+    name: str = Field(min_length=1, max_length=253)
+    content: str = Field(min_length=1, max_length=2048)
+    ttl: int = Field(default=1, ge=1, le=86400)
+    proxied: bool = False
+    priority: int | None = Field(default=None, ge=0, le=65535)
+
+
+class TunnelIngressRuleInput(BaseModel):
+    hostname: str | None = Field(default=None, max_length=253)
+    service: str = Field(min_length=1, max_length=512)
+    no_tls_verify: bool = False
+
+
+class TunnelIngressInput(BaseModel):
+    rules: list[TunnelIngressRuleInput] = Field(min_length=1, max_length=200)
+
+
 def create_app(settings: Settings | None = None) -> FastAPI:
     settings = settings or get_settings()
     pdm = PdmProvider(base_url=settings.pdm_base_url, verify_tls=settings.pdm_verify_tls, health_path=settings.pdm_health_path, timeout_seconds=settings.provider_timeout_seconds, api_token_id=settings.pdm_api_token_id, api_token_secret=settings.pdm_api_token_secret)
@@ -81,6 +103,16 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     else:
         alerting = UnconfiguredAlertingProvider()
         metrics = UnconfiguredMetricsProvider()
+    if settings.cloudflare_api_token and settings.cloudflare_account_id and settings.cloudflare_tunnel_id:
+        cloudflare = CloudflareApiProvider(
+            api_base=settings.cloudflare_api_base,
+            api_token=settings.cloudflare_api_token,
+            account_id=settings.cloudflare_account_id,
+            tunnel_id=settings.cloudflare_tunnel_id,
+            timeout_seconds=settings.provider_timeout_seconds,
+        )
+    else:
+        cloudflare = UnconfiguredCloudflareProvider()
 
     @asynccontextmanager
     async def lifespan(_: FastAPI):
@@ -92,6 +124,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     app.state.infrastructure_service = InfrastructureService(pdm, power_operations_enabled=settings.power_operations_enabled, verification_attempts=settings.power_verification_attempts, verification_interval_seconds=settings.power_verification_interval_seconds, audit_repository=power_audit_repository)
     app.state.monitoring_service = MonitoringService(monitoring_repository, alerting, telemetry_runtime, metrics)
     app.state.domain_service = DomainService(domain_repository, domain_diagnostics, domain_orchestrator, domain_audit, operations_enabled=settings.domains_operations_enabled, verification_attempts=settings.domains_verification_attempts, verification_interval_seconds=settings.domains_verification_interval_seconds)
+    app.state.cloudflare_service = CloudflareService(cloudflare, domain_audit, operations_enabled=settings.domains_operations_enabled)
     install_provisioning(app, settings, app.state.infrastructure_service, app.state.monitoring_service)
     static_dir = Path(__file__).resolve().parent / "static"
     app.mount("/static", StaticFiles(directory=str(static_dir)), name="static")
@@ -252,6 +285,73 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         except RuntimeError as exc:
             raise HTTPException(status_code=503, detail=str(exc)) from exc
         return {"operation": asdict(result), "validation": asdict(validation)}
+
+    @app.get("/api/v1/cloudflare/zones/{zone_name}/dns-records")
+    async def list_dns_records(zone_name: str, request: Request) -> dict[str, object]:
+        try:
+            records = await request.app.state.cloudflare_service.list_dns_records(zone_name)
+        except ValueError as exc:
+            raise HTTPException(status_code=422, detail=str(exc)) from exc
+        except RuntimeError as exc:
+            raise HTTPException(status_code=503, detail=str(exc)) from exc
+        return {"records": [asdict(record) for record in records], "count": len(records)}
+
+    @app.post("/api/v1/cloudflare/zones/{zone_name}/dns-records")
+    async def create_dns_record(zone_name: str, payload: DnsRecordInput, request: Request) -> dict[str, object]:
+        try:
+            record = await request.app.state.cloudflare_service.create_dns_record(zone_name, **payload.model_dump())
+        except CloudflareOperationsDisabled as exc:
+            raise HTTPException(status_code=403, detail=str(exc)) from exc
+        except ValueError as exc:
+            raise HTTPException(status_code=422, detail=str(exc)) from exc
+        except RuntimeError as exc:
+            raise HTTPException(status_code=503, detail=str(exc)) from exc
+        return asdict(record)
+
+    @app.put("/api/v1/cloudflare/zones/{zone_name}/dns-records/{record_id}")
+    async def update_dns_record(zone_name: str, record_id: str, payload: DnsRecordInput, request: Request) -> dict[str, object]:
+        try:
+            record = await request.app.state.cloudflare_service.update_dns_record(zone_name, record_id, **payload.model_dump())
+        except CloudflareOperationsDisabled as exc:
+            raise HTTPException(status_code=403, detail=str(exc)) from exc
+        except ValueError as exc:
+            raise HTTPException(status_code=422, detail=str(exc)) from exc
+        except RuntimeError as exc:
+            raise HTTPException(status_code=503, detail=str(exc)) from exc
+        return asdict(record)
+
+    @app.delete("/api/v1/cloudflare/zones/{zone_name}/dns-records/{record_id}")
+    async def delete_dns_record(zone_name: str, record_id: str, request: Request) -> dict[str, object]:
+        try:
+            await request.app.state.cloudflare_service.delete_dns_record(zone_name, record_id)
+        except CloudflareOperationsDisabled as exc:
+            raise HTTPException(status_code=403, detail=str(exc)) from exc
+        except ValueError as exc:
+            raise HTTPException(status_code=422, detail=str(exc)) from exc
+        except RuntimeError as exc:
+            raise HTTPException(status_code=503, detail=str(exc)) from exc
+        return {"zone": zone_name, "id": record_id, "deleted": True}
+
+    @app.get("/api/v1/cloudflare/tunnel/ingress")
+    async def tunnel_ingress(request: Request) -> dict[str, object]:
+        try:
+            rules = await request.app.state.cloudflare_service.list_tunnel_ingress()
+        except RuntimeError as exc:
+            raise HTTPException(status_code=503, detail=str(exc)) from exc
+        return {"rules": [asdict(rule) for rule in rules], "count": len(rules)}
+
+    @app.put("/api/v1/cloudflare/tunnel/ingress")
+    async def set_tunnel_ingress(payload: TunnelIngressInput, request: Request) -> dict[str, object]:
+        rules = [TunnelIngressRule(**rule.model_dump()) for rule in payload.rules]
+        try:
+            saved = await request.app.state.cloudflare_service.set_tunnel_ingress(rules)
+        except CloudflareOperationsDisabled as exc:
+            raise HTTPException(status_code=403, detail=str(exc)) from exc
+        except ValueError as exc:
+            raise HTTPException(status_code=422, detail=str(exc)) from exc
+        except RuntimeError as exc:
+            raise HTTPException(status_code=503, detail=str(exc)) from exc
+        return {"rules": [asdict(rule) for rule in saved], "count": len(saved)}
 
     return app
 
