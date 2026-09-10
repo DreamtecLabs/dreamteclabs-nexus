@@ -24,6 +24,20 @@
     <button class="button" id="dns-save" {% if not operations_enabled %}disabled{% endif %}>Save</button>
     <button class="button secondary" id="dns-cancel" hidden>Cancel edit</button>
   </div>
+  <div class="domain-form-row" id="dns-srv-fields" hidden>
+    <input class="control" id="srv-service" placeholder="service (e.g. _sip)">
+    <input class="control" id="srv-proto" placeholder="proto (e.g. _tcp)">
+    <input class="control" id="srv-name" placeholder="base name (e.g. {{ zone }})">
+    <input class="control" id="srv-priority" type="number" min="0" max="65535" placeholder="priority">
+    <input class="control" id="srv-weight" type="number" min="0" max="65535" placeholder="weight">
+    <input class="control" id="srv-port" type="number" min="1" max="65535" placeholder="port">
+    <input class="control" id="srv-target" placeholder="target (e.g. sip.example.com)">
+  </div>
+  <div class="domain-form-row" id="dns-caa-fields" hidden>
+    <input class="control" id="caa-flags" type="number" min="0" max="255" value="0" placeholder="flags (0)">
+    <select class="control" id="caa-tag"><option>issue</option><option>issuewild</option><option>iodef</option></select>
+    <input class="control" id="caa-value" placeholder="value (e.g. letsencrypt.org)">
+  </div>
   <p id="dns-message" class="operation-message" hidden></p>
 </section>
 
@@ -32,8 +46,9 @@
     <table id="dns-table">
       <thead><tr><th>Type</th><th>Name</th><th>Content</th><th>TTL</th><th>Proxied</th><th>Priority</th><th>Actions</th></tr></thead>
       <tbody>
-      {% for record in records %}
-      <tr data-id="{{ record.id }}" data-type="{{ record.type }}" data-name="{{ record.name }}" data-content="{{ record.content }}" data-ttl="{{ record.ttl }}" data-proxied="{{ 'true' if record.proxied else 'false' }}" data-priority="{{ record.priority if record.priority is not none else '' }}">
+      {% for row in rows %}
+      {% set record = row.record %}
+      <tr data-id="{{ record.id }}" data-type="{{ record.type }}" data-name="{{ record.name }}" data-content="{{ record.content }}" data-ttl="{{ record.ttl }}" data-proxied="{{ 'true' if record.proxied else 'false' }}" data-priority="{{ record.priority if record.priority is not none else '' }}" data-record-data="{{ row.data_json }}">
         <td><code>{{ record.type }}</code></td>
         <td>{{ record.name }}</td>
         <td class="muted small">{{ record.content }}</td>
@@ -71,6 +86,22 @@
   const saveBtn = document.getElementById('dns-save');
   const cancelBtn = document.getElementById('dns-cancel');
   const titleEl = document.getElementById('dns-form-title');
+  const srvFields = document.getElementById('dns-srv-fields');
+  const caaFields = document.getElementById('dns-caa-fields');
+  const srv = {
+    service: document.getElementById('srv-service'), proto: document.getElementById('srv-proto'), name: document.getElementById('srv-name'),
+    priority: document.getElementById('srv-priority'), weight: document.getElementById('srv-weight'), port: document.getElementById('srv-port'), target: document.getElementById('srv-target'),
+  };
+  const caa = { flags: document.getElementById('caa-flags'), tag: document.getElementById('caa-tag'), value: document.getElementById('caa-value') };
+
+  function syncFieldsForType() {
+    const type = typeEl.value;
+    srvFields.hidden = type !== 'SRV';
+    caaFields.hidden = type !== 'CAA';
+    contentEl.hidden = type === 'SRV' || type === 'CAA';
+  }
+  typeEl.addEventListener('change', syncFieldsForType);
+  syncFieldsForType();
 
   function resetForm() {
     editingId = null;
@@ -78,6 +109,9 @@
     saveBtn.textContent = 'Save';
     cancelBtn.hidden = true;
     nameEl.value = ''; contentEl.value = ''; ttlEl.value = '1'; priorityEl.value = ''; proxiedEl.checked = false; typeEl.value = 'A';
+    srv.service.value = ''; srv.proto.value = ''; srv.name.value = ''; srv.priority.value = ''; srv.weight.value = ''; srv.port.value = ''; srv.target.value = '';
+    caa.flags.value = '0'; caa.tag.value = 'issue'; caa.value.value = '';
+    syncFieldsForType();
   }
   cancelBtn.addEventListener('click', resetForm);
 
@@ -90,6 +124,14 @@
     ttlEl.value = row.dataset.ttl;
     priorityEl.value = row.dataset.priority;
     proxiedEl.checked = row.dataset.proxied === 'true';
+    const recordData = row.dataset.recordData ? JSON.parse(row.dataset.recordData) : null;
+    if (row.dataset.type === 'SRV' && recordData) {
+      srv.service.value = recordData.service || ''; srv.proto.value = recordData.proto || ''; srv.name.value = recordData.name || '';
+      srv.priority.value = recordData.priority ?? ''; srv.weight.value = recordData.weight ?? ''; srv.port.value = recordData.port ?? ''; srv.target.value = recordData.target || '';
+    } else if (row.dataset.type === 'CAA' && recordData) {
+      caa.flags.value = recordData.flags ?? '0'; caa.tag.value = recordData.tag || 'issue'; caa.value.value = recordData.value || '';
+    }
+    syncFieldsForType();
     titleEl.textContent = `Editing ${row.dataset.type} ${row.dataset.name}`;
     saveBtn.textContent = 'Update';
     cancelBtn.hidden = false;
@@ -113,15 +155,31 @@
   }));
 
   saveBtn.addEventListener('click', async () => {
+    const type = typeEl.value;
     const payload = {
-      type: typeEl.value,
+      type,
       name: nameEl.value.trim(),
-      content: contentEl.value.trim(),
+      content: '',
       ttl: parseInt(ttlEl.value, 10) || 1,
       proxied: proxiedEl.checked,
       priority: priorityEl.value ? parseInt(priorityEl.value, 10) : null,
+      data: null,
     };
-    if (!payload.name || !payload.content) return show('Name and content are required.', 'error');
+    if (!payload.name) return show('Name is required.', 'error');
+    if (type === 'SRV') {
+      if (!srv.service.value || !srv.proto.value || !srv.name.value || !srv.port.value || !srv.target.value) return show('All SRV fields are required.', 'error');
+      payload.data = {
+        service: srv.service.value.trim(), proto: srv.proto.value.trim(), name: srv.name.value.trim(),
+        priority: parseInt(srv.priority.value, 10) || 0, weight: parseInt(srv.weight.value, 10) || 0,
+        port: parseInt(srv.port.value, 10), target: srv.target.value.trim(),
+      };
+    } else if (type === 'CAA') {
+      if (!caa.value.value) return show('CAA value is required.', 'error');
+      payload.data = { flags: parseInt(caa.flags.value, 10) || 0, tag: caa.tag.value, value: caa.value.value.trim() };
+    } else {
+      payload.content = contentEl.value.trim();
+      if (!payload.content) return show('Content is required.', 'error');
+    }
     saveBtn.disabled = true;
     show(editingId ? 'Updating…' : 'Creating…', 'pending');
     try {

@@ -19,6 +19,8 @@ _DNS_NAME_RE = re.compile(r"^[A-Za-z0-9_*](?:[A-Za-z0-9_.*-]{0,251}[A-Za-z0-9_])
 _RECORD_ID_RE = re.compile(r"^[A-Za-z0-9_-]{1,64}$")
 _SERVICE_RE = re.compile(r"^(https?://\S+|tcp://\S+|http_status:\d{3})$")
 _VALID_RECORD_TYPES = frozenset({"A", "AAAA", "CNAME", "TXT", "MX", "NS", "SRV", "CAA"})
+_SRV_REQUIRED_FIELDS = ("service", "proto", "name", "priority", "weight", "port", "target")
+_CAA_TAGS = frozenset({"issue", "issuewild", "iodef"})
 
 
 class CloudflareOperationsDisabled(RuntimeError):
@@ -39,40 +41,61 @@ class CloudflareService:
         return await self._provider.list_dns_records(self._normalize_zone(zone_name))
 
     async def create_dns_record(
-        self, zone_name: str, *, type: str, name: str, content: str, ttl: int = 1, proxied: bool = False, priority: int | None = None
+        self,
+        zone_name: str,
+        *,
+        type: str,
+        name: str,
+        content: str = "",
+        ttl: int = 1,
+        proxied: bool = False,
+        priority: int | None = None,
+        data: dict[str, object] | None = None,
     ) -> DnsRecord:
         self._require_enabled()
         zone = self._normalize_zone(zone_name)
         record_type = self._normalize_type(type)
         record_name = self._normalize_hostname(name)
-        record_content = self._normalize_content(content)
+        record_data = self._normalize_record_data(record_type, data)
+        record_content = "" if record_data is not None else self._normalize_content(content)
         try:
             record = await self._provider.create_dns_record(
-                zone, type=record_type, name=record_name, content=record_content, ttl=ttl, proxied=proxied, priority=priority
+                zone, type=record_type, name=record_name, content=record_content, ttl=ttl, proxied=proxied, priority=priority, data=record_data
             )
         except RuntimeError as exc:
             self._audit_record(zone, "dns-create", "failed", f"{record_type} {record_name}: {exc}")
             raise
-        self._audit_record(zone, "dns-create", "success", f"{record_type} {record_name} -> {record_content}")
+        self._audit_record(zone, "dns-create", "success", f"{record_type} {record_name} -> {record_data or record_content}")
         return record
 
     async def update_dns_record(
-        self, zone_name: str, record_id: str, *, type: str, name: str, content: str, ttl: int = 1, proxied: bool = False, priority: int | None = None
+        self,
+        zone_name: str,
+        record_id: str,
+        *,
+        type: str,
+        name: str,
+        content: str = "",
+        ttl: int = 1,
+        proxied: bool = False,
+        priority: int | None = None,
+        data: dict[str, object] | None = None,
     ) -> DnsRecord:
         self._require_enabled()
         zone = self._normalize_zone(zone_name)
         normalized_id = self._normalize_record_id(record_id)
         record_type = self._normalize_type(type)
         record_name = self._normalize_hostname(name)
-        record_content = self._normalize_content(content)
+        record_data = self._normalize_record_data(record_type, data)
+        record_content = "" if record_data is not None else self._normalize_content(content)
         try:
             record = await self._provider.update_dns_record(
-                zone, normalized_id, type=record_type, name=record_name, content=record_content, ttl=ttl, proxied=proxied, priority=priority
+                zone, normalized_id, type=record_type, name=record_name, content=record_content, ttl=ttl, proxied=proxied, priority=priority, data=record_data
             )
         except RuntimeError as exc:
             self._audit_record(zone, "dns-update", "failed", f"{normalized_id}: {exc}")
             raise
-        self._audit_record(zone, "dns-update", "success", f"{normalized_id} -> {record_type} {record_name} -> {record_content}")
+        self._audit_record(zone, "dns-update", "success", f"{normalized_id} -> {record_type} {record_name} -> {record_data or record_content}")
         return record
 
     async def delete_dns_record(self, zone_name: str, record_id: str) -> None:
@@ -142,6 +165,50 @@ class CloudflareService:
         if not content or len(content) > 2048:
             raise ValueError("record content must be 1-2048 characters")
         return content
+
+    @staticmethod
+    def _normalize_record_data(record_type: str, raw: dict[str, object] | None) -> dict[str, object] | None:
+        if record_type not in ("SRV", "CAA"):
+            return None
+        if not isinstance(raw, dict):
+            raise ValueError(f"{record_type} records require structured data")
+
+        if record_type == "SRV":
+            missing = [key for key in _SRV_REQUIRED_FIELDS if key not in raw]
+            if missing:
+                raise ValueError(f"SRV record data missing fields: {', '.join(missing)}")
+            service = str(raw["service"]).strip()
+            proto = str(raw["proto"]).strip()
+            name = str(raw["name"]).strip().lower().rstrip(".")
+            target = str(raw["target"]).strip().lower().rstrip(".")
+            if not service.startswith("_") or not proto.startswith("_"):
+                raise ValueError("SRV service and proto must start with an underscore (e.g. _sip, _tcp)")
+            if not name or not _DNS_NAME_RE.fullmatch(name):
+                raise ValueError(f"invalid SRV name: {raw['name']}")
+            if not target or (target != "." and not _DNS_NAME_RE.fullmatch(target)):
+                raise ValueError(f"invalid SRV target: {raw['target']}")
+            try:
+                priority, weight, port = int(raw["priority"]), int(raw["weight"]), int(raw["port"])
+            except (TypeError, ValueError) as exc:
+                raise ValueError("SRV priority/weight/port must be integers") from exc
+            if not (0 <= priority <= 65535 and 0 <= weight <= 65535 and 1 <= port <= 65535):
+                raise ValueError("SRV priority/weight must be 0-65535 and port 1-65535")
+            return {"service": service, "proto": proto, "name": name, "priority": priority, "weight": weight, "port": port, "target": target}
+
+        # CAA
+        if "tag" not in raw or "value" not in raw:
+            raise ValueError("CAA record data requires tag and value")
+        tag = str(raw["tag"]).strip().lower()
+        if tag not in _CAA_TAGS:
+            raise ValueError(f"invalid CAA tag: {raw['tag']} (must be issue, issuewild or iodef)")
+        value = str(raw["value"]).strip()
+        if not value or len(value) > 512:
+            raise ValueError("CAA value must be 1-512 characters")
+        try:
+            flags = int(raw.get("flags", 0))
+        except (TypeError, ValueError) as exc:
+            raise ValueError("CAA flags must be an integer") from exc
+        return {"flags": flags, "tag": tag, "value": value}
 
     @staticmethod
     def _normalize_record_id(value: str) -> str:

@@ -83,6 +83,35 @@ async def test_cloudflare_provider_lists_dns_records_across_pages() -> None:
 
 
 @pytest.mark.asyncio
+async def test_cloudflare_provider_sends_structured_data_for_srv_and_caa() -> None:
+    captured: list[dict[str, object]] = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        if request.url.path == "/zones":
+            return httpx.Response(200, json={"success": True, "result": [{"id": "zone-1"}]})
+        body = json.loads(request.content)
+        captured.append(body)
+        return httpx.Response(
+            200,
+            json={"success": True, "result": {"id": "r-srv", "type": body["type"], "name": body["name"], "content": "", "ttl": 1, "proxied": False, "data": body.get("data")}},
+        )
+
+    provider = CloudflareApiProvider(
+        api_base="http://cf.test", api_token="secret", account_id="acct", tunnel_id="tunnel", transport=httpx.MockTransport(handler)
+    )
+    srv_data = {"service": "_sip", "proto": "_tcp", "name": "example.com", "priority": 10, "weight": 5, "port": 5060, "target": "sipserver.example.com"}
+    record = await provider.create_dns_record("example.com", type="SRV", name="_sip._tcp.example.com", data=srv_data)
+    assert "content" not in captured[0]
+    assert captured[0]["data"] == srv_data
+    assert record.data == srv_data
+
+    caa_data = {"flags": 0, "tag": "issue", "value": "letsencrypt.org"}
+    await provider.create_dns_record("example.com", type="CAA", name="example.com", data=caa_data)
+    assert captured[1]["data"] == caa_data
+    assert "content" not in captured[1]
+
+
+@pytest.mark.asyncio
 async def test_cloudflare_provider_reports_errors_from_response_body() -> None:
     def handler(request: httpx.Request) -> httpx.Response:
         if request.url.path == "/zones":
@@ -178,6 +207,49 @@ async def test_cloudflare_service_gates_mutations_and_validates_input(tmp_path: 
     assert provider.created[0][1]["name"] == "www.example.com"
     assert audit.list_recent(1)[0].action == "dns-create"
     assert audit.list_recent(1)[0].result == "success"
+
+
+@pytest.mark.asyncio
+async def test_cloudflare_service_requires_and_validates_structured_data_for_srv_caa(tmp_path: Path) -> None:
+    audit = JsonlDomainAuditRepository(tmp_path / "audit.jsonl")
+    provider = FakeCloudflareProvider()
+    service = CloudflareService(provider, audit, operations_enabled=True)
+
+    # SRV without data at all
+    with pytest.raises(ValueError, match="require structured data"):
+        await service.create_dns_record("example.com", type="SRV", name="_sip._tcp.example.com", content="")
+
+    # SRV missing required fields
+    with pytest.raises(ValueError, match="missing fields"):
+        await service.create_dns_record("example.com", type="SRV", name="_sip._tcp.example.com", data={"service": "_sip", "proto": "_tcp"})
+
+    # SRV with a bad port
+    with pytest.raises(ValueError):
+        await service.create_dns_record(
+            "example.com",
+            type="SRV",
+            name="_sip._tcp.example.com",
+            data={"service": "_sip", "proto": "_tcp", "name": "example.com", "priority": 10, "weight": 5, "port": 99999, "target": "sip.example.com"},
+        )
+
+    # valid SRV
+    record = await service.create_dns_record(
+        "example.com",
+        type="SRV",
+        name="_sip._tcp.example.com",
+        data={"service": "_sip", "proto": "_tcp", "name": "example.com", "priority": 10, "weight": 5, "port": 5060, "target": "sip.example.com"},
+    )
+    assert record is not None
+    assert provider.created[0][1]["data"]["port"] == 5060
+    assert provider.created[0][1]["content"] == ""
+
+    # CAA with invalid tag
+    with pytest.raises(ValueError, match="invalid CAA tag"):
+        await service.create_dns_record("example.com", type="CAA", name="example.com", data={"tag": "bogus", "value": "letsencrypt.org"})
+
+    # valid CAA
+    await service.create_dns_record("example.com", type="CAA", name="example.com", data={"tag": "issue", "value": "letsencrypt.org"})
+    assert provider.created[1][1]["data"] == {"flags": 0, "tag": "issue", "value": "letsencrypt.org"}
 
 
 @pytest.mark.asyncio

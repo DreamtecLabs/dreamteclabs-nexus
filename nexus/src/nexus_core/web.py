@@ -1,3 +1,4 @@
+import json
 from pathlib import Path
 
 from fastapi import APIRouter, HTTPException, Request
@@ -161,10 +162,14 @@ async def domain_dns(request: Request, zone: str) -> HTMLResponse:
     except (ValueError, RuntimeError) as exc:
         records = []
         error = str(exc)
+    # Precompute a plain JSON string (not the Jinja `tojson` filter's Markup-safe
+    # output, which skips the normal HTML-attribute escaping and breaks the
+    # data-record-data="..." attribute whenever the record content has quotes).
+    rows = [{"record": record, "data_json": json.dumps(record.data) if record.data else ""} for record in records]
     return _templates.TemplateResponse(
         request=request,
         name="domain_dns.html",
-        context={"zone": zone, "records": records, "error": error, "operations_enabled": service.operations_enabled},
+        context={"zone": zone, "rows": rows, "error": error, "operations_enabled": service.operations_enabled},
     )
 
 

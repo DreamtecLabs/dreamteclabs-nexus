@@ -66,10 +66,11 @@ class DomainReconcileInput(BaseModel):
 class DnsRecordInput(BaseModel):
     type: str = Field(min_length=1, max_length=16)
     name: str = Field(min_length=1, max_length=253)
-    content: str = Field(min_length=1, max_length=2048)
+    content: str = Field(default="", max_length=2048)
     ttl: int = Field(default=1, ge=1, le=86400)
     proxied: bool = False
     priority: int | None = Field(default=None, ge=0, le=65535)
+    data: dict[str, object] | None = Field(default=None)
 
 
 class TunnelIngressRuleInput(BaseModel):

@@ -76,19 +76,22 @@ class CloudflareApiProvider:
     def _parse_record(raw: object) -> DnsRecord | None:
         if not isinstance(raw, dict):
             return None
-        record_id, record_type, name, content = raw.get("id"), raw.get("type"), raw.get("name"), raw.get("content")
-        if not all(isinstance(value, str) for value in (record_id, record_type, name, content)):
+        record_id, record_type, name = raw.get("id"), raw.get("type"), raw.get("name")
+        content = raw.get("content")
+        if not all(isinstance(value, str) for value in (record_id, record_type, name)) or not isinstance(content, (str, type(None))):
             return None
         ttl = raw.get("ttl")
         priority = raw.get("priority")
+        data = raw.get("data")
         return DnsRecord(
             id=record_id,
             type=record_type,
             name=name,
-            content=content,
+            content=content or "",
             ttl=int(ttl) if isinstance(ttl, (int, float)) else 1,
             proxied=bool(raw.get("proxied", False)),
             priority=int(priority) if isinstance(priority, (int, float)) else None,
+            data=data if isinstance(data, dict) else None,
         )
 
     async def list_dns_records(self, zone_name: str) -> list[DnsRecord]:
@@ -108,7 +111,14 @@ class CloudflareApiProvider:
         return records
 
     @staticmethod
-    def _record_payload(*, type: str, name: str, content: str, ttl: int, proxied: bool, priority: int | None) -> dict[str, object]:
+    def _record_payload(
+        *, type: str, name: str, content: str, ttl: int, proxied: bool, priority: int | None, data: dict[str, object] | None
+    ) -> dict[str, object]:
+        # SRV and CAA don't take a flat `content` string -- Cloudflare requires
+        # their fields (service/proto/priority/weight/port/target, or
+        # flags/tag/value) nested under `data` instead.
+        if type in ("SRV", "CAA") and data is not None:
+            return {"type": type, "name": name, "data": data, "ttl": ttl, "proxied": False}
         payload: dict[str, object] = {"type": type, "name": name, "content": content, "ttl": ttl, "proxied": proxied}
         if type == "MX":
             payload["priority"] = priority if priority is not None else 10
@@ -116,23 +126,42 @@ class CloudflareApiProvider:
         return payload
 
     async def create_dns_record(
-        self, zone_name: str, *, type: str, name: str, content: str, ttl: int = 1, proxied: bool = False, priority: int | None = None
+        self,
+        zone_name: str,
+        *,
+        type: str,
+        name: str,
+        content: str = "",
+        ttl: int = 1,
+        proxied: bool = False,
+        priority: int | None = None,
+        data: dict[str, object] | None = None,
     ) -> DnsRecord:
         zone_id = await self._zone_id(zone_name)
-        payload = self._record_payload(type=type, name=name, content=content, ttl=ttl, proxied=proxied, priority=priority)
-        data = await self._request("POST", f"/zones/{zone_id}/dns_records", json=payload)
-        record = self._parse_record(data.get("result"))
+        payload = self._record_payload(type=type, name=name, content=content, ttl=ttl, proxied=proxied, priority=priority, data=data)
+        result = await self._request("POST", f"/zones/{zone_id}/dns_records", json=payload)
+        record = self._parse_record(result.get("result"))
         if record is None:
             raise RuntimeError("Cloudflare did not return the created record")
         return record
 
     async def update_dns_record(
-        self, zone_name: str, record_id: str, *, type: str, name: str, content: str, ttl: int = 1, proxied: bool = False, priority: int | None = None
+        self,
+        zone_name: str,
+        record_id: str,
+        *,
+        type: str,
+        name: str,
+        content: str = "",
+        ttl: int = 1,
+        proxied: bool = False,
+        priority: int | None = None,
+        data: dict[str, object] | None = None,
     ) -> DnsRecord:
         zone_id = await self._zone_id(zone_name)
-        payload = self._record_payload(type=type, name=name, content=content, ttl=ttl, proxied=proxied, priority=priority)
-        data = await self._request("PUT", f"/zones/{zone_id}/dns_records/{record_id}", json=payload)
-        record = self._parse_record(data.get("result"))
+        payload = self._record_payload(type=type, name=name, content=content, ttl=ttl, proxied=proxied, priority=priority, data=data)
+        result = await self._request("PUT", f"/zones/{zone_id}/dns_records/{record_id}", json=payload)
+        record = self._parse_record(result.get("result"))
         if record is None:
             raise RuntimeError("Cloudflare did not return the updated record")
         return record

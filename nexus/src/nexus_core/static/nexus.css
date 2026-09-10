@@ -69,6 +69,10 @@
 
 /* ===== Reset ===== */
 *{box-sizing:border-box}
+/* Author rules like .domain-form-row{display:flex} otherwise silently beat the
+   UA default for [hidden], since author stylesheets always win over UA ones
+   regardless of specificity -- toggling element.hidden would do nothing. */
+[hidden]{display:none!important}
 body{margin:0;background:var(--bg);color:var(--text);font-family:var(--font-ui);font-size:14px;line-height:1.45;-webkit-font-smoothing:antialiased}
 a{color:inherit;text-decoration:none}
 button,input,select,textarea{font:inherit}

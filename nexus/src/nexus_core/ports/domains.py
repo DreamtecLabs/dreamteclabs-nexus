@@ -80,6 +80,9 @@ class DnsRecord:
     ttl: int
     proxied: bool
     priority: int | None = None
+    # Structured record data Cloudflare requires instead of `content` for SRV and
+    # CAA records (SRV: service/proto/name/priority/weight/port/target; CAA: flags/tag/value).
+    data: dict[str, object] | None = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -105,10 +108,11 @@ class CloudflareProvider(Protocol):
         *,
         type: str,
         name: str,
-        content: str,
+        content: str = "",
         ttl: int = 1,
         proxied: bool = False,
         priority: int | None = None,
+        data: dict[str, object] | None = None,
     ) -> DnsRecord: ...
 
     async def update_dns_record(
@@ -118,10 +122,11 @@ class CloudflareProvider(Protocol):
         *,
         type: str,
         name: str,
-        content: str,
+        content: str = "",
         ttl: int = 1,
         proxied: bool = False,
         priority: int | None = None,
+        data: dict[str, object] | None = None,
     ) -> DnsRecord: ...
 
     async def delete_dns_record(self, zone_name: str, record_id: str) -> None: ...
