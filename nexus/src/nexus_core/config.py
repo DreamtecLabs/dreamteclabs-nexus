@@ -39,6 +39,10 @@ class Settings(BaseSettings):
         return self.data_dir / "prometheus" / "monitoring-targets.json"
 
     @property
+    def monitoring_icmp_file_sd_path(self) -> Path:
+        return self.data_dir / "prometheus" / "monitoring-icmp-targets.json"
+
+    @property
     def power_audit_path(self) -> Path:
         return self.data_dir / "power-operations.jsonl"
 

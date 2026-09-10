@@ -21,6 +21,7 @@ _METRIC_RE = re.compile(r"^[A-Za-z_:][A-Za-z0-9_:]{0,127}$")
 _PATH_RE = re.compile(r"^/[A-Za-z0-9_./-]*$")
 _HOST_LABEL_RE = re.compile(r"^[A-Za-z0-9](?:[A-Za-z0-9-]{0,61}[A-Za-z0-9])?$")
 _VALID_STATES = {"enabled", "maintenance", "disabled"}
+_VALID_PROFILES = {"prometheus", "icmp"}
 
 
 class MonitoringService:
@@ -110,21 +111,28 @@ class MonitoringService:
         *,
         name: str,
         address: str,
-        port: int,
-        metrics_path: str,
         site: str,
         state: str,
+        profile: str = "prometheus",
+        port: int | None = None,
+        metrics_path: str | None = None,
         health_metric: str = "up",
     ) -> MonitoringTarget:
+        normalized_profile = self._normalize_profile(profile)
         normalized_name = self._normalize_name(name)
         target_id = self._slug(normalized_name)
         normalized_address = self._normalize_address(address)
-        normalized_path = self._normalize_metrics_path(metrics_path)
         normalized_site = self._normalize_label(site, "site")
         normalized_state = self._normalize_state(state)
         normalized_metric = self._normalize_metric(health_metric)
-        if not 1 <= port <= 65535:
-            raise ValueError("port must be between 1 and 65535")
+        if normalized_profile == "icmp":
+            normalized_port = None
+            normalized_path = None
+        else:
+            if port is None or not 1 <= port <= 65535:
+                raise ValueError("port must be between 1 and 65535")
+            normalized_port = port
+            normalized_path = self._normalize_metrics_path(metrics_path or "/metrics")
 
         existing = self._repository.get_target(target_id)
         downtime_id = existing.downtime_id if existing else None
@@ -133,8 +141,9 @@ class MonitoringService:
             id=target_id,
             name=normalized_name,
             address=normalized_address,
-            port=port,
+            port=normalized_port,
             metrics_path=normalized_path,
+            profile=normalized_profile,
             site=normalized_site,
             state=normalized_state,
             downtime_id=downtime_id,
@@ -223,4 +232,11 @@ class MonitoringService:
         normalized = value.strip().casefold()
         if normalized not in _VALID_STATES:
             raise ValueError("state must be enabled, maintenance or disabled")
+        return normalized
+
+    @staticmethod
+    def _normalize_profile(value: str) -> str:
+        normalized = value.strip().casefold()
+        if normalized not in _VALID_PROFILES:
+            raise ValueError("profile must be prometheus or icmp")
         return normalized

@@ -35,7 +35,13 @@
         {% set status = row.status %}
         <tr>
           <td><strong>{{ target.name }}</strong><div class="muted small">{{ target.id }}</div></td>
-          <td><code>{{ target.address }}:{{ target.port }}{{ target.metrics_path }}</code></td>
+          <td>
+            {% if target.profile == 'icmp' %}
+              <code>{{ target.address }}</code><div class="muted small">agentless · ICMP</div>
+            {% else %}
+              <code>{{ target.address }}:{{ target.port }}{{ target.metrics_path }}</code>
+            {% endif %}
+          </td>
           <td>{{ target.site }}</td>
           <td><code>{{ target.health_metric }}</code></td>
           <td><span class="pill {{ target.state }}">{{ target.state }}</span></td>

@@ -9,10 +9,11 @@ class MonitoringTarget:
     id: str
     name: str
     address: str
-    port: int
-    metrics_path: str
     site: str
     state: str
+    port: int | None = None
+    metrics_path: str | None = None
+    profile: str = "prometheus"
     downtime_id: str | None = None
     health_metric: str = "up"
 

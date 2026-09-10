@@ -7,6 +7,28 @@ receivers:
             - files:
                 - /var/lib/dreamteclabs-nexus/prometheus/monitoring-targets.json
               refresh_interval: 10s
+  # Agentless targets (no exporter on the target itself): scrape the host-level Blackbox
+  # Exporter's /probe endpoint instead, with the real target promoted to __param_target
+  # via relabel_configs. Reuses the same Blackbox Exporter already deployed for the legacy
+  # ICMP pipeline (services/prometheus-blackbox-exporter-nexus.conf), listening on 127.0.0.1:9115.
+  prometheus/nexus_icmp:
+    config:
+      scrape_configs:
+        - job_name: nexus-managed-icmp
+          metrics_path: /probe
+          params:
+            module: [icmp]
+          file_sd_configs:
+            - files:
+                - /var/lib/dreamteclabs-nexus/prometheus/monitoring-icmp-targets.json
+              refresh_interval: 10s
+          relabel_configs:
+            - source_labels: [__address__]
+              target_label: __param_target
+            - source_labels: [__param_target]
+              target_label: instance
+            - target_label: __address__
+              replacement: 127.0.0.1:9115
 
 exporters:
   otlp/signoz:
@@ -22,5 +44,6 @@ service:
     metrics:
       receivers:
         - prometheus/nexus_services
+        - prometheus/nexus_icmp
       exporters:
         - otlp/signoz

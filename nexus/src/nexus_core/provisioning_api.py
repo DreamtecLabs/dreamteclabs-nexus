@@ -45,7 +45,7 @@ class ProvisionGuestInput(BaseModel):
     nesting: bool = False
     ssh_enabled: bool = False
     ssh_public_key: str | None = Field(default=None, max_length=8192)
-    monitoring: str = Field(default="pdm", pattern="^(none|pdm|prometheus)$")
+    monitoring: str = Field(default="pdm", pattern="^(none|pdm|prometheus|icmp)$")
     advanced: dict[str, object] = Field(default_factory=dict)
 
     def to_request(self) -> GuestProvisionRequest:

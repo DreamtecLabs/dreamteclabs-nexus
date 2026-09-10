@@ -22,6 +22,12 @@ The Resource Power Center is available at `/infrastructure/power`. Mutations are
 
 `/monitoring` is the standalone vNext Monitoring Control Center. Nexus owns target intent and lifecycle; OTel consumes Nexus-generated Prometheus file discovery; SigNoz is authoritative for telemetry and planned maintenance. Enabled targets are queried through SigNoz v5 and classified healthy/down/unknown. Maintenance and disabled targets are removed from active discovery. Provider errors never expose API keys or response bodies.
 
+Every target has a `profile`:
+- `prometheus` (default) — the target exposes its own metrics endpoint; Nexus writes `${NEXUS_DATA_DIR}/prometheus/monitoring-targets.json` and the OTel Prometheus receiver scrapes `address:port/metrics_path` directly.
+- `icmp` — agentless mode for resources with no exporter (a bare LXC/VM, or a network device like a Zigbee coordinator). Nexus writes `${NEXUS_DATA_DIR}/prometheus/monitoring-icmp-targets.json` with just the target address; the `prometheus/nexus_icmp` scrape job in `observability/otel-collector.yaml` relabels it to probe through the host's Blackbox Exporter (`127.0.0.1:9115`, ICMP module) instead of the target itself, reusing the exporter already deployed for the legacy PDM ICMP pipeline (`services/prometheus-blackbox-exporter-nexus.conf`). The health metric defaults to `probe_success`. **Prerequisite:** `prometheus-blackbox-exporter.service` must be installed and running on the Nexus Core host — Nexus Core only writes file discovery, it does not manage that systemd unit.
+
+`ProvisionGuestInput.monitoring` accepts `icmp` alongside `none|pdm|prometheus`, registering an agentless probe target automatically at guest-creation time when a static address is available.
+
 ## Domains & Hosting
 
 `/domains` and `GET /api/v1/domains` are the standalone Domains & Hosting control plane. Nexus owns a small JSON inventory at `${NEXUS_DATA_DIR}/domains-hosting.json`, seeded with the known DreamtecLabs estate only when no Nexus inventory exists. Opening the page or listing inventory never changes Cloudflare or Hestia.

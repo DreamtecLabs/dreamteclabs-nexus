@@ -120,6 +120,29 @@ async def test_post_create_monitoring_failure_returns_ready_with_warnings() -> N
 
 
 @pytest.mark.asyncio
+async def test_icmp_monitoring_mode_registers_agentless_target() -> None:
+    provider = FakeProvider()
+    monitoring = FakeMonitoring()
+    service = ProvisioningService(provider, AppearingInfrastructure(), monitoring, enabled=True, verification_attempts=1)
+    result = await service.provision(_request(monitoring="icmp", advanced={"monitoring_site": "lab"}))
+    assert provider.created is True
+    assert result.status == "ready"
+    assert monitoring.calls == [{"name": "demo-01", "address": "192.168.0.50", "profile": "icmp", "site": "lab", "state": "enabled", "health_metric": "probe_success"}]
+    assert next(step for step in result.steps if step.name == "monitoring").status == "success"
+
+
+@pytest.mark.asyncio
+async def test_icmp_monitoring_without_static_address_warns() -> None:
+    provider = FakeProvider()
+    monitoring = FakeMonitoring()
+    service = ProvisioningService(provider, AppearingInfrastructure(), monitoring, enabled=True, verification_attempts=1)
+    result = await service.provision(_request(monitoring="icmp", ip_config="dhcp"))
+    assert result.status == "ready-with-warnings"
+    assert monitoring.calls == []
+    assert any("ICMP monitoring requires a static IP/address" in warning for warning in result.warnings)
+
+
+@pytest.mark.asyncio
 async def test_provisioning_stays_locked_by_default() -> None:
     service = ProvisioningService(FakeProvider(), FakeInfrastructure(), FakeMonitoring(), enabled=False)
     with pytest.raises(ProvisioningDisabled):

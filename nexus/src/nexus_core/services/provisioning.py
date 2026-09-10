@@ -86,7 +86,7 @@ class ProvisioningService:
         elif monitoring_mode == "pdm":
             steps.append(ProvisioningStep("monitoring", "success", "PDM-native state and resource telemetry are available immediately in Nexus"))
         elif monitoring_mode == "prometheus":
-            address = self._prometheus_address(request)
+            address = self._guest_address(request)
             port = self._advanced_int(request.advanced.get("monitoring_port"), 9100)
             path = str(request.advanced.get("monitoring_path") or "/metrics")
             if not address:
@@ -95,13 +95,28 @@ class ProvisioningService:
                 steps.append(ProvisioningStep("monitoring", "warning", warning))
             else:
                 try:
-                    await self._monitoring.upsert_target(name=request.name, address=address, port=port, metrics_path=path, site=str(request.advanced.get("monitoring_site") or "home"), state="enabled", health_metric=str(request.advanced.get("health_metric") or "up"))
+                    await self._monitoring.upsert_target(name=request.name, address=address, profile="prometheus", port=port, metrics_path=path, site=str(request.advanced.get("monitoring_site") or "home"), state="enabled", health_metric=str(request.advanced.get("health_metric") or "up"))
                 except Exception as exc:
                     warning = f"Guest was created, but monitoring registration failed ({type(exc).__name__})"
                     warnings.append(warning)
                     steps.append(ProvisioningStep("monitoring", "warning", warning))
                 else:
                     steps.append(ProvisioningStep("monitoring", "success", f"Prometheus target registered at {address}:{port}{path}"))
+        elif monitoring_mode == "icmp":
+            address = self._guest_address(request)
+            if not address:
+                warning = "ICMP monitoring requires a static IP/address; guest was created without target registration"
+                warnings.append(warning)
+                steps.append(ProvisioningStep("monitoring", "warning", warning))
+            else:
+                try:
+                    await self._monitoring.upsert_target(name=request.name, address=address, profile="icmp", site=str(request.advanced.get("monitoring_site") or "home"), state="enabled", health_metric="probe_success")
+                except Exception as exc:
+                    warning = f"Guest was created, but monitoring registration failed ({type(exc).__name__})"
+                    warnings.append(warning)
+                    steps.append(ProvisioningStep("monitoring", "warning", warning))
+                else:
+                    steps.append(ProvisioningStep("monitoring", "success", f"Agentless ICMP probe registered for {address}"))
         else:
             warning = f"Unknown monitoring mode '{request.monitoring}' was ignored"
             warnings.append(warning)
@@ -144,7 +159,7 @@ class ProvisioningService:
                 raise ProvisioningConflict(f"guest name '{request.name}' already exists on remote '{request.remote}'")
 
     @staticmethod
-    def _prometheus_address(request: GuestProvisionRequest) -> str | None:
+    def _guest_address(request: GuestProvisionRequest) -> str | None:
         explicit = str(request.advanced.get("monitoring_address") or "").strip()
         if explicit:
             return explicit

@@ -11,7 +11,7 @@ from nexus_core.provisioning_api import install_provisioning
 from nexus_core.providers.alerting import UnconfiguredAlertingProvider, UnconfiguredMetricsProvider
 from nexus_core.providers.domain_diagnostics import PublicDomainDiagnosticsProvider
 from nexus_core.providers.domain_helper import DomainHelperProvider
-from nexus_core.providers.file_sd import FileSdTelemetryRuntime
+from nexus_core.providers.file_sd import CompositeTelemetryRuntime, FileSdTelemetryRuntime, IcmpFileSdTelemetryRuntime
 from nexus_core.providers.pdm import PdmProvider
 from nexus_core.providers.signoz import SigNozAlertingProvider, SigNozMetricsProvider
 from nexus_core.repositories.domain_audit_jsonl import JsonlDomainAuditRepository
@@ -28,10 +28,11 @@ from nexus_core.web import router as web_router
 class MonitoringTargetInput(BaseModel):
     name: str = Field(min_length=1, max_length=80)
     address: str = Field(min_length=1, max_length=253)
-    port: int = Field(ge=1, le=65535)
-    metrics_path: str = Field(default="/metrics", max_length=128)
     site: str = Field(min_length=1, max_length=64)
     state: str = "enabled"
+    profile: str = Field(default="prometheus", pattern="^(prometheus|icmp)$")
+    port: int | None = Field(default=None, ge=1, le=65535)
+    metrics_path: str | None = Field(default=None, max_length=128)
     health_metric: str = Field(default="up", min_length=1, max_length=128)
 
 
@@ -59,7 +60,12 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     settings = settings or get_settings()
     pdm = PdmProvider(base_url=settings.pdm_base_url, verify_tls=settings.pdm_verify_tls, health_path=settings.pdm_health_path, timeout_seconds=settings.provider_timeout_seconds, api_token_id=settings.pdm_api_token_id, api_token_secret=settings.pdm_api_token_secret)
     monitoring_repository = JsonMonitoringRepository(settings.monitoring_inventory_path)
-    telemetry_runtime = FileSdTelemetryRuntime(settings.monitoring_file_sd_path)
+    telemetry_runtime = CompositeTelemetryRuntime(
+        [
+            FileSdTelemetryRuntime(settings.monitoring_file_sd_path),
+            IcmpFileSdTelemetryRuntime(settings.monitoring_icmp_file_sd_path),
+        ]
+    )
     power_audit_repository = JsonlPowerAuditRepository(settings.power_audit_path)
     domain_repository = JsonDomainRepository(settings.domains_inventory_path)
     domain_audit = JsonlDomainAuditRepository(settings.domains_audit_path)
