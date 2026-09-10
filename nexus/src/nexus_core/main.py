@@ -75,7 +75,11 @@ class DnsRecordInput(BaseModel):
 class TunnelIngressRuleInput(BaseModel):
     hostname: str | None = Field(default=None, max_length=253)
     service: str = Field(min_length=1, max_length=512)
+    path: str | None = Field(default=None, max_length=512)
     no_tls_verify: bool = False
+    http_host_header: str | None = Field(default=None, max_length=253)
+    origin_server_name: str | None = Field(default=None, max_length=253)
+    connect_timeout_seconds: int | None = Field(default=None, ge=1, le=300)
 
 
 class TunnelIngressInput(BaseModel):

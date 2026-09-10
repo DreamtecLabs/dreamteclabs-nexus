@@ -142,7 +142,16 @@ class CloudflareApiProvider:
         await self._request("DELETE", f"/zones/{zone_id}/dns_records/{record_id}")
 
     @staticmethod
-    def _parse_ingress(raw: object) -> list[TunnelIngressRule]:
+    def _parse_connect_timeout(origin_request: dict[str, object]) -> int | None:
+        value = origin_request.get("connectTimeout")
+        if isinstance(value, str) and value.endswith("s") and value[:-1].isdigit():
+            return int(value[:-1])
+        if isinstance(value, (int, float)):
+            return int(value)
+        return None
+
+    @classmethod
+    def _parse_ingress(cls, raw: object) -> list[TunnelIngressRule]:
         rules: list[TunnelIngressRule] = []
         if not isinstance(raw, list):
             return rules
@@ -153,9 +162,21 @@ class CloudflareApiProvider:
             if not isinstance(service, str):
                 continue
             hostname = item.get("hostname")
-            origin_request = item.get("originRequest")
-            no_tls_verify = bool(origin_request.get("noTLSVerify")) if isinstance(origin_request, dict) else False
-            rules.append(TunnelIngressRule(hostname=hostname if isinstance(hostname, str) else None, service=service, no_tls_verify=no_tls_verify))
+            path = item.get("path")
+            origin_request = item.get("originRequest") if isinstance(item.get("originRequest"), dict) else {}
+            http_host_header = origin_request.get("httpHostHeader")
+            origin_server_name = origin_request.get("originServerName")
+            rules.append(
+                TunnelIngressRule(
+                    hostname=hostname if isinstance(hostname, str) else None,
+                    service=service,
+                    path=path if isinstance(path, str) else None,
+                    no_tls_verify=bool(origin_request.get("noTLSVerify")),
+                    http_host_header=http_host_header if isinstance(http_host_header, str) else None,
+                    origin_server_name=origin_server_name if isinstance(origin_server_name, str) else None,
+                    connect_timeout_seconds=cls._parse_connect_timeout(origin_request),
+                )
+            )
         return rules
 
     async def list_tunnel_ingress(self) -> list[TunnelIngressRule]:
@@ -171,7 +192,16 @@ class CloudflareApiProvider:
             entry: dict[str, object] = {"service": rule.service}
             if rule.hostname:
                 entry["hostname"] = rule.hostname
-                entry["originRequest"] = {"noTLSVerify": rule.no_tls_verify}
+                if rule.path:
+                    entry["path"] = rule.path
+                origin_request: dict[str, object] = {"noTLSVerify": rule.no_tls_verify}
+                if rule.http_host_header:
+                    origin_request["httpHostHeader"] = rule.http_host_header
+                if rule.origin_server_name:
+                    origin_request["originServerName"] = rule.origin_server_name
+                if rule.connect_timeout_seconds is not None:
+                    origin_request["connectTimeout"] = f"{rule.connect_timeout_seconds}s"
+                entry["originRequest"] = origin_request
             ingress.append(entry)
         if not ingress or ingress[-1].get("hostname") is not None:
             ingress.append({"service": "http_status:404"})

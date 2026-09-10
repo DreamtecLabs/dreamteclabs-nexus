@@ -89,7 +89,11 @@ class TunnelIngressRule:
 
     hostname: str | None
     service: str
+    path: str | None = None
     no_tls_verify: bool = False
+    http_host_header: str | None = None
+    origin_server_name: str | None = None
+    connect_timeout_seconds: int | None = None
 
 
 class CloudflareProvider(Protocol):

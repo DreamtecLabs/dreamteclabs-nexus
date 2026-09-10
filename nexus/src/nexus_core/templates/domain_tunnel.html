@@ -15,23 +15,34 @@
   <div class="domain-form-row">
     <input class="control" id="ingress-hostname" placeholder="hostname (e.g. app.example.com)">
     <input class="control" id="ingress-service" placeholder="service (e.g. http://192.168.0.29:80)">
+    <input class="control" id="ingress-path" placeholder="path (optional, e.g. /api/*)">
     <label class="muted small"><input type="checkbox" id="ingress-no-tls"> No TLS verify</label>
     <button class="button" id="ingress-add" {% if not operations_enabled %}disabled{% endif %}>Add / Update rule</button>
     <button class="button secondary" id="ingress-cancel" hidden>Cancel edit</button>
   </div>
+  <details id="ingress-advanced">
+    <summary class="muted small">Advanced options (host header, SNI, timeout)</summary>
+    <div class="domain-form-row">
+      <input class="control" id="ingress-host-header" placeholder="HTTP Host header override (optional)">
+      <input class="control" id="ingress-origin-sni" placeholder="Origin server name / SNI (optional)">
+      <input class="control" id="ingress-connect-timeout" type="number" min="1" max="300" placeholder="Connect timeout, seconds (optional)">
+    </div>
+  </details>
 </section>
 
 <section class="card">
   <p class="muted small">The last row (no hostname) is the required catch-all — it's kept automatically when you save.</p>
   <div class="table-wrap">
     <table id="ingress-table">
-      <thead><tr><th>Hostname</th><th>Service</th><th>No TLS Verify</th><th>Actions</th></tr></thead>
+      <thead><tr><th>Hostname</th><th>Service</th><th>Path</th><th>No TLS Verify</th><th>Advanced</th><th>Actions</th></tr></thead>
       <tbody id="ingress-body">
       {% for rule in rules %}
-      <tr data-hostname="{{ rule.hostname or '' }}" data-service="{{ rule.service }}" data-no-tls-verify="{{ 'true' if rule.no_tls_verify else 'false' }}">
+      <tr data-hostname="{{ rule.hostname or '' }}" data-service="{{ rule.service }}" data-path="{{ rule.path or '' }}" data-no-tls-verify="{{ 'true' if rule.no_tls_verify else 'false' }}" data-host-header="{{ rule.http_host_header or '' }}" data-origin-sni="{{ rule.origin_server_name or '' }}" data-connect-timeout="{{ rule.connect_timeout_seconds if rule.connect_timeout_seconds is not none else '' }}">
         <td>{{ rule.hostname or '(catch-all)' }}</td>
         <td class="muted small">{{ rule.service }}</td>
+        <td class="muted small">{{ rule.path or '—' }}</td>
         <td>{{ 'Yes' if rule.no_tls_verify else '—' }}</td>
+        <td class="muted small">{{ 'Yes' if (rule.http_host_header or rule.origin_server_name or rule.connect_timeout_seconds is not none) else '—' }}</td>
         <td>
           <div class="actions">
             <button class="action-button edit-rule" {% if not operations_enabled %}disabled{% endif %}>Edit</button>
@@ -57,7 +68,12 @@
   const tbody = document.getElementById('ingress-body');
   const hostnameEl = document.getElementById('ingress-hostname');
   const serviceEl = document.getElementById('ingress-service');
+  const pathEl = document.getElementById('ingress-path');
   const noTlsEl = document.getElementById('ingress-no-tls');
+  const hostHeaderEl = document.getElementById('ingress-host-header');
+  const originSniEl = document.getElementById('ingress-origin-sni');
+  const connectTimeoutEl = document.getElementById('ingress-connect-timeout');
+  const advancedEl = document.getElementById('ingress-advanced');
   const addBtn = document.getElementById('ingress-add');
   const cancelBtn = document.getElementById('ingress-cancel');
   const titleEl = document.getElementById('ingress-form-title');
@@ -67,8 +83,16 @@
     return Array.from(tbody.querySelectorAll('tr')).map(row => ({
       hostname: row.dataset.hostname || null,
       service: row.dataset.service,
+      path: row.dataset.path || null,
       no_tls_verify: row.dataset.noTlsVerify === 'true',
+      http_host_header: row.dataset.hostHeader || null,
+      origin_server_name: row.dataset.originSni || null,
+      connect_timeout_seconds: row.dataset.connectTimeout ? parseInt(row.dataset.connectTimeout, 10) : null,
     }));
+  }
+
+  function hasAdvanced(row) {
+    return !!(row.dataset.hostHeader || row.dataset.originSni || row.dataset.connectTimeout);
   }
 
   function wireRow(row) {
@@ -76,7 +100,12 @@
       editingRow = row;
       hostnameEl.value = row.dataset.hostname;
       serviceEl.value = row.dataset.service;
+      pathEl.value = row.dataset.path || '';
       noTlsEl.checked = row.dataset.noTlsVerify === 'true';
+      hostHeaderEl.value = row.dataset.hostHeader || '';
+      originSniEl.value = row.dataset.originSni || '';
+      connectTimeoutEl.value = row.dataset.connectTimeout || '';
+      advancedEl.open = hasAdvanced(row);
       titleEl.textContent = `Editing ${row.dataset.hostname || '(catch-all)'}`;
       cancelBtn.hidden = false;
     });
@@ -87,17 +116,28 @@
     });
   }
 
-  function renderRow(rule) {
-    const row = document.createElement('tr');
+  function applyRuleToRow(row, rule) {
     row.dataset.hostname = rule.hostname || '';
     row.dataset.service = rule.service;
+    row.dataset.path = rule.path || '';
     row.dataset.noTlsVerify = rule.no_tls_verify ? 'true' : 'false';
+    row.dataset.hostHeader = rule.http_host_header || '';
+    row.dataset.originSni = rule.origin_server_name || '';
+    row.dataset.connectTimeout = rule.connect_timeout_seconds != null ? String(rule.connect_timeout_seconds) : '';
+    row.children[0].textContent = rule.hostname || '(catch-all)';
+    row.children[1].textContent = rule.service;
+    row.children[2].textContent = rule.path || '—';
+    row.children[3].textContent = rule.no_tls_verify ? 'Yes' : '—';
+    row.children[4].textContent = hasAdvanced(row) ? 'Yes' : '—';
+  }
+
+  function renderRow(rule) {
+    const row = document.createElement('tr');
     const actions = rule.hostname
       ? '<div class="actions"><button class="action-button edit-rule">Edit</button><button class="action-button delete-rule">Remove</button></div>'
       : '<div class="actions"><button class="action-button edit-rule">Edit</button></div>';
-    row.innerHTML = `<td></td><td class="muted small"></td><td>${rule.no_tls_verify ? 'Yes' : '—'}</td><td>${actions}</td>`;
-    row.children[0].textContent = rule.hostname || '(catch-all)';
-    row.children[1].textContent = rule.service;
+    row.innerHTML = `<td></td><td class="muted small"></td><td class="muted small"></td><td></td><td class="muted small"></td><td>${actions}</td>`;
+    applyRuleToRow(row, rule);
     wireRow(row);
     return row;
   }
@@ -106,7 +146,9 @@
 
   function resetForm() {
     editingRow = null;
-    hostnameEl.value = ''; serviceEl.value = ''; noTlsEl.checked = false;
+    hostnameEl.value = ''; serviceEl.value = ''; pathEl.value = ''; noTlsEl.checked = false;
+    hostHeaderEl.value = ''; originSniEl.value = ''; connectTimeoutEl.value = '';
+    advancedEl.open = false;
     titleEl.textContent = 'Add ingress rule';
     cancelBtn.hidden = true;
   }
@@ -116,14 +158,17 @@
     const service = serviceEl.value.trim();
     const hostname = hostnameEl.value.trim() || null;
     if (!service) return show('Service is required.', 'error');
-    const rule = {hostname, service, no_tls_verify: noTlsEl.checked};
+    const rule = {
+      hostname,
+      service,
+      path: pathEl.value.trim() || null,
+      no_tls_verify: noTlsEl.checked,
+      http_host_header: hostHeaderEl.value.trim() || null,
+      origin_server_name: originSniEl.value.trim() || null,
+      connect_timeout_seconds: connectTimeoutEl.value ? parseInt(connectTimeoutEl.value, 10) : null,
+    };
     if (editingRow) {
-      editingRow.dataset.hostname = hostname || '';
-      editingRow.dataset.service = service;
-      editingRow.dataset.noTlsVerify = rule.no_tls_verify ? 'true' : 'false';
-      editingRow.children[0].textContent = hostname || '(catch-all)';
-      editingRow.children[1].textContent = service;
-      editingRow.children[2].textContent = rule.no_tls_verify ? 'Yes' : '—';
+      applyRuleToRow(editingRow, rule);
     } else {
       const lastRow = tbody.lastElementChild;
       const newRow = renderRow(rule);

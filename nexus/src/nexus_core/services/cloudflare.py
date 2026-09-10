@@ -166,7 +166,34 @@ class CloudflareService:
                     raise ValueError(f"invalid hostname: {rule.hostname}")
             elif not is_last:
                 raise ValueError("only the last ingress rule may omit a hostname (catch-all)")
-            normalized.append(TunnelIngressRule(hostname=hostname, service=service, no_tls_verify=rule.no_tls_verify))
+
+            path = rule.path.strip() if rule.path else None
+            if path and (len(path) > 512 or "\n" in path):
+                raise ValueError(f"invalid path pattern: {rule.path}")
+
+            http_host_header = rule.http_host_header.strip() if rule.http_host_header else None
+            if http_host_header and (len(http_host_header) > 253 or not _DNS_NAME_RE.fullmatch(http_host_header.lower())):
+                raise ValueError(f"invalid HTTP host header: {rule.http_host_header}")
+
+            origin_server_name = rule.origin_server_name.strip() if rule.origin_server_name else None
+            if origin_server_name and (len(origin_server_name) > 253 or not _DNS_NAME_RE.fullmatch(origin_server_name.lower())):
+                raise ValueError(f"invalid origin server name: {rule.origin_server_name}")
+
+            connect_timeout = rule.connect_timeout_seconds
+            if connect_timeout is not None and not (1 <= connect_timeout <= 300):
+                raise ValueError("connect timeout must be between 1 and 300 seconds")
+
+            normalized.append(
+                TunnelIngressRule(
+                    hostname=hostname,
+                    service=service,
+                    path=path,
+                    no_tls_verify=rule.no_tls_verify,
+                    http_host_header=http_host_header,
+                    origin_server_name=origin_server_name,
+                    connect_timeout_seconds=connect_timeout,
+                )
+            )
         if normalized[-1].hostname is not None:
             normalized.append(TunnelIngressRule(hostname=None, service="http_status:404"))
         return normalized

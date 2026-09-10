@@ -97,6 +97,50 @@ async def test_cloudflare_provider_reports_errors_from_response_body() -> None:
 
 
 @pytest.mark.asyncio
+async def test_cloudflare_provider_roundtrips_advanced_ingress_fields() -> None:
+    captured: dict[str, object] = {}
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        if request.method == "GET":
+            return httpx.Response(
+                200,
+                json={
+                    "success": True,
+                    "result": {
+                        "config": {
+                            "ingress": [
+                                {
+                                    "hostname": "app.example.com",
+                                    "path": "/api/*",
+                                    "service": "http://192.168.0.10:80",
+                                    "originRequest": {"noTLSVerify": True, "httpHostHeader": "internal.example", "originServerName": "internal.example", "connectTimeout": "15s"},
+                                },
+                                {"service": "http_status:404"},
+                            ]
+                        }
+                    },
+                },
+            )
+        captured["body"] = json.loads(request.content)
+        return httpx.Response(200, json={"success": True, "result": {}})
+
+    provider = CloudflareApiProvider(
+        api_base="http://cf.test", api_token="secret", account_id="acct", tunnel_id="tunnel", transport=httpx.MockTransport(handler)
+    )
+    rules = await provider.list_tunnel_ingress()
+    assert rules[0].path == "/api/*"
+    assert rules[0].http_host_header == "internal.example"
+    assert rules[0].origin_server_name == "internal.example"
+    assert rules[0].connect_timeout_seconds == 15
+
+    await provider.set_tunnel_ingress(rules)
+    saved = captured["body"]["config"]["ingress"][0]
+    assert saved["path"] == "/api/*"
+    assert saved["originRequest"]["httpHostHeader"] == "internal.example"
+    assert saved["originRequest"]["connectTimeout"] == "15s"
+
+
+@pytest.mark.asyncio
 async def test_cloudflare_provider_appends_catch_all_when_missing() -> None:
     captured: dict[str, object] = {}
 
@@ -154,6 +198,18 @@ async def test_cloudflare_service_normalizes_tunnel_ingress(tmp_path: Path) -> N
     saved = await service.set_tunnel_ingress([TunnelIngressRule(hostname="a.example.com", service="http://x:80")])
     assert saved[-1].hostname is None
     assert provider.set_ingress_calls[0][-1].service == "http_status:404"
+
+    with pytest.raises(ValueError):
+        await service.set_tunnel_ingress([TunnelIngressRule(hostname="a.example.com", service="http://x:80", connect_timeout_seconds=999)])
+
+    with pytest.raises(ValueError):
+        await service.set_tunnel_ingress([TunnelIngressRule(hostname="a.example.com", service="http://x:80", http_host_header="bad header!")])
+
+    saved_advanced = await service.set_tunnel_ingress(
+        [TunnelIngressRule(hostname="a.example.com", service="http://x:80", path="/api/*", http_host_header="internal.example", origin_server_name="internal.example", connect_timeout_seconds=30)]
+    )
+    assert saved_advanced[0].path == "/api/*"
+    assert saved_advanced[0].connect_timeout_seconds == 30
 
 
 def test_cloudflare_dns_page_and_tunnel_page_render(tmp_path: Path) -> None:
