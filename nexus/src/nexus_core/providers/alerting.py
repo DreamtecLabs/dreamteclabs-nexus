@@ -1,4 +1,4 @@
-from nexus_core.ports.monitoring import MetricSample, MonitoringProviderDiagnostics, MonitoringTarget
+from nexus_core.ports.monitoring import ActiveAlert, HostSummary, MetricSample, MonitoringProviderDiagnostics, MonitoringTarget
 
 
 class UnconfiguredAlertingProvider:
@@ -25,3 +25,9 @@ class UnconfiguredMetricsProvider:
             healthy=False,
             detail="NEXUS_SIGNOZ_API_KEY is not configured",
         )
+
+    async def list_hosts(self) -> list[HostSummary]:
+        return []
+
+    async def list_active_alerts(self) -> list[ActiveAlert]:
+        return []

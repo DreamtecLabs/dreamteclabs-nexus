@@ -6,7 +6,9 @@ import re
 from dataclasses import replace
 
 from nexus_core.ports.monitoring import (
+    ActiveAlert,
     AlertingProvider,
+    HostSummary,
     MetricsProvider,
     MonitoringProviderDiagnostics,
     MonitoringRepository,
@@ -44,6 +46,25 @@ class MonitoringService:
         if self._metrics is None:
             return MonitoringProviderDiagnostics(configured=False, healthy=False, detail="Metrics provider is not configured")
         return await self._metrics.diagnostics()
+
+    async def list_hosts(self) -> list[HostSummary]:
+        # Read-only visibility into every host SigNoz's own infra-monitoring agent tracks,
+        # independent of Nexus-managed targets. A failure here is surfaced via the existing
+        # provider_diagnostics() card rather than raising through the page.
+        if self._metrics is None:
+            return []
+        try:
+            return await self._metrics.list_hosts()
+        except RuntimeError:
+            return []
+
+    async def list_active_alerts(self) -> list[ActiveAlert]:
+        if self._metrics is None:
+            return []
+        try:
+            return await self._metrics.list_active_alerts()
+        except RuntimeError:
+            return []
 
     async def get_status(self, target: MonitoringTarget) -> MonitoringStatus:
         if target.state == "disabled":

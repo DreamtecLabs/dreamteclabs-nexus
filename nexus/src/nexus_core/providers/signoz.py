@@ -6,7 +6,7 @@ from typing import Any
 
 import httpx
 
-from nexus_core.ports.monitoring import MetricSample, MonitoringProviderDiagnostics, MonitoringTarget
+from nexus_core.ports.monitoring import ActiveAlert, HostSummary, MetricSample, MonitoringProviderDiagnostics, MonitoringTarget
 
 
 class _SigNozClient:
@@ -120,6 +120,51 @@ class SigNozMetricsProvider(_SigNozClient):
         if not points:
             return None
         return max(points, key=lambda point: point.timestamp_ms)
+
+    async def list_hosts(self, *, lookback_seconds: int = 1800, limit: int = 200) -> list[HostSummary]:
+        end_ms = int(time.time() * 1000)
+        start_ms = end_ms - max(60, lookback_seconds) * 1000
+        payload = {
+            "filter": {"expression": ""},
+            "offset": 0,
+            "limit": limit,
+            "start": start_ms,
+            "end": end_ms,
+        }
+        data = await self._request("POST", "/api/v2/infra_monitoring/hosts", json=payload)
+        body = data.get("data")
+        records = body.get("records") if isinstance(body, dict) else None
+        hosts = [
+            HostSummary(
+                name=str(record.get("hostName", "unknown")),
+                status=str(record.get("status", "unknown")),
+                cpu=self._as_float(record.get("cpu")),
+                memory=self._as_float(record.get("memory")),
+                disk_usage=self._as_float(record.get("diskUsage")),
+                load15=self._as_float(record.get("load15")),
+            )
+            for record in (records or [])
+            if isinstance(record, dict)
+        ]
+        hosts.sort(key=lambda host: host.cpu if host.cpu is not None else -1.0, reverse=True)
+        return hosts
+
+    async def list_active_alerts(self) -> list[ActiveAlert]:
+        data = await self._request("GET", "/api/v2/rules")
+        records = data.get("data")
+        alerts: list[ActiveAlert] = []
+        for record in records if isinstance(records, list) else []:
+            if not isinstance(record, dict):
+                continue
+            state = str(record.get("state", "")).casefold()
+            if state in ("", "inactive"):
+                continue
+            alerts.append(ActiveAlert(id=str(record.get("id", "")), name=str(record.get("alert", "unnamed rule")), state=state))
+        return alerts
+
+    @staticmethod
+    def _as_float(value: object) -> float | None:
+        return float(value) if isinstance(value, (int, float)) else None
 
     async def diagnostics(self) -> MonitoringProviderDiagnostics:
         try:

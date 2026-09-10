@@ -9,7 +9,7 @@ from fastapi.testclient import TestClient
 
 from nexus_core.config import Settings
 from nexus_core.main import create_app
-from nexus_core.ports.monitoring import MetricSample, MonitoringProviderDiagnostics, MonitoringTarget
+from nexus_core.ports.monitoring import ActiveAlert, HostSummary, MetricSample, MonitoringProviderDiagnostics, MonitoringTarget
 from nexus_core.providers.file_sd import FileSdTelemetryRuntime
 from nexus_core.providers.signoz import SigNozMetricsProvider
 from nexus_core.repositories.monitoring_json import JsonMonitoringRepository
@@ -30,9 +30,16 @@ class FakeAlerting:
 
 
 class FakeMetrics:
-    def __init__(self, samples: dict[str, MetricSample | None]) -> None:
+    def __init__(
+        self,
+        samples: dict[str, MetricSample | None],
+        hosts: list[HostSummary] | None = None,
+        active_alerts: list[ActiveAlert] | None = None,
+    ) -> None:
         self.samples = samples
         self.calls: list[tuple[str, str]] = []
+        self.hosts = hosts or []
+        self.active_alerts = active_alerts or []
 
     async def latest_metric(self, *, metric_name: str, filter_expression: str, lookback_seconds: int = 900):
         self.calls.append((metric_name, filter_expression))
@@ -40,6 +47,12 @@ class FakeMetrics:
 
     async def diagnostics(self) -> MonitoringProviderDiagnostics:
         return MonitoringProviderDiagnostics(configured=True, healthy=True, detail="Authenticated as nexus-core")
+
+    async def list_hosts(self) -> list[HostSummary]:
+        return self.hosts
+
+    async def list_active_alerts(self) -> list[ActiveAlert]:
+        return self.active_alerts
 
 
 @pytest.mark.asyncio
@@ -174,5 +187,93 @@ def test_control_center_api_and_ui(tmp_path: Path) -> None:
         changed = client.patch("/api/v1/monitoring/targets/notify/state", json={"state": "maintenance"})
         assert changed.status_code == 200
         assert changed.json()["state"] == "maintenance"
+
         status_after = client.get("/api/v1/monitoring/targets/notify/status")
         assert status_after.json()["status"] == "maintenance"
+
+
+def test_control_center_renders_signoz_hosts_and_active_alerts(tmp_path: Path) -> None:
+    app = create_app(Settings(NEXUS_DATA_DIR=tmp_path, PDM_BASE_URL="https://pdm.invalid", PDM_VERIFY_TLS=False, NEXUS_SIGNOZ_API_KEY=None))
+    app.state.monitoring_service = MonitoringService(
+        JsonMonitoringRepository(tmp_path / "monitoring.json"),
+        FakeAlerting(),
+        FileSdTelemetryRuntime(tmp_path / "targets.json"),
+        FakeMetrics(
+            {},
+            hosts=[
+                HostSummary(name="pve-02.internal", status="active", cpu=0.99, memory=0.56, disk_usage=0.20, load15=4.6),
+                HostSummary(name="pve-01.internal", status="active", cpu=0.04, memory=0.34, disk_usage=0.05, load15=0.7),
+            ],
+            active_alerts=[ActiveAlert(id="r1", name="Host CPU Temperature Critical", state="firing")],
+        ),
+    )
+    with TestClient(app) as client:
+        page = client.get("/monitoring")
+        assert page.status_code == 200
+        assert "Infrastructure hosts" in page.text
+        assert "pve-02.internal" in page.text
+        assert "99%" in page.text
+        assert "Host CPU Temperature Critical" in page.text
+        assert "No active alerts" not in page.text
+
+
+def test_control_center_shows_healthy_state_with_no_hosts_or_alerts(tmp_path: Path) -> None:
+    app = create_app(Settings(NEXUS_DATA_DIR=tmp_path, PDM_BASE_URL="https://pdm.invalid", PDM_VERIFY_TLS=False, NEXUS_SIGNOZ_API_KEY=None))
+    app.state.monitoring_service = MonitoringService(
+        JsonMonitoringRepository(tmp_path / "monitoring.json"),
+        FakeAlerting(),
+        FileSdTelemetryRuntime(tmp_path / "targets.json"),
+        FakeMetrics({}),
+    )
+    with TestClient(app) as client:
+        page = client.get("/monitoring")
+        assert page.status_code == 200
+        assert "No active alerts" in page.text
+        assert "No hosts reported by SigNoz" in page.text
+
+
+@pytest.mark.asyncio
+async def test_signoz_list_hosts_parses_and_sorts_by_cpu_descending() -> None:
+    def handler(request: httpx.Request) -> httpx.Response:
+        assert request.url.path == "/api/v2/infra_monitoring/hosts"
+        return httpx.Response(
+            200,
+            json={
+                "status": "success",
+                "data": {
+                    "type": "list",
+                    "records": [
+                        {"hostName": "quiet-01.internal", "status": "active", "cpu": 0.04, "memory": 0.34, "diskUsage": 0.05, "load15": 0.7},
+                        {"hostName": "pve-02.internal", "status": "active", "cpu": 0.99, "memory": 0.56, "diskUsage": 0.20, "load15": 4.6},
+                    ],
+                    "total": 2,
+                },
+            },
+        )
+
+    provider = SigNozMetricsProvider(base_url="http://signoz.test", api_key="secret", transport=httpx.MockTransport(handler))
+    hosts = await provider.list_hosts()
+    assert [host.name for host in hosts] == ["pve-02.internal", "quiet-01.internal"]
+    assert hosts[0].cpu == 0.99
+
+
+@pytest.mark.asyncio
+async def test_signoz_list_active_alerts_excludes_inactive_rules() -> None:
+    def handler(request: httpx.Request) -> httpx.Response:
+        assert request.url.path == "/api/v2/rules"
+        return httpx.Response(
+            200,
+            json={
+                "status": "success",
+                "data": [
+                    {"id": "r1", "state": "inactive", "alert": "High Filesystem Usage Critical"},
+                    {"id": "r2", "state": "firing", "alert": "Host CPU Temperature Critical"},
+                    {"id": "r3", "state": "pending", "alert": "High Memory Usage"},
+                ],
+            },
+        )
+
+    provider = SigNozMetricsProvider(base_url="http://signoz.test", api_key="secret", transport=httpx.MockTransport(handler))
+    alerts = await provider.list_active_alerts()
+    assert {alert.id for alert in alerts} == {"r2", "r3"}
+    assert all(alert.state != "inactive" for alert in alerts)

@@ -141,7 +141,8 @@ async def power_center(request: Request) -> HTMLResponse:
 @router.get("/monitoring", response_class=HTMLResponse)
 async def monitoring(request: Request) -> HTMLResponse:
     service = request.app.state.monitoring_service; targets = service.list_targets(); statuses = await service.list_statuses(); status_by_id = {status.target_id: status for status in statuses}; rows = [{"target": target, "status": status_by_id.get(target.id)} for target in targets]
-    return _templates.TemplateResponse(request=request, name="monitoring.html", context={"rows": rows, "summary": service.summarize(statuses), "provider": await service.provider_diagnostics()})
+    hosts = await service.list_hosts(); active_alerts = await service.list_active_alerts()
+    return _templates.TemplateResponse(request=request, name="monitoring.html", context={"rows": rows, "summary": service.summarize(statuses), "provider": await service.provider_diagnostics(), "hosts": hosts, "active_alerts": active_alerts})
 
 
 @router.get("/domains", response_class=HTMLResponse)

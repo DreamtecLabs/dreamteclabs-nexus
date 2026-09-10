@@ -24,6 +24,73 @@
   </div>
 </section>
 
+<article class="dashboard-card {{ 'cat-amber' if active_alerts else 'cat-green' }}">
+  <div class="card-heading">
+    <div class="heading-left">
+      <span class="card-icon"><svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M12 9v4M12 17h.01M10.3 3.9 1.8 18a2 2 0 0 0 1.7 3h17a2 2 0 0 0 1.7-3L13.7 3.9a2 2 0 0 0-3.4 0Z"/></svg></span>
+      <h2>Active alerts</h2>
+    </div>
+    <span class="muted small">rules managed in SigNoz</span>
+  </div>
+  <div class="alerts-list">
+    {% for alert in active_alerts %}
+    <div class="alert-row {{ 'danger' if alert.state == 'firing' else 'warning' }}"><strong>{{ alert.name }}</strong><span>{{ alert.state }}</span></div>
+    {% else %}
+    <div class="alert-row success"><strong>No active alerts</strong><span>All SigNoz rules are currently OK.</span></div>
+    {% endfor %}
+  </div>
+</article>
+
+<article class="dashboard-card cat-indigo">
+  <div class="card-heading">
+    <div class="heading-left">
+      <span class="card-icon"><svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><rect x="3" y="4" width="18" height="16" rx="2"/><path d="M3 10h18M8 4v16"/></svg></span>
+      <h2>Infrastructure hosts</h2>
+    </div>
+    <span class="muted small">{{ hosts|length }} host{{ 's' if hosts|length != 1 else '' }} · via SigNoz</span>
+  </div>
+  <div class="table-wrap">
+    <table>
+      <thead><tr><th>Host</th><th>Status</th><th>CPU</th><th>Memory</th><th>Disk</th><th>Load (15m)</th></tr></thead>
+      <tbody>
+      {% for host in hosts %}
+      <tr>
+        <td><strong>{{ host.name }}</strong></td>
+        <td><span class="pill {{ 'enabled' if host.status == 'active' else 'disabled' }}">{{ host.status }}</span></td>
+        <td>
+          {% if host.cpu is not none %}
+          <div class="meter-row" style="grid-template-columns:1fr 42px">
+            <div class="meter-track"><div class="meter-fill {{ 'critical' if host.cpu >= 0.9 else ('warning' if host.cpu >= 0.7 else '') }}" style="width:{{ '%.0f'|format(host.cpu * 100) }}%"></div></div>
+            <span class="meter-value">{{ '%.0f%%'|format(host.cpu * 100) }}</span>
+          </div>
+          {% else %}<span class="muted small">&mdash;</span>{% endif %}
+        </td>
+        <td>
+          {% if host.memory is not none %}
+          <div class="meter-row" style="grid-template-columns:1fr 42px">
+            <div class="meter-track"><div class="meter-fill {{ 'critical' if host.memory >= 0.9 else ('warning' if host.memory >= 0.7 else '') }}" style="width:{{ '%.0f'|format(host.memory * 100) }}%"></div></div>
+            <span class="meter-value">{{ '%.0f%%'|format(host.memory * 100) }}</span>
+          </div>
+          {% else %}<span class="muted small">&mdash;</span>{% endif %}
+        </td>
+        <td>
+          {% if host.disk_usage is not none %}
+          <div class="meter-row" style="grid-template-columns:1fr 42px">
+            <div class="meter-track"><div class="meter-fill {{ 'critical' if host.disk_usage >= 0.9 else ('warning' if host.disk_usage >= 0.7 else '') }}" style="width:{{ '%.0f'|format(host.disk_usage * 100) }}%"></div></div>
+            <span class="meter-value">{{ '%.0f%%'|format(host.disk_usage * 100) }}</span>
+          </div>
+          {% else %}<span class="muted small">&mdash;</span>{% endif %}
+        </td>
+        <td class="muted small">{{ '%.2f'|format(host.load15) if host.load15 is not none else '—' }}</td>
+      </tr>
+      {% else %}
+      <tr><td colspan="6" class="empty">No hosts reported by SigNoz.</td></tr>
+      {% endfor %}
+      </tbody>
+    </table>
+  </div>
+</article>
+
 <p id="monitoring-message" class="operation-message" hidden></p>
 <section class="card table-card">
   <div class="table-wrap">

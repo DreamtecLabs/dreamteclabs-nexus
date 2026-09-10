@@ -43,6 +43,27 @@ class MonitoringProviderDiagnostics:
     detail: str | None = None
 
 
+@dataclass(frozen=True, slots=True)
+class HostSummary:
+    """A host SigNoz's infrastructure-monitoring agent already tracks (not a Nexus-managed target)."""
+
+    name: str
+    status: str
+    cpu: float | None = None
+    memory: float | None = None
+    disk_usage: float | None = None
+    load15: float | None = None
+
+
+@dataclass(frozen=True, slots=True)
+class ActiveAlert:
+    """A SigNoz alert rule currently outside its inactive/OK state (pending or firing)."""
+
+    id: str
+    name: str
+    state: str
+
+
 class MonitoringRepository(Protocol):
     def list_targets(self) -> list[MonitoringTarget]: ...
 
@@ -69,6 +90,10 @@ class MetricsProvider(Protocol):
     ) -> MetricSample | None: ...
 
     async def diagnostics(self) -> MonitoringProviderDiagnostics: ...
+
+    async def list_hosts(self) -> list[HostSummary]: ...
+
+    async def list_active_alerts(self) -> list[ActiveAlert]: ...
 
 
 class TelemetryRuntime(Protocol):
