@@ -121,7 +121,11 @@ class SigNozMetricsProvider(_SigNozClient):
             return None
         return max(points, key=lambda point: point.timestamp_ms)
 
-    async def list_hosts(self, *, lookback_seconds: int = 1800, limit: int = 200) -> list[HostSummary]:
+    async def list_hosts(self, *, lookback_seconds: int = 120, limit: int = 200) -> list[HostSummary]:
+        # SigNoz's own Hosts UI defaults to a 30-minute window, but its cpu/memory/disk
+        # figures are an average over [start, end], not an instantaneous read. A page meant
+        # to show "what's happening right now" needs a short window instead, or a host that
+        # spiked earlier and already recovered still shows as critical minutes later.
         end_ms = int(time.time() * 1000)
         start_ms = end_ms - max(60, lookback_seconds) * 1000
         payload = {
