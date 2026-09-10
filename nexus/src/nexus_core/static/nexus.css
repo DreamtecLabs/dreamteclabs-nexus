@@ -107,7 +107,7 @@ code{font-family:var(--font-mono);padding:2px 5px;border-radius:5px;background:v
 .avatar{width:32px;height:32px;border-radius:50%;background:var(--accent-soft);color:var(--accent-strong);display:flex;align-items:center;justify-content:center;font-weight:600;font-size:12.5px;flex:none}
 
 /* ---- Page container ---- */
-.page{max-width:1360px;margin:0 auto;padding:24px 28px 48px;width:100%}
+.page{max-width:1360px;margin:0;padding:24px 28px 48px;width:100%}
 
 /* ===== Shared page furniture ===== */
 .page-head{display:flex;justify-content:space-between;align-items:flex-end;gap:16px;margin-bottom:20px;flex-wrap:wrap}
