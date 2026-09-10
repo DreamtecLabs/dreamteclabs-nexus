@@ -154,14 +154,19 @@ async def domains(request: Request) -> HTMLResponse:
 
 
 @router.get("/domains/dns", response_class=HTMLResponse)
-async def domain_dns(request: Request, zone: str) -> HTMLResponse:
+async def domain_dns(request: Request, zone: str | None = None) -> HTMLResponse:
     service = request.app.state.cloudflare_service
+    known_zones = [item.name for item in request.app.state.domain_service.list_domains()]
+    selected_zone = zone or (known_zones[0] if known_zones else None)
     error = None
-    try:
-        records = await service.list_dns_records(zone)
-    except (ValueError, RuntimeError) as exc:
-        records = []
-        error = str(exc)
+    records = []
+    if selected_zone:
+        try:
+            records = await service.list_dns_records(selected_zone)
+        except (ValueError, RuntimeError) as exc:
+            error = str(exc)
+    else:
+        error = "No domains are registered in Nexus yet -- onboard one first, or enter a zone name directly in the URL (?zone=example.com)."
     # Precompute a plain JSON string (not the Jinja `tojson` filter's Markup-safe
     # output, which skips the normal HTML-attribute escaping and breaks the
     # data-record-data="..." attribute whenever the record content has quotes).
@@ -169,7 +174,13 @@ async def domain_dns(request: Request, zone: str) -> HTMLResponse:
     return _templates.TemplateResponse(
         request=request,
         name="domain_dns.html",
-        context={"zone": zone, "rows": rows, "error": error, "operations_enabled": service.operations_enabled},
+        context={
+            "zone": selected_zone or "",
+            "known_zones": known_zones,
+            "rows": rows,
+            "error": error,
+            "operations_enabled": service.operations_enabled,
+        },
     )
 
 

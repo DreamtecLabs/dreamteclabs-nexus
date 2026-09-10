@@ -308,6 +308,27 @@ def test_cloudflare_dns_page_and_tunnel_page_render(tmp_path: Path) -> None:
         assert blocked.status_code == 403
 
 
+def test_cloudflare_dns_page_defaults_to_first_nexus_domain_without_zone_param(tmp_path: Path) -> None:
+    settings = Settings(NEXUS_DATA_DIR=tmp_path, PDM_BASE_URL="https://pdm.invalid", PDM_VERIFY_TLS=False, NEXUS_DOMAINS_OPERATIONS_ENABLED=False)
+    app = create_app(settings)
+    app.state.cloudflare_service = CloudflareService(
+        FakeCloudflareProvider(records=[DnsRecord(id="r1", type="A", name="claudiokaist.com", content="9.9.9.9", ttl=1, proxied=False)]),
+        JsonlDomainAuditRepository(tmp_path / "audit.jsonl"),
+        operations_enabled=False,
+    )
+
+    with TestClient(app) as client:
+        # No ?zone= at all -- should default to the first Nexus-known domain
+        # (the seeded default inventory sorts "claudiokaist.com" first) rather
+        # than 422ing on a missing required query param.
+        page = client.get("/domains/dns")
+        assert page.status_code == 200
+        assert "claudiokaist.com" in page.text
+        assert "9.9.9.9" in page.text
+        assert 'id="zone-picker"' in page.text
+        assert "dreamteclabs.com" in page.text  # another known domain listed in the picker
+
+
 def test_cloudflare_dns_api_crud_when_enabled(tmp_path: Path) -> None:
     settings = Settings(NEXUS_DATA_DIR=tmp_path, PDM_BASE_URL="https://pdm.invalid", PDM_VERIFY_TLS=False, NEXUS_DOMAINS_OPERATIONS_ENABLED=True)
     app = create_app(settings)

@@ -2,8 +2,20 @@
 {% block title %}DNS Records · {{ zone }} · Nexus{% endblock %}
 {% block content %}
 <section class="page-head compact">
-  <div><div class="eyebrow accent-purple">Domains & Hosting</div><h1>DNS Records — {{ zone }}</h1></div>
+  <div><div class="eyebrow accent-purple">Domains & Hosting</div><h1>DNS Records{{ ' — ' + zone if zone else '' }}</h1></div>
   <a class="button secondary" href="/domains">Back to Domains</a>
+</section>
+
+<section class="card">
+  <div class="domain-form-row">
+    {% if known_zones %}
+    <select class="control" id="zone-picker">
+      {% for known in known_zones %}<option value="{{ known }}" {{ 'selected' if known == zone }}>{{ known }}</option>{% endfor %}
+    </select>
+    {% endif %}
+    <input class="control" id="zone-custom" placeholder="or type any zone name">
+    <button class="button secondary" id="zone-go">Go</button>
+  </div>
 </section>
 
 {% if error %}
@@ -75,6 +87,17 @@
   const zone = {{ zone|tojson }};
   const message = document.getElementById('dns-message');
   const show = (text, kind) => { message.hidden = false; message.textContent = text; message.className = `operation-message ${kind}`; };
+
+  const zonePicker = document.getElementById('zone-picker');
+  const zoneCustom = document.getElementById('zone-custom');
+  const zoneGo = document.getElementById('zone-go');
+  const goToZone = () => {
+    const target = (zoneCustom.value.trim() || (zonePicker ? zonePicker.value : '')).trim();
+    if (target) window.location.href = `/domains/dns?zone=${encodeURIComponent(target)}`;
+  };
+  zoneGo.addEventListener('click', goToZone);
+  zoneCustom.addEventListener('keydown', (event) => { if (event.key === 'Enter') goToZone(); });
+  if (zonePicker) zonePicker.addEventListener('change', () => { window.location.href = `/domains/dns?zone=${encodeURIComponent(zonePicker.value)}`; });
   let editingId = null;
 
   const typeEl = document.getElementById('dns-type');
