@@ -333,6 +333,26 @@ hestia_ensure_mail_domain() {
     fi
 }
 
+# A mail domain that already has force-SSL enabled ships an nginx.forcessl.conf
+# containing a bare `return 301 https://...;` at the server level, which fires
+# before any location block (including the one that should exempt
+# /.well-known/acme-challenge/) ever gets evaluated. That makes the ACME HTTP-01
+# challenge unreachable and Let's Encrypt sees it as a redirect loop. Disable the
+# redirect for the duration of certificate issuance and always restore it.
+hestia_disable_mail_forcessl() {
+    local user="$1" domain="$2"
+    local path="/home/${user}/conf/mail/${domain}/nginx.forcessl.conf"
+    ssh "${SSH_OPTS[@]}" "$HESTIA_SSH_HOST" \
+        "test -f '$path' && mv -f '$path' '${path}.nexus-disabled' && systemctl reload nginx; true"
+}
+
+hestia_restore_mail_forcessl() {
+    local user="$1" domain="$2"
+    local path="/home/${user}/conf/mail/${domain}/nginx.forcessl.conf"
+    ssh "${SSH_OPTS[@]}" "$HESTIA_SSH_HOST" \
+        "test -f '${path}.nexus-disabled' && mv -f '${path}.nexus-disabled' '$path' && systemctl reload nginx; true"
+}
+
 hestia_issue_mail_certificate() {
     local user="$1" domain="$2"
     ssh "${SSH_OPTS[@]}" "$HESTIA_SSH_HOST" "$HESTIA_BIN/v-add-letsencrypt-domain '$user' '$domain' '' yes"
@@ -399,7 +419,11 @@ onboard() {
 
     RECONCILE_STEP="hestia:letsencrypt"
     public_ip="$(wait_for_mail_a "$mail_host")"
+    hestia_disable_mail_forcessl "$hestia_user" "$domain"
+    trap 'hestia_restore_mail_forcessl "$hestia_user" "$domain"' EXIT
     hestia_issue_mail_certificate "$hestia_user" "$domain"
+    hestia_restore_mail_forcessl "$hestia_user" "$domain"
+    trap - EXIT
     steps="$(jq -c '. + ["hestia:letsencrypt"]' <<<"$steps")"
 
     RECONCILE_STEP="cloudflare:mail-dns"
