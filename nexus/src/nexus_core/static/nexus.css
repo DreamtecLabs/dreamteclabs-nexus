@@ -185,6 +185,14 @@ tr[hidden]{display:none}
 .provider-card.provider-ok{border-color:var(--success)}
 .provider-state{font-size:17px;font-weight:600}
 
+.page-head.compact{margin-bottom:12px}
+.page-head.compact h1{margin:0;font-size:18px}
+.monitoring-summary.compact{margin-bottom:10px}
+.monitoring-summary.compact .card{padding:10px 14px}
+.monitoring-summary.compact .metric{font-size:20px;margin:3px 0 1px}
+.provider-card.compact{padding:10px 18px;margin-bottom:12px}
+.provider-card.compact .provider-state{font-size:14px}
+
 /* ===== Estate / resource detail ===== */
 .estate-remote{margin-bottom:16px}
 .estate-head{display:flex;justify-content:space-between;gap:18px;align-items:flex-start}

@@ -1,22 +1,18 @@
 {% extends "base.html" %}
 {% block title %}Monitoring · Nexus{% endblock %}
 {% block content %}
-<section class="page-head">
-  <div>
-    <p class="eyebrow">OBSERVABILITY</p>
-    <h1>Monitoring Control Center</h1>
-    <p class="muted">Nexus owns target lifecycle and maintenance. SigNoz owns telemetry, queries and alert suppression.</p>
-  </div>
+<section class="page-head compact">
+  <h1>Monitoring Control Center</h1>
 </section>
 
-<section class="grid monitoring-summary">
+<section class="grid monitoring-summary compact">
   <article class="card"><span class="label">Targets</span><strong class="metric">{{ summary.total }}</strong></article>
   <article class="card"><span class="label">Healthy</span><strong class="metric status-ok">{{ summary.healthy }}</strong></article>
   <article class="card"><span class="label">Down</span><strong class="metric status-bad">{{ summary.down }}</strong></article>
   <article class="card"><span class="label">Maintenance</span><strong class="metric status-warn">{{ summary.maintenance }}</strong><span class="muted small">{{ summary.unknown }} unknown · {{ summary.disabled }} disabled</span></article>
 </section>
 
-<section class="card provider-card {{ 'provider-ok' if provider.healthy else 'warning-card' }}">
+<section class="card provider-card compact {{ 'provider-ok' if provider.healthy else 'warning-card' }}">
   <div>
     <span class="label">SigNoz provider</span>
     <strong class="provider-state">{{ 'Ready' if provider.healthy else ('Unavailable' if provider.configured else 'Not configured') }}</strong>

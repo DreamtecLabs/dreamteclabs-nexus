@@ -23,7 +23,6 @@ def test_standalone_monitoring_ui_is_served_by_nexus_core(tmp_path: Path) -> Non
     response = client.get("/monitoring")
     assert response.status_code == 200
     assert "Monitoring Control Center" in response.text
-    assert "Nexus owns target lifecycle and maintenance" in response.text
     assert 'class="rail"' in response.text
     assert 'class="rail-link active"' in response.text
     assert 'href="/monitoring"' in response.text
