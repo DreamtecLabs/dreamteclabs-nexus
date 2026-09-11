@@ -104,6 +104,15 @@ class PowerAuditEntry:
     task_reference: str | None = None
 
 
+@dataclass(frozen=True, slots=True)
+class DecommissionResult:
+    resource_id: str
+    resource_name: str
+    task_reference: str | None
+    verified: bool
+    monitoring_target_removed: bool
+
+
 class InfrastructureProvider(Protocol):
     async def list_resources(self) -> InfrastructureSnapshot: ...
 
@@ -111,6 +120,13 @@ class InfrastructureProvider(Protocol):
         self,
         resource: InfrastructureResource,
         action: str,
+    ) -> str | None: ...
+
+    async def destroy_guest(
+        self,
+        resource: InfrastructureResource,
+        *,
+        purge: bool = True,
     ) -> str | None: ...
 
 

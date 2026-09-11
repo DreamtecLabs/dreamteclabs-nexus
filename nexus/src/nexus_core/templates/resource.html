@@ -6,4 +6,53 @@
 <section class="grid metric-grid"><article class="card"><span class="label">CPU</span><strong class="metric-small">{{ view.cpu }}</strong><span class="muted small">{{ context.resource.cpu_total or '—' }} cores</span></article><article class="card"><span class="label">Memory</span><strong class="metric-small">{{ view.memory_pct }}</strong><span class="muted small">{{ view.memory }}</span></article><article class="card"><span class="label">Disk</span><strong class="metric-small">{{ view.disk_pct }}</strong><span class="muted small">{{ view.disk }}</span></article><article class="card"><span class="label">Uptime</span><strong class="metric-small">{{ view.uptime }}</strong></article></section>
 {% if context.node and context.node.id != context.resource.id %}<section class="card relationship-card"><span class="label">Runs on</span><h2><a href="/infrastructure/resource?id={{ context.node.id|urlencode }}">{{ context.node.name }}</a></h2><span class="pill {{ context.node.status }}">{{ context.node.status }}</span></section>{% endif %}
 <section class="grid relationship-grid"><article class="card"><h2>Guests</h2><p class="muted small">Resources on the same node.</p>{% for item in context.guests %}<a class="resource-link" href="/infrastructure/resource?id={{ item.id|urlencode }}"><span>{{ item.name }}</span><span class="pill {{ item.status }}">{{ item.status }}</span></a>{% else %}<p class="muted">No related guests.</p>{% endfor %}</article><article class="card"><h2>Storage</h2><p class="muted small">Storage exposed in the same provider context.</p>{% for item in context.storages %}<a class="resource-link" href="/infrastructure/resource?id={{ item.id|urlencode }}"><span>{{ item.name }}</span><span class="pill {{ item.status }}">{{ item.status }}</span></a>{% else %}<p class="muted">No related storage.</p>{% endfor %}</article><article class="card"><h2>Networks</h2><p class="muted small">Network resources exposed for the same node/remote.</p>{% for item in context.networks %}<a class="resource-link" href="/infrastructure/resource?id={{ item.id|urlencode }}"><span>{{ item.name }}</span><span class="pill {{ item.status }}">{{ item.status }}</span></a>{% else %}<p class="muted">No related networks.</p>{% endfor %}</article></section>
+
+{% if context.resource.is_guest %}
+<section class="card warning-card" id="danger-zone">
+  <strong>Danger zone</strong>
+  <p class="muted small">Decommission stops and permanently destroys this guest in PVE (including its disks) and removes any Nexus monitoring target registered for it. This cannot be undone.</p>
+  {% if not decommission_enabled %}
+  <p class="muted small">Decommissioning is locked. Set <code>NEXUS_DECOMMISSION_ENABLED=true</code> only after confirming the PDM token has guest-delete permissions.</p>
+  {% endif %}
+  <label class="muted small"><input type="checkbox" id="decommission-purge" checked> Also remove related configuration (backup jobs, replication, HA) and unreferenced disks</label>
+  <button class="button danger" id="decommission-button" data-resource="{{ context.resource.id }}" data-name="{{ context.resource.name }}" {% if not decommission_enabled %}disabled{% endif %}>Decommission {{ context.resource.name }}</button>
+  <p id="decommission-message" class="operation-message" hidden></p>
+</section>
+<script>
+(() => {
+  const button = document.getElementById('decommission-button');
+  if (!button) return;
+  const message = document.getElementById('decommission-message');
+  const purge = document.getElementById('decommission-purge');
+  button.addEventListener('click', async () => {
+    const name = button.dataset.name;
+    const confirmation = window.prompt(`This permanently destroys ${name} and its disks in PVE. Type the exact resource name to confirm: ${name}`);
+    if (confirmation !== name) {
+      if (confirmation !== null) window.alert('Confirmation did not match. No action was sent.');
+      return;
+    }
+    button.disabled = true;
+    message.hidden = false;
+    message.className = 'operation-message pending';
+    message.textContent = `Decommissioning ${name}; waiting for PDM read-back verification…`;
+    try {
+      const response = await fetch('/api/v1/infrastructure/decommission', {
+        method: 'POST',
+        headers: {'Content-Type': 'application/json'},
+        body: JSON.stringify({resource_id: button.dataset.resource, confirmation, purge: purge.checked})
+      });
+      const payload = await response.json();
+      if (!response.ok) throw new Error(payload.detail || `HTTP ${response.status}`);
+      message.className = 'operation-message success';
+      message.textContent = `${payload.resource_name} destroyed and verified absent.${payload.monitoring_target_removed ? ' Monitoring target removed.' : ''} Returning to Inventory…`;
+      window.setTimeout(() => { window.location.href = '/infrastructure'; }, 1200);
+    } catch (error) {
+      message.className = 'operation-message error';
+      message.textContent = error.message;
+      button.disabled = false;
+    }
+  });
+})();
+</script>
+{% endif %}
 {% endblock %}

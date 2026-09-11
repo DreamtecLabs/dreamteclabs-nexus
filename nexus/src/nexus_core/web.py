@@ -125,10 +125,11 @@ async def estate(request: Request) -> HTMLResponse:
 
 @router.get("/infrastructure/resource", response_class=HTMLResponse)
 async def resource_detail(request: Request, id: str) -> HTMLResponse:
-    try: context = await request.app.state.infrastructure_service.get_resource_context(id)
+    service = request.app.state.infrastructure_service
+    try: context = await service.get_resource_context(id)
     except InfrastructureResourceNotFound as exc: raise HTTPException(status_code=404, detail=str(exc)) from exc
     except RuntimeError as exc: raise HTTPException(status_code=503, detail=str(exc)) from exc
-    return _templates.TemplateResponse(request=request, name="resource.html", context={"context": context, "view": _resource_view(context.resource), "human_bytes": _human_bytes, "pct": _pct, "human_uptime": _human_uptime})
+    return _templates.TemplateResponse(request=request, name="resource.html", context={"context": context, "view": _resource_view(context.resource), "human_bytes": _human_bytes, "pct": _pct, "human_uptime": _human_uptime, "decommission_enabled": service.decommission_enabled})
 
 
 @router.get("/infrastructure/power", response_class=HTMLResponse)

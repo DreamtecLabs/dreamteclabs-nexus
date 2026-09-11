@@ -119,6 +119,38 @@ class PdmProvider:
         except ValueError as exc:
             raise RuntimeError("PDM power API returned invalid JSON") from exc
         data = payload.get("data") if isinstance(payload, dict) else None
+        return self._extract_task_reference(data)
+
+    async def destroy_guest(self, resource: InfrastructureResource, *, purge: bool = True) -> str | None:
+        if resource.type == "pve-qemu":
+            guest_kind = "qemu"
+        elif resource.type == "pve-lxc":
+            guest_kind = "lxc"
+        else:
+            raise RuntimeError(f"PDM destroy operation does not support resource type '{resource.type}'")
+        if resource.vmid is None:
+            raise RuntimeError("PDM destroy operation requires a VMID")
+        remote = quote(resource.remote, safe="")
+        path = f"/api2/json/pve/remotes/{remote}/{guest_kind}/{resource.vmid}"
+        params: dict[str, object] = {"purge": "1" if purge else "0"}
+        if resource.node:
+            params["node"] = resource.node
+        try:
+            async with self._client() as client:
+                response = await client.delete(path, params=params)
+                response.raise_for_status()
+                payload = response.json()
+        except httpx.HTTPStatusError as exc:
+            raise RuntimeError(f"PDM destroy API returned HTTP {exc.response.status_code}") from exc
+        except httpx.HTTPError as exc:
+            raise RuntimeError(f"PDM destroy API failed: {type(exc).__name__}") from exc
+        except ValueError as exc:
+            raise RuntimeError("PDM destroy API returned invalid JSON") from exc
+        data = payload.get("data") if isinstance(payload, dict) else None
+        return self._extract_task_reference(data)
+
+    @staticmethod
+    def _extract_task_reference(data: object) -> str | None:
         if data is None:
             return None
         if isinstance(data, str):

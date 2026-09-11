@@ -7,6 +7,7 @@ from datetime import datetime, timezone
 from nexus_core.ports.infrastructure import (
     POWER_ACTIONS,
     PVE_GUEST_TYPES,
+    DecommissionResult,
     InfrastructureNodeSummary,
     InfrastructureProvider,
     InfrastructureRemoteSummary,
@@ -39,21 +40,50 @@ class PowerVerificationTimeout(InfrastructureError):
     pass
 
 
+class DecommissionDisabled(InfrastructureError):
+    pass
+
+
+class DecommissionNotAllowed(InfrastructureError):
+    pass
+
+
+class DecommissionVerificationTimeout(InfrastructureError):
+    pass
+
+
 class InfrastructureService:
     _allowed_from = {"start": frozenset({"stopped"}), "shutdown": frozenset({"running"}), "stop": frozenset({"running"})}
     _expected_status = {"start": "running", "shutdown": "stopped", "stop": "stopped"}
 
-    def __init__(self, provider: InfrastructureProvider, *, power_operations_enabled: bool = False, verification_attempts: int = 20, verification_interval_seconds: float = 1.0, audit_repository: PowerAuditRepository | None = None, sleep: Callable[[float], Awaitable[None]] = asyncio.sleep) -> None:
+    def __init__(
+        self,
+        provider: InfrastructureProvider,
+        *,
+        power_operations_enabled: bool = False,
+        verification_attempts: int = 20,
+        verification_interval_seconds: float = 1.0,
+        audit_repository: PowerAuditRepository | None = None,
+        sleep: Callable[[float], Awaitable[None]] = asyncio.sleep,
+        decommission_enabled: bool = False,
+        monitoring_service=None,
+    ) -> None:
         self._provider = provider
         self._power_operations_enabled = power_operations_enabled
         self._verification_attempts = max(1, verification_attempts)
         self._verification_interval_seconds = max(0.0, verification_interval_seconds)
         self._audit_repository = audit_repository
         self._sleep = sleep
+        self._decommission_enabled = decommission_enabled
+        self._monitoring = monitoring_service
 
     @property
     def power_operations_enabled(self) -> bool:
         return self._power_operations_enabled
+
+    @property
+    def decommission_enabled(self) -> bool:
+        return self._decommission_enabled
 
     async def list_resources(self) -> InfrastructureSnapshot:
         return await self._provider.list_resources()
@@ -145,4 +175,47 @@ class InfrastructureService:
             raise PowerVerificationTimeout(f"PDM accepted {action} for {resource.name}, but Nexus did not observe status '{expected}' after {self._verification_attempts} checks (last status: '{observed}')")
         except Exception as exc:
             self._audit(resource=resource, action=action, result="failed", detail=str(exc), task_reference=task_reference)
+            raise
+
+    async def decommission(self, *, resource_id: str, confirmation: str, purge: bool = True) -> DecommissionResult:
+        if not self._decommission_enabled:
+            raise DecommissionDisabled("Guest decommissioning is disabled by configuration")
+        resource = await self.get_resource(resource_id)
+        supported = resource.type in PVE_GUEST_TYPES and resource.vmid is not None
+        if not supported or resource.template is True:
+            raise DecommissionNotAllowed(f"{resource.name} cannot be decommissioned (not a destroyable guest)")
+        if confirmation.strip() != resource.name:
+            raise DecommissionNotAllowed(f"Decommission requires confirmation with the exact resource name '{resource.name}'")
+        task_reference: str | None = None
+        try:
+            if resource.status == "running":
+                # Stopping first is an internal step of the (already gated) decommission
+                # flow, not a user-facing power action -- go straight to the provider
+                # instead of execute_power_action() so this never depends on the separate
+                # NEXUS_POWER_OPERATIONS_ENABLED flag.
+                await self._provider.execute_power_action(resource, "stop")
+                for attempt in range(self._verification_attempts):
+                    snapshot = await self.list_resources()
+                    current = next((item for item in snapshot.resources if item.id == resource.id), None)
+                    if current is None or current.status == "stopped":
+                        break
+                    if attempt + 1 < self._verification_attempts:
+                        await self._sleep(self._verification_interval_seconds)
+            task_reference = await self._provider.destroy_guest(resource, purge=purge)
+            for attempt in range(self._verification_attempts):
+                snapshot = await self.list_resources()
+                if not any(item.id == resource.id for item in snapshot.resources):
+                    break
+                if attempt + 1 < self._verification_attempts:
+                    await self._sleep(self._verification_interval_seconds)
+            else:
+                raise DecommissionVerificationTimeout(f"PDM accepted destroy for {resource.name}, but Nexus still observed it after {self._verification_attempts} checks")
+            monitoring_removed = False
+            if self._monitoring is not None:
+                monitoring_removed = await self._monitoring.delete_target_by_name(resource.name)
+            result = DecommissionResult(resource_id=resource.id, resource_name=resource.name, task_reference=task_reference, verified=True, monitoring_target_removed=monitoring_removed)
+            self._audit(resource=resource, action="decommission", result="success", detail=f"Destroyed and verified absent (monitoring cleanup: {'removed' if monitoring_removed else 'nothing registered'})", task_reference=task_reference)
+            return result
+        except Exception as exc:
+            self._audit(resource=resource, action="decommission", result="failed", detail=str(exc), task_reference=task_reference)
             raise

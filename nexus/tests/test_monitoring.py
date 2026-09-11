@@ -73,6 +73,30 @@ async def test_service_lifecycle_writes_file_sd_and_maintenance(tmp_path: Path) 
 
 
 @pytest.mark.asyncio
+async def test_delete_target_by_name_removes_a_registered_target(tmp_path: Path) -> None:
+    repository = JsonMonitoringRepository(tmp_path / "monitoring.json")
+    runtime = FileSdTelemetryRuntime(tmp_path / "targets.json")
+    service = MonitoringService(repository, FakeAlerting(), runtime)
+    await service.upsert_target(name="demo-01", address="192.168.0.50", profile="icmp", site="home", state="enabled")
+
+    removed = await service.delete_target_by_name("demo-01")
+
+    assert removed is True
+    assert repository.get_target("demo-01") is None
+
+
+@pytest.mark.asyncio
+async def test_delete_target_by_name_is_a_noop_when_nothing_registered(tmp_path: Path) -> None:
+    repository = JsonMonitoringRepository(tmp_path / "monitoring.json")
+    runtime = FileSdTelemetryRuntime(tmp_path / "targets.json")
+    service = MonitoringService(repository, FakeAlerting(), runtime)
+
+    removed = await service.delete_target_by_name("never-existed")
+
+    assert removed is False
+
+
+@pytest.mark.asyncio
 async def test_icmp_profile_targets_need_no_port_and_route_to_the_icmp_file_sd(tmp_path: Path) -> None:
     repository = JsonMonitoringRepository(tmp_path / "monitoring.json")
     runtime = CompositeTelemetryRuntime(

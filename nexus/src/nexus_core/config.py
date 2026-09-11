@@ -19,6 +19,7 @@ class Settings(BaseSettings):
     power_operations_enabled: bool = Field(default=False, alias="NEXUS_POWER_OPERATIONS_ENABLED")
     power_verification_attempts: int = Field(default=60, ge=1, le=120, alias="NEXUS_POWER_VERIFY_ATTEMPTS")
     power_verification_interval_seconds: float = Field(default=1.0, ge=0.1, le=10.0, alias="NEXUS_POWER_VERIFY_INTERVAL_SECONDS")
+    decommission_enabled: bool = Field(default=False, alias="NEXUS_DECOMMISSION_ENABLED")
     provisioning_enabled: bool = Field(default=False, alias="NEXUS_PROVISIONING_ENABLED")
     provisioning_verification_attempts: int = Field(default=90, ge=1, le=300, alias="NEXUS_PROVISIONING_VERIFY_ATTEMPTS")
     provisioning_verification_interval_seconds: float = Field(default=1.0, ge=0.1, le=10.0, alias="NEXUS_PROVISIONING_VERIFY_INTERVAL_SECONDS")

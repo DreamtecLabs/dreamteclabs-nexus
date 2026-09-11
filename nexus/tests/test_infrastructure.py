@@ -90,6 +90,7 @@ async def test_pdm_rejects_unsupported_resources_payload() -> None:
 
 class FakeInfrastructureService:
     power_operations_enabled = False
+    decommission_enabled = False
 
     async def list_resources(self) -> InfrastructureSnapshot:
         return InfrastructureSnapshot(

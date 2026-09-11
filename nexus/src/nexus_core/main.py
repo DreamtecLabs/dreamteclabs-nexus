@@ -22,7 +22,7 @@ from nexus_core.repositories.monitoring_json import JsonMonitoringRepository
 from nexus_core.repositories.power_audit_jsonl import JsonlPowerAuditRepository
 from nexus_core.services.cloudflare import CloudflareOperationsDisabled, CloudflareService
 from nexus_core.services.domains import DomainOperationsDisabled, DomainService, DomainVerificationFailed
-from nexus_core.services.infrastructure import InfrastructureResourceNotFound, InfrastructureService, PowerActionNotAllowed, PowerOperationsDisabled, PowerVerificationTimeout
+from nexus_core.services.infrastructure import DecommissionDisabled, DecommissionNotAllowed, DecommissionVerificationTimeout, InfrastructureResourceNotFound, InfrastructureService, PowerActionNotAllowed, PowerOperationsDisabled, PowerVerificationTimeout
 from nexus_core.services.monitoring import MonitoringService
 from nexus_core.services.providers import ProviderService
 from nexus_core.web import router as web_router
@@ -51,6 +51,12 @@ class PowerActionInput(BaseModel):
     resource_id: str = Field(min_length=1, max_length=255)
     action: str = Field(min_length=1, max_length=16)
     confirmation: str | None = Field(default=None, max_length=128)
+
+
+class DecommissionInput(BaseModel):
+    resource_id: str = Field(min_length=1, max_length=255)
+    confirmation: str = Field(min_length=1, max_length=128)
+    purge: bool = True
 
 
 class DomainValidateInput(BaseModel):
@@ -126,8 +132,8 @@ def create_app(settings: Settings | None = None) -> FastAPI:
 
     app = FastAPI(title="DreamtecLabs Nexus", version="0.9.0", lifespan=lifespan)
     app.state.provider_service = ProviderService({pdm.name: pdm})
-    app.state.infrastructure_service = InfrastructureService(pdm, power_operations_enabled=settings.power_operations_enabled, verification_attempts=settings.power_verification_attempts, verification_interval_seconds=settings.power_verification_interval_seconds, audit_repository=power_audit_repository)
     app.state.monitoring_service = MonitoringService(monitoring_repository, alerting, telemetry_runtime, metrics)
+    app.state.infrastructure_service = InfrastructureService(pdm, power_operations_enabled=settings.power_operations_enabled, verification_attempts=settings.power_verification_attempts, verification_interval_seconds=settings.power_verification_interval_seconds, audit_repository=power_audit_repository, decommission_enabled=settings.decommission_enabled, monitoring_service=app.state.monitoring_service)
     app.state.domain_service = DomainService(domain_repository, domain_diagnostics, domain_orchestrator, domain_audit, operations_enabled=settings.domains_operations_enabled, verification_attempts=settings.domains_verification_attempts, verification_interval_seconds=settings.domains_verification_interval_seconds)
     app.state.cloudflare_service = CloudflareService(cloudflare, domain_audit, operations_enabled=settings.domains_operations_enabled)
     install_provisioning(app, settings, app.state.infrastructure_service, app.state.monitoring_service)
@@ -153,7 +159,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             snapshot = await request.app.state.infrastructure_service.list_resources()
         except RuntimeError as exc:
             raise HTTPException(status_code=503, detail=str(exc)) from exc
-        return {"resources": [asdict(resource) for resource in snapshot.resources], "remote_errors": [asdict(error) for error in snapshot.remote_errors], "count": len(snapshot.resources), "power_operations_enabled": request.app.state.infrastructure_service.power_operations_enabled}
+        return {"resources": [asdict(resource) for resource in snapshot.resources], "remote_errors": [asdict(error) for error in snapshot.remote_errors], "count": len(snapshot.resources), "power_operations_enabled": request.app.state.infrastructure_service.power_operations_enabled, "decommission_enabled": request.app.state.infrastructure_service.decommission_enabled}
 
     @app.get("/api/v1/infrastructure/resources/detail/{resource_id:path}")
     async def infrastructure_resource_detail(resource_id: str, request: Request) -> dict[str, object]:
@@ -189,6 +195,22 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         except PowerActionNotAllowed as exc:
             raise HTTPException(status_code=409, detail=str(exc)) from exc
         except PowerVerificationTimeout as exc:
+            raise HTTPException(status_code=504, detail=str(exc)) from exc
+        except RuntimeError as exc:
+            raise HTTPException(status_code=503, detail=str(exc)) from exc
+        return asdict(result)
+
+    @app.post("/api/v1/infrastructure/decommission")
+    async def infrastructure_decommission(payload: DecommissionInput, request: Request) -> dict[str, object]:
+        try:
+            result = await request.app.state.infrastructure_service.decommission(**payload.model_dump())
+        except DecommissionDisabled as exc:
+            raise HTTPException(status_code=403, detail=str(exc)) from exc
+        except InfrastructureResourceNotFound as exc:
+            raise HTTPException(status_code=404, detail=str(exc)) from exc
+        except DecommissionNotAllowed as exc:
+            raise HTTPException(status_code=409, detail=str(exc)) from exc
+        except DecommissionVerificationTimeout as exc:
             raise HTTPException(status_code=504, detail=str(exc)) from exc
         except RuntimeError as exc:
             raise HTTPException(status_code=503, detail=str(exc)) from exc

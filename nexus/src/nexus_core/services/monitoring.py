@@ -220,6 +220,18 @@ class MonitoringService:
         await self._telemetry.reconcile(self._repository.list_targets())
         return deleted
 
+    async def delete_target_by_name(self, name: str) -> bool:
+        """Best-effort cleanup for a decommissioned guest: no-op if nothing was registered."""
+        try:
+            target_id = self._slug(self._normalize_name(name))
+        except ValueError:
+            return False
+        try:
+            await self.delete_target(target_id)
+        except KeyError:
+            return False
+        return True
+
     @staticmethod
     def _normalize_name(value: str) -> str:
         normalized = value.strip()

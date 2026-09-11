@@ -18,6 +18,8 @@ Configuration is environment based. Production PDM access uses a dedicated least
 
 The Resource Power Center is available at `/infrastructure/power`. Mutations are disabled by default with `NEXUS_POWER_OPERATIONS_ENABLED=false`. Supported QEMU/LXC actions are state-aware start, graceful shutdown and immediate stop. Hard stop requires the exact resource name and all submitted mutations are read back from PDM and written to `${NEXUS_DATA_DIR}/power-operations.jsonl`.
 
+Each guest's detail page (`/infrastructure/resource`) has a separate "Danger zone" with **Decommission** — stops the guest if running, destroys it in PVE (including its disks), verifies it disappears from PDM's resource list, and removes any Nexus monitoring target registered under its name. Disabled by default with `NEXUS_DECOMMISSION_ENABLED=false`, gated by its own flag rather than `NEXUS_POWER_OPERATIONS_ENABLED` since it is destructive and irreversible in a way power state changes are not. Like hard stop, it requires typing the exact resource name to confirm. `PdmProvider.destroy_guest()` calls `DELETE /api2/json/pve/remotes/{remote}/{lxc|qemu}/{vmid}` — a PDM endpoint that has to exist server-side for this to work; see the corresponding Rust patch notes if it 404s.
+
 ## Monitoring Control Center
 
 `/monitoring` is the standalone vNext Monitoring Control Center. Nexus owns target intent and lifecycle; OTel consumes Nexus-generated Prometheus file discovery; SigNoz is authoritative for telemetry and planned maintenance. Enabled targets are queried through SigNoz v5 and classified healthy/down/unknown. Maintenance and disabled targets are removed from active discovery. Provider errors never expose API keys or response bodies.
