@@ -56,14 +56,14 @@
 <section class="card table-card">
   <div class="table-wrap">
     <table id="dns-table">
-      <thead><tr><th>Type</th><th>Name</th><th>Content</th><th>TTL</th><th>Proxied</th><th>Priority</th><th>Actions</th></tr></thead>
+      <thead><tr><th>Type</th><th>Name</th><th style="max-width:360px">Content</th><th>TTL</th><th>Proxied</th><th>Priority</th><th>Actions</th></tr></thead>
       <tbody>
       {% for row in rows %}
       {% set record = row.record %}
       <tr data-id="{{ record.id }}" data-type="{{ record.type }}" data-name="{{ record.name }}" data-content="{{ record.content }}" data-ttl="{{ record.ttl }}" data-proxied="{{ 'true' if record.proxied else 'false' }}" data-priority="{{ record.priority if record.priority is not none else '' }}" data-record-data="{{ row.data_json }}">
         <td><code>{{ record.type }}</code></td>
         <td>{{ record.name }}</td>
-        <td class="muted small">{{ record.content }}</td>
+        <td class="muted small" style="max-width:360px;word-break:break-all">{{ record.content }}</td>
         <td class="muted small">{{ record.ttl }}</td>
         <td>{{ 'Yes' if record.proxied else '—' }}</td>
         <td class="muted small">{{ record.priority if record.priority is not none else '—' }}</td>
