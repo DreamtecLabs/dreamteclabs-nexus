@@ -29,3 +29,4 @@ proxmox-datacenter-manager-[0-9].*/
 /nexus/**/__pycache__/
 /nexus/**/*.pyc
 /nexus/.env
+/nexus/src/*.egg-info/
