@@ -192,8 +192,19 @@ cf_upsert_single_dns() {
 
     other_type_ids="$(jq -r --arg type "$type" '.result[] | select(.type != $type) | select(.type == "CNAME" or $type == "CNAME") | .id' <<<"$list")"
     if [[ -n "$other_type_ids" ]]; then
+        other_types="$(jq -r --arg type "$type" '[.result[] | select(.type != $type) | select(.type == "CNAME" or $type == "CNAME") | .type] | unique | join(", ")' <<<"$list")"
+        # Only a CNAME write itself is allowed to clear a conflicting record (e.g.
+        # a stray A/AAAA blocking webmail's CNAME). An MX/TXT/etc write must never
+        # delete an existing CNAME automatically -- that CNAME is very often the
+        # domain's real production record (e.g. apex -> Cloudflare Tunnel), and
+        # auto-deleting it to make room for a mail record has taken sites offline.
+        # Cloudflare will never let a CNAME coexist with anything else here, so
+        # this always needs a human decision, never an automated one.
+        if [[ "$type" != "CNAME" ]]; then
+            echo "existing ${other_types} record(s) for ${name} block the ${type} record Nexus needs to write here; a CNAME cannot coexist with any other record at the same name, so Nexus will not delete it automatically -- resolve manually in Cloudflare and retry" >&2
+            exit 5
+        fi
         if [[ "$replace_existing" != "true" ]]; then
-            other_types="$(jq -r --arg type "$type" '[.result[] | select(.type != $type) | select(.type == "CNAME" or $type == "CNAME") | .type] | unique | join(", ")' <<<"$list")"
             echo "existing ${other_types} record(s) for ${name} conflict with desired ${type} record (CNAME cannot coexist with other records); refusing destructive replacement" >&2
             exit 5
         fi

@@ -15,6 +15,12 @@ grep -q 'validate_hestia_user' server/src/api/nexus/domains.rs
 grep -q 'validate_hestia_user' services/nexus-domains-helper
 grep -q 'webmail hostname is still DDNS-managed' services/nexus-domains-helper
 grep -q 'refusing ambiguous update' services/nexus-domains-helper
+
+# An MX/TXT/etc write must never auto-delete a pre-existing CNAME to make room
+# for itself, even with replace_existing=true -- that CNAME is very often the
+# domain's real production record (e.g. apex -> Cloudflare Tunnel) and this has
+# taken production sites offline. Only a CNAME write may clear a conflict.
+grep -q 'Nexus will not delete it automatically' services/nexus-domains-helper
 if grep -Eq 'cf_upsert_single_dns .* A .*mail_host' services/nexus-domains-helper; then
     echo 'mail.* A records must remain DDNS-owned' >&2
     exit 1
