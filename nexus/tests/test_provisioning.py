@@ -27,7 +27,7 @@ async def test_pdm_provisioning_reads_options_and_next_vmid() -> None:
     def handler(request: httpx.Request) -> httpx.Response:
         paths.append(request.url.path)
         if request.url.path == "/api2/json/resources/list":
-            return httpx.Response(200, json={"data":[{"remote":"homelab","resources":[{"type":"pve-node","id":"remote/homelab/node/pve-01","node":"pve-01","status":"online"},{"type":"pve-storage","id":"remote/homelab/storage/pve-01/local-lvm","storage":"local-lvm","node":"pve-01","status":"available"},{"type":"pve-network","id":"remote/homelab/network/pve-01/vmbr0","network":"vmbr0","node":"pve-01"}]}]})
+            return httpx.Response(200, json={"data":[{"remote":"homelab","resources":[{"type":"pve-node","id":"remote/homelab/node/pve-01","node":"pve-01","status":"online"},{"type":"pve-storage","id":"remote/homelab/storage/pve-01/local-lvm","storage":"local-lvm","node":"pve-01","status":"available"},{"type":"pve-network","id":"remote/homelab/network/pve-01/vmbr0","network":"vmbr0","node":"pve-01"},{"type":"lxc","id":"remote/homelab/guest/101","node":"pve-01","vmid":101},{"type":"qemu","id":"remote/homelab/guest/150","node":"pve-01","vmid":150}]}]})
         if request.url.path == "/api2/json/pve/remotes/homelab/cluster-nextid":
             return httpx.Response(200, json={"data":151})
         return httpx.Response(404)
@@ -37,7 +37,31 @@ async def test_pdm_provisioning_reads_options_and_next_vmid() -> None:
     assert options.storages == (ProvisioningStorage("homelab","pve-01","local-lvm","available"),)
     assert options.networks[0].name == "vmbr0"
     assert options.next_vmids == {"homelab":151}
+    assert options.used_vmids == {"homelab":(101,150)}
     assert paths == ["/api2/json/resources/list","/api2/json/pve/remotes/homelab/cluster-nextid"]
+
+
+@pytest.mark.asyncio
+async def test_pdm_provisioning_lists_storage_content() -> None:
+    captured: dict[str, object] = {}
+    def handler(request: httpx.Request) -> httpx.Response:
+        captured["path"] = request.url.path
+        captured["query"] = dict(request.url.params)
+        return httpx.Response(200, json={"data":[{"volid":"local:vztmpl/debian-13.tar.zst"},{"volid":"local:vztmpl/alpine.tar.zst"},{"volid":"local:vztmpl/debian-13.tar.zst"}]})
+    provider = PdmProvisioningProvider(base_url="https://pdm.test", verify_tls=False, timeout_seconds=5, api_token_id="nexus@pam!core", api_token_secret="secret", transport=httpx.MockTransport(handler))
+    volids = await provider.storage_content("homelab", "pve-01", "local", "vztmpl")
+    assert captured["path"] == "/api2/json/pve/remotes/homelab/nodes/pve-01/storage/local/content"
+    assert captured["query"] == {"content": "vztmpl"}
+    assert volids == ("local:vztmpl/alpine.tar.zst", "local:vztmpl/debian-13.tar.zst")
+
+
+@pytest.mark.asyncio
+async def test_pdm_provisioning_storage_content_surfaces_http_errors() -> None:
+    def handler(request: httpx.Request) -> httpx.Response:
+        return httpx.Response(501)
+    provider = PdmProvisioningProvider(base_url="https://pdm.test", verify_tls=False, timeout_seconds=5, api_token_id="nexus@pam!core", api_token_secret="secret", transport=httpx.MockTransport(handler))
+    with pytest.raises(RuntimeError, match="HTTP 501"):
+        await provider.storage_content("homelab", "pve-01", "local", "iso")
 
 
 @pytest.mark.asyncio
@@ -143,10 +167,61 @@ async def test_icmp_monitoring_without_static_address_warns() -> None:
 
 
 @pytest.mark.asyncio
+async def test_root_password_too_short_is_rejected() -> None:
+    service = ProvisioningService(FakeProvider(), AppearingInfrastructure(), FakeMonitoring(), enabled=True, verification_attempts=1)
+    with pytest.raises(ValueError, match="at least 5 characters"):
+        await service.provision(_request(root_password="ab"))
+
+
+@pytest.mark.asyncio
+async def test_root_password_reports_success_step_for_lxc() -> None:
+    provider = FakeProvider()
+    service = ProvisioningService(provider, AppearingInfrastructure(), FakeMonitoring(), enabled=True, verification_attempts=1)
+    result = await service.provision(_request(root_password="correct-horse"))
+    assert provider.created is True
+    assert next(step for step in result.steps if step.name == "root-password").status == "success"
+    assert result.status == "ready"
+
+
+@pytest.mark.asyncio
+async def test_root_password_warns_and_is_not_applied_for_qemu() -> None:
+    provider = FakeProvider()
+    service = ProvisioningService(provider, AppearingInfrastructure(), FakeMonitoring(), enabled=True, verification_attempts=1)
+    result = await service.provision(_request(kind="qemu", root_password="correct-horse", source="local:iso/debian.iso"))
+    assert result.status == "ready-with-warnings"
+    assert any("not applied to QEMU" in warning for warning in result.warnings)
+    assert next(step for step in result.steps if step.name == "root-password").status == "warning"
+
+
+@pytest.mark.asyncio
 async def test_provisioning_stays_locked_by_default() -> None:
     service = ProvisioningService(FakeProvider(), FakeInfrastructure(), FakeMonitoring(), enabled=False)
     with pytest.raises(ProvisioningDisabled):
         await service.provision(_request())
+
+
+def test_storage_content_route_returns_volids(tmp_path: Path) -> None:
+    class FakeStorageProvider(FakeProvider):
+        async def storage_content(self, remote, node, storage, content):
+            assert (remote, node, storage, content) == ("homelab", "pve-01", "local", "vztmpl")
+            return ("local:vztmpl/alpine.tar.zst", "local:vztmpl/debian-13.tar.zst")
+    app = create_app(Settings(NEXUS_DATA_DIR=tmp_path, PDM_BASE_URL="https://pdm.invalid", PDM_VERIFY_TLS=False, NEXUS_PROVISIONING_ENABLED=True))
+    app.state.provisioning_service = ProvisioningService(FakeStorageProvider(), FakeInfrastructure(), FakeMonitoring(), enabled=True)
+    with TestClient(app) as client:
+        response = client.get("/api/v1/provisioning/storage-content", params={"remote": "homelab", "node": "pve-01", "storage": "local", "content": "vztmpl"})
+        assert response.status_code == 200
+        assert response.json() == ["local:vztmpl/alpine.tar.zst", "local:vztmpl/debian-13.tar.zst"]
+
+
+def test_storage_content_route_surfaces_provider_errors(tmp_path: Path) -> None:
+    class FailingStorageProvider(FakeProvider):
+        async def storage_content(self, remote, node, storage, content):
+            raise RuntimeError("PDM storage content listing returned HTTP 501")
+    app = create_app(Settings(NEXUS_DATA_DIR=tmp_path, PDM_BASE_URL="https://pdm.invalid", PDM_VERIFY_TLS=False, NEXUS_PROVISIONING_ENABLED=True))
+    app.state.provisioning_service = ProvisioningService(FailingStorageProvider(), FakeInfrastructure(), FakeMonitoring(), enabled=True)
+    with TestClient(app) as client:
+        response = client.get("/api/v1/provisioning/storage-content", params={"remote": "homelab", "node": "pve-01", "storage": "local", "content": "iso"})
+        assert response.status_code == 503
 
 
 def test_provisioning_ui_and_api_are_safe_when_locked(tmp_path: Path) -> None:

@@ -57,6 +57,7 @@ class PdmProvisioningProvider:
                 nodes: list[ProvisioningNode] = []
                 storages: list[ProvisioningStorage] = []
                 networks: list[ProvisioningNetwork] = []
+                used_vmids: dict[str, list[int]] = {}
                 remotes: set[str] = set()
                 for group in groups:
                     if not isinstance(group, dict):
@@ -81,6 +82,10 @@ class PdmProvisioningProvider:
                             name = self._text(item.get("network")) or self._tail(self._text(item.get("id")))
                             if name:
                                 networks.append(ProvisioningNetwork(remote, node, name))
+                        elif raw_type in {"qemu", "lxc", "pve-qemu", "pve-lxc"}:
+                            vmid = item.get("vmid")
+                            if isinstance(vmid, int) and not isinstance(vmid, bool):
+                                used_vmids.setdefault(remote, []).append(vmid)
                 next_vmids: dict[str, int] = {}
                 for remote in sorted(remotes):
                     next_response = await client.get(f"/api2/json/pve/remotes/{quote(remote, safe='')}/cluster-nextid")
@@ -98,7 +103,8 @@ class PdmProvisioningProvider:
         nodes.sort(key=lambda item: (item.remote.casefold(), item.name.casefold()))
         storages.sort(key=lambda item: (item.remote.casefold(), (item.node or "").casefold(), item.name.casefold()))
         networks.sort(key=lambda item: (item.remote.casefold(), (item.node or "").casefold(), item.name.casefold()))
-        return ProvisioningOptions(tuple(nodes), tuple(storages), tuple(networks), next_vmids)
+        sorted_used_vmids = {remote: tuple(sorted(vmids)) for remote, vmids in used_vmids.items()}
+        return ProvisioningOptions(tuple(nodes), tuple(storages), tuple(networks), next_vmids, sorted_used_vmids)
 
     async def create_guest(self, request: GuestProvisionRequest) -> GuestCreateResult:
         config = self._native_config(request)
@@ -120,6 +126,25 @@ class PdmProvisioningProvider:
         task = payload.get("data") if isinstance(payload, dict) else None
         task_reference = task if isinstance(task, str) else json.dumps(task) if task is not None else None
         return GuestCreateResult(task_reference=task_reference, resource_id=f"remote/{request.remote}/guest/{request.vmid}")
+
+    async def storage_content(self, remote: str, node: str, storage: str, content: str) -> tuple[str, ...]:
+        remote_q = quote(remote, safe="")
+        node_q = quote(node, safe="")
+        storage_q = quote(storage, safe="")
+        path = f"/api2/json/pve/remotes/{remote_q}/nodes/{node_q}/storage/{storage_q}/content"
+        try:
+            async with self._client() as client:
+                response = await client.get(path, params={"content": content})
+                response.raise_for_status()
+                items = response.json().get("data", [])
+        except httpx.HTTPStatusError as exc:
+            raise RuntimeError(f"PDM storage content listing returned HTTP {exc.response.status_code}") from exc
+        except httpx.HTTPError as exc:
+            raise RuntimeError(f"PDM storage content listing failed: {type(exc).__name__}") from exc
+        except ValueError as exc:
+            raise RuntimeError("PDM storage content listing returned invalid JSON") from exc
+        volids = sorted({self._text(item.get("volid")) for item in items if isinstance(item, dict)} - {None})
+        return tuple(volids)
 
     @classmethod
     def _native_config(cls, request: GuestProvisionRequest) -> dict[str, Any]:
@@ -145,6 +170,8 @@ class PdmProvisioningProvider:
                 config["features"] = "nesting=1"
             if request.ssh_enabled and request.ssh_public_key:
                 config["ssh-public-keys"] = request.ssh_public_key.strip()
+            if request.root_password:
+                config["password"] = request.root_password.strip()
         else:
             config = {"vmid": request.vmid, "name": request.name.strip(), "cores": request.cores, "memory": request.memory_mb, "scsihw": "virtio-scsi-pci", "scsi0": f"{request.storage}:{request.disk_gb}", "net0": ",".join(net_parts), "ide2": f"{request.source.strip()},media=cdrom", "agent": 1, "onboot": 1 if request.onboot else 0, "start": 1 if request.start else 0}
         protected = {"vmid"}

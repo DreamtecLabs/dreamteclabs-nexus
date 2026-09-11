@@ -40,6 +40,9 @@ class ProvisioningService:
     async def options(self) -> ProvisioningOptions:
         return await self._provider.options()
 
+    async def storage_content(self, remote: str, node: str, storage: str, content: str) -> tuple[str, ...]:
+        return await self._provider.storage_content(remote, node, storage, content)
+
     async def plan(self, request: GuestProvisionRequest) -> dict[str, object]:
         self._validate_request(request)
         options = await self.options()
@@ -80,6 +83,13 @@ class ProvisioningService:
                 steps.append(ProvisioningStep("ssh", "warning", warnings[-1]))
         else:
             steps.append(ProvisioningStep("ssh", "skipped", "SSH bootstrap not selected"))
+        if request.root_password:
+            if request.kind == "lxc":
+                steps.append(ProvisioningStep("root-password", "success", "Root password set on the LXC guest"))
+            else:
+                warning = "Root password was set but is not applied to QEMU guests (ISO-based install, no cloud-init)"
+                warnings.append(warning)
+                steps.append(ProvisioningStep("root-password", "warning", warning))
         monitoring_mode = request.monitoring.strip().lower()
         if monitoring_mode == "none":
             steps.append(ProvisioningStep("monitoring", "skipped", "Monitoring not selected"))
@@ -138,6 +148,8 @@ class ProvisioningService:
             raise ValueError("CPU, memory and disk values must be positive")
         if request.ssh_enabled and request.kind == "lxc" and not request.ssh_public_key:
             raise ValueError("SSH-enabled LXC provisioning requires a public key")
+        if request.root_password and len(request.root_password) < 5:
+            raise ValueError("Root password must be at least 5 characters")
 
     @staticmethod
     def _validate_selection(request: GuestProvisionRequest, options: ProvisioningOptions) -> None:

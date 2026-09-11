@@ -32,6 +32,7 @@ class ProvisioningOptions:
     storages: tuple[ProvisioningStorage, ...]
     networks: tuple[ProvisioningNetwork, ...]
     next_vmids: dict[str, int] = field(default_factory=dict)
+    used_vmids: dict[str, tuple[int, ...]] = field(default_factory=dict)
 
 
 @dataclass(frozen=True, slots=True)
@@ -57,6 +58,7 @@ class GuestProvisionRequest:
     nesting: bool = False
     ssh_enabled: bool = False
     ssh_public_key: str | None = None
+    root_password: str | None = None
     monitoring: str = "pdm"
     advanced: dict[str, Any] = field(default_factory=dict)
 
@@ -88,3 +90,5 @@ class ProvisioningProvider(Protocol):
     async def options(self) -> ProvisioningOptions: ...
 
     async def create_guest(self, request: GuestProvisionRequest) -> GuestCreateResult: ...
+
+    async def storage_content(self, remote: str, node: str, storage: str, content: str) -> tuple[str, ...]: ...

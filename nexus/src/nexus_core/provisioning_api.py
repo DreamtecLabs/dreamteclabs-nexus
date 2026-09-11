@@ -45,11 +45,32 @@ class ProvisionGuestInput(BaseModel):
     nesting: bool = False
     ssh_enabled: bool = False
     ssh_public_key: str | None = Field(default=None, max_length=8192)
+    root_password: str | None = Field(default=None, max_length=256)
     monitoring: str = Field(default="pdm", pattern="^(none|pdm|prometheus|icmp)$")
     advanced: dict[str, object] = Field(default_factory=dict)
 
     def to_request(self) -> GuestProvisionRequest:
         return GuestProvisionRequest(**self.model_dump())
+
+
+_VMID_CHOICES_PER_REMOTE = 25
+_VMID_SCAN_LIMIT = 2000
+
+
+def _vmid_choices(options, remotes: list[str]) -> dict[str, list[int]]:
+    choices: dict[str, list[int]] = {}
+    for remote in remotes:
+        used = set(options.used_vmids.get(remote, ()))
+        candidate = options.next_vmids.get(remote, 100)
+        found: list[int] = []
+        scanned = 0
+        while len(found) < _VMID_CHOICES_PER_REMOTE and scanned < _VMID_SCAN_LIMIT:
+            if candidate not in used:
+                found.append(candidate)
+            candidate += 1
+            scanned += 1
+        choices[remote] = found
+    return choices
 
 
 @router.get("/provisioning", response_class=HTMLResponse, include_in_schema=False)
@@ -60,7 +81,8 @@ async def provisioning_page(request: Request) -> HTMLResponse:
         raise HTTPException(status_code=503, detail=str(exc)) from exc
     remotes = sorted({item.remote for item in options.nodes}, key=str.casefold)
     default_remote = remotes[0] if remotes else None
-    default_vmid = options.next_vmids.get(default_remote) if default_remote else None
+    vmid_choices = _vmid_choices(options, remotes)
+    default_vmid = vmid_choices.get(default_remote, [None])[0] if default_remote else None
     return _templates.TemplateResponse(
         request=request,
         name="provisioning.html",
@@ -68,9 +90,19 @@ async def provisioning_page(request: Request) -> HTMLResponse:
             "options": options,
             "remotes": remotes,
             "default_vmid": default_vmid,
+            "vmid_choices": vmid_choices,
             "enabled": request.app.state.provisioning_service.enabled,
         },
     )
+
+
+@router.get("/api/v1/provisioning/storage-content")
+async def provisioning_storage_content(remote: str, node: str, storage: str, content: str, request: Request) -> list[str]:
+    try:
+        volids = await request.app.state.provisioning_service.storage_content(remote, node, storage, content)
+    except RuntimeError as exc:
+        raise HTTPException(status_code=503, detail=str(exc)) from exc
+    return list(volids)
 
 
 @router.get("/api/v1/provisioning/options")

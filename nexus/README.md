@@ -28,6 +28,8 @@ Every target has a `profile`:
 
 `ProvisionGuestInput.monitoring` accepts `icmp` alongside `none|pdm|prometheus`, registering an agentless probe target automatically at guest-creation time when a static address is available.
 
+The Provisioning wizard's VMID field is populated from `ProvisioningOptions.used_vmids` (parsed from the same PDM `resources/list` call as the rest of the options) so only free VMIDs starting at PDM's suggested next ID are selectable — a used VMID can never be chosen. `ProvisionGuestInput.root_password` sets an LXC root password natively (like `ssh_public_key`, ignored for QEMU since it's ISO-installed with no cloud-init). The wizard's Template/ISO step calls `GET /api/v1/provisioning/storage-content` to list a storage's actual volumes; until the matching PDM endpoint exists server-side, that call fails and the UI falls back to manual volume-ID entry without breaking the flow.
+
 ## Domains & Hosting
 
 `/domains` and `GET /api/v1/domains` are the standalone Domains & Hosting control plane. Nexus owns a small JSON inventory at `${NEXUS_DATA_DIR}/domains-hosting.json`, seeded with the known DreamtecLabs estate only when no Nexus inventory exists. Opening the page or listing inventory never changes Cloudflare or Hestia.
