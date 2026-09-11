@@ -17,6 +17,7 @@ from nexus_core.services.provisioning import (
     ProvisioningService,
     ProvisioningVerificationTimeout,
 )
+from nexus_core.services.ssh_bootstrap import SshBootstrapService
 
 _PACKAGE_ROOT = Path(__file__).resolve().parent
 _templates = Jinja2Templates(directory=str(_PACKAGE_ROOT / "templates"))
@@ -46,6 +47,7 @@ class ProvisionGuestInput(BaseModel):
     ssh_enabled: bool = False
     ssh_public_key: str | None = Field(default=None, max_length=8192)
     root_password: str | None = Field(default=None, max_length=256)
+    bootstrap_otel: bool = False
     monitoring: str = Field(default="pdm", pattern="^(none|pdm|prometheus|icmp)$")
     advanced: dict[str, object] = Field(default_factory=dict)
 
@@ -158,6 +160,12 @@ def install_provisioning(
         api_token_id=settings.pdm_api_token_id,
         api_token_secret=settings.pdm_api_token_secret,
     )
+    ssh_bootstrap = SshBootstrapService(
+        key_path=settings.ssh_bootstrap_key_path,
+        attempts=settings.ssh_bootstrap_attempts,
+        interval_seconds=settings.ssh_bootstrap_interval_seconds,
+        run_timeout_seconds=settings.ssh_bootstrap_run_timeout_seconds,
+    )
     app.state.provisioning_service = ProvisioningService(
         provider,
         infrastructure_service,
@@ -165,5 +173,9 @@ def install_provisioning(
         enabled=settings.provisioning_enabled,
         verification_attempts=settings.provisioning_verification_attempts,
         verification_interval_seconds=settings.provisioning_verification_interval_seconds,
+        ssh_bootstrap=ssh_bootstrap,
+        otel_agent_script_path=settings.otel_agent_script_path,
+        otel_agent_version=settings.otel_agent_version,
+        signoz_otlp_endpoint=settings.signoz_otlp_endpoint,
     )
     app.include_router(router)

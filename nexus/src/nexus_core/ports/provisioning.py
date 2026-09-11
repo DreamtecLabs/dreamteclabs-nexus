@@ -59,6 +59,7 @@ class GuestProvisionRequest:
     ssh_enabled: bool = False
     ssh_public_key: str | None = None
     root_password: str | None = None
+    bootstrap_otel: bool = False
     monitoring: str = "pdm"
     advanced: dict[str, Any] = field(default_factory=dict)
 

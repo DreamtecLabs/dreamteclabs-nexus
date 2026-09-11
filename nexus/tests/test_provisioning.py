@@ -88,11 +88,26 @@ async def test_pdm_provisioning_forwards_native_lxc_config_through_pdm_without_n
 class FakeProvider:
     def __init__(self) -> None:
         self.created = False
+        self.last_request: GuestProvisionRequest | None = None
     async def options(self) -> ProvisioningOptions:
         return ProvisioningOptions(nodes=(ProvisioningNode("homelab","pve-01","online"),), storages=(ProvisioningStorage("homelab","pve-01","local-lvm","available"),), networks=(), next_vmids={"homelab":150})
     async def create_guest(self, request: GuestProvisionRequest) -> GuestCreateResult:
         self.created = True
+        self.last_request = request
         return GuestCreateResult("task-1", f"remote/{request.remote}/guest/{request.vmid}")
+
+
+class FakeSshBootstrap:
+    def __init__(self, *, ok: bool = True, detail: str = "bootstrap script completed") -> None:
+        self.ok = ok
+        self.detail = detail
+        self.calls: list[dict[str, object]] = []
+    def ensure_keypair(self) -> str:
+        return "ssh-ed25519 AAAANEXUSKEY nexus-provisioning"
+    async def wait_and_run(self, address: str, *, username: str, script: str, env: dict[str, str]):
+        from nexus_core.services.ssh_bootstrap import BootstrapResult
+        self.calls.append({"address": address, "username": username, "script": script, "env": env})
+        return BootstrapResult(self.ok, self.detail)
 
 
 class FakeInfrastructure:
@@ -191,6 +206,84 @@ async def test_root_password_warns_and_is_not_applied_for_qemu() -> None:
     assert result.status == "ready-with-warnings"
     assert any("not applied to QEMU" in warning for warning in result.warnings)
     assert next(step for step in result.steps if step.name == "root-password").status == "warning"
+
+
+@pytest.mark.asyncio
+async def test_otel_bootstrap_merges_nexus_key_and_reports_success(tmp_path: Path) -> None:
+    provider = FakeProvider()
+    bootstrap = FakeSshBootstrap()
+    script_path = tmp_path / "agent.sh"
+    script_path.write_text("echo installing\n")
+    service = ProvisioningService(
+        provider, AppearingInfrastructure(), FakeMonitoring(), enabled=True, verification_attempts=1,
+        ssh_bootstrap=bootstrap, otel_agent_script_path=script_path, otel_agent_version="0.139.0", signoz_otlp_endpoint="192.168.0.47:4317",
+    )
+    result = await service.provision(_request(bootstrap_otel=True))
+    assert provider.created is True
+    assert result.status == "ready"
+    assert next(step for step in result.steps if step.name == "bootstrap-otel").status == "success"
+    # Nexus's own key must be merged alongside the operator's key, and ssh_enabled forced on,
+    # in the request actually sent to PDM -- without ever mutating the caller's original request.
+    assert provider.last_request.ssh_enabled is True
+    assert "ssh-ed25519 AAAATEST nexus" in provider.last_request.ssh_public_key
+    assert "ssh-ed25519 AAAANEXUSKEY nexus-provisioning" in provider.last_request.ssh_public_key
+    assert bootstrap.calls == [{"address": "192.168.0.50", "username": "root", "script": "echo installing\n", "env": {"OTEL_VERSION": "0.139.0", "OTLP_HOST": "192.168.0.47", "OTLP_PORT": "4317"}}]
+
+
+@pytest.mark.asyncio
+async def test_otel_bootstrap_warns_without_static_address() -> None:
+    provider = FakeProvider()
+    bootstrap = FakeSshBootstrap()
+    service = ProvisioningService(
+        provider, AppearingInfrastructure(), FakeMonitoring(), enabled=True, verification_attempts=1,
+        ssh_bootstrap=bootstrap, otel_agent_script_path=Path("/dev/null"),
+    )
+    result = await service.provision(_request(bootstrap_otel=True, ip_config="dhcp"))
+    assert result.status == "ready-with-warnings"
+    assert bootstrap.calls == []
+    assert next(step for step in result.steps if step.name == "bootstrap-otel").status == "warning"
+
+
+@pytest.mark.asyncio
+async def test_otel_bootstrap_warns_for_qemu() -> None:
+    provider = FakeProvider()
+    bootstrap = FakeSshBootstrap()
+    service = ProvisioningService(
+        provider, AppearingInfrastructure(), FakeMonitoring(), enabled=True, verification_attempts=1,
+        ssh_bootstrap=bootstrap, otel_agent_script_path=Path("/dev/null"),
+    )
+    result = await service.provision(_request(kind="qemu", bootstrap_otel=True, source="local:iso/debian.iso"))
+    assert result.status == "ready-with-warnings"
+    assert bootstrap.calls == []
+    assert any("requires LXC" in warning for warning in result.warnings)
+
+
+@pytest.mark.asyncio
+async def test_otel_bootstrap_warns_when_script_fails() -> None:
+    provider = FakeProvider()
+    bootstrap = FakeSshBootstrap(ok=False, detail="could not reach 192.168.0.50 over SSH: timeout")
+    service = ProvisioningService(
+        provider, AppearingInfrastructure(), FakeMonitoring(), enabled=True, verification_attempts=1,
+        ssh_bootstrap=bootstrap, otel_agent_script_path=Path("/dev/null"),
+    )
+    result = await service.provision(_request(bootstrap_otel=True))
+    assert result.status == "ready-with-warnings"
+    assert any("could not reach" in warning for warning in result.warnings)
+
+
+@pytest.mark.asyncio
+async def test_bootstrap_otel_false_never_touches_ssh_service() -> None:
+    provider = FakeProvider()
+    bootstrap = FakeSshBootstrap()
+    service = ProvisioningService(
+        provider, AppearingInfrastructure(), FakeMonitoring(), enabled=True, verification_attempts=1,
+        ssh_bootstrap=bootstrap, otel_agent_script_path=Path("/dev/null"),
+    )
+    result = await service.provision(_request(bootstrap_otel=False))
+    assert bootstrap.calls == []
+    assert not any(step.name == "bootstrap-otel" for step in result.steps)
+    # The operator's own ssh_enabled/key selection must reach PDM untouched.
+    assert provider.last_request.ssh_public_key == "ssh-ed25519 AAAATEST nexus"
 
 
 @pytest.mark.asyncio

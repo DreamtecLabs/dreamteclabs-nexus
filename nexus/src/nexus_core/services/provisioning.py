@@ -1,10 +1,12 @@
 from __future__ import annotations
 
 import asyncio
+import dataclasses
 from collections.abc import Awaitable, Callable
 
 from nexus_core.ports.infrastructure import InfrastructureResource
 from nexus_core.ports.provisioning import GuestProvisionRequest, ProvisioningOptions, ProvisioningProvider, ProvisioningResult, ProvisioningStep
+from nexus_core.services.ssh_bootstrap import SshBootstrapService
 
 
 class ProvisioningError(RuntimeError):
@@ -24,7 +26,21 @@ class ProvisioningVerificationTimeout(ProvisioningError):
 
 
 class ProvisioningService:
-    def __init__(self, provider: ProvisioningProvider, infrastructure_service, monitoring_service, *, enabled: bool = False, verification_attempts: int = 60, verification_interval_seconds: float = 1.0, sleep: Callable[[float], Awaitable[None]] = asyncio.sleep) -> None:
+    def __init__(
+        self,
+        provider: ProvisioningProvider,
+        infrastructure_service,
+        monitoring_service,
+        *,
+        enabled: bool = False,
+        verification_attempts: int = 60,
+        verification_interval_seconds: float = 1.0,
+        sleep: Callable[[float], Awaitable[None]] = asyncio.sleep,
+        ssh_bootstrap: SshBootstrapService | None = None,
+        otel_agent_script_path=None,
+        otel_agent_version: str = "0.139.0",
+        signoz_otlp_endpoint: str = "192.168.0.47:4317",
+    ) -> None:
         self._provider = provider
         self._infrastructure = infrastructure_service
         self._monitoring = monitoring_service
@@ -32,6 +48,12 @@ class ProvisioningService:
         self._verification_attempts = max(1, verification_attempts)
         self._verification_interval_seconds = max(0.1, verification_interval_seconds)
         self._sleep = sleep
+        self._ssh_bootstrap = ssh_bootstrap
+        self._otel_agent_script_path = otel_agent_script_path
+        self._otel_agent_version = otel_agent_version
+        otlp_host, _, otlp_port = signoz_otlp_endpoint.strip().partition(":")
+        self._otlp_host = otlp_host or "127.0.0.1"
+        self._otlp_port = otlp_port or "4317"
 
     @property
     def enabled(self) -> bool:
@@ -57,8 +79,13 @@ class ProvisioningService:
         await self.plan(request)
         steps: list[ProvisioningStep] = []
         warnings: list[str] = []
+        create_request = request
+        if request.kind == "lxc" and request.bootstrap_otel and self._ssh_bootstrap is not None:
+            nexus_public_key = self._ssh_bootstrap.ensure_keypair()
+            merged_key = "\n".join(part for part in (request.ssh_public_key, nexus_public_key) if part)
+            create_request = dataclasses.replace(request, ssh_enabled=True, ssh_public_key=merged_key)
         try:
-            created = await self._provider.create_guest(request)
+            created = await self._provider.create_guest(create_request)
             steps.append(ProvisioningStep("create", "success", "PDM accepted the PVE guest creation task"))
         except Exception as exc:
             steps.append(ProvisioningStep("create", "failed", str(exc)))
@@ -90,6 +117,37 @@ class ProvisioningService:
                 warning = "Root password was set but is not applied to QEMU guests (ISO-based install, no cloud-init)"
                 warnings.append(warning)
                 steps.append(ProvisioningStep("root-password", "warning", warning))
+        if request.bootstrap_otel:
+            if request.kind != "lxc":
+                warning = "OTel agent bootstrap requires LXC (QEMU here is ISO-installed with no post-boot exec available)"
+                warnings.append(warning)
+                steps.append(ProvisioningStep("bootstrap-otel", "warning", warning))
+            elif self._ssh_bootstrap is None or self._otel_agent_script_path is None:
+                warning = "OTel agent bootstrap is not configured on this Nexus deployment"
+                warnings.append(warning)
+                steps.append(ProvisioningStep("bootstrap-otel", "warning", warning))
+            else:
+                address = self._guest_address(request)
+                if not address:
+                    warning = "OTel agent bootstrap requires a static IP/address; skipped"
+                    warnings.append(warning)
+                    steps.append(ProvisioningStep("bootstrap-otel", "warning", warning))
+                else:
+                    try:
+                        script = self._otel_agent_script_path.read_text()
+                    except OSError as exc:
+                        warning = f"OTel agent bootstrap script could not be read: {exc}"
+                        warnings.append(warning)
+                        steps.append(ProvisioningStep("bootstrap-otel", "warning", warning))
+                    else:
+                        env = {"OTEL_VERSION": self._otel_agent_version, "OTLP_HOST": self._otlp_host, "OTLP_PORT": self._otlp_port}
+                        result = await self._ssh_bootstrap.wait_and_run(address, username="root", script=script, env=env)
+                        if result.ok:
+                            steps.append(ProvisioningStep("bootstrap-otel", "success", result.detail))
+                        else:
+                            warning = f"OTel agent bootstrap failed: {result.detail}"
+                            warnings.append(warning)
+                            steps.append(ProvisioningStep("bootstrap-otel", "warning", warning))
         monitoring_mode = request.monitoring.strip().lower()
         if monitoring_mode == "none":
             steps.append(ProvisioningStep("monitoring", "skipped", "Monitoring not selected"))
