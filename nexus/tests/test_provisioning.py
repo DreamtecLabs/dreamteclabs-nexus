@@ -47,7 +47,7 @@ async def test_pdm_provisioning_lists_storage_content() -> None:
     def handler(request: httpx.Request) -> httpx.Response:
         captured["path"] = request.url.path
         captured["query"] = dict(request.url.params)
-        return httpx.Response(200, json={"data":[{"volid":"local:vztmpl/debian-13.tar.zst"},{"volid":"local:vztmpl/alpine.tar.zst"},{"volid":"local:vztmpl/debian-13.tar.zst"}]})
+        return httpx.Response(200, json={"data":["local:vztmpl/debian-13.tar.zst","local:vztmpl/alpine.tar.zst","local:vztmpl/debian-13.tar.zst"]})
     provider = PdmProvisioningProvider(base_url="https://pdm.test", verify_tls=False, timeout_seconds=5, api_token_id="nexus@pam!core", api_token_secret="secret", transport=httpx.MockTransport(handler))
     volids = await provider.storage_content("homelab", "pve-01", "local", "vztmpl")
     assert captured["path"] == "/api2/json/pve/remotes/homelab/nodes/pve-01/storage/local/content"

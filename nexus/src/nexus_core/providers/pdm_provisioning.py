@@ -143,7 +143,7 @@ class PdmProvisioningProvider:
             raise RuntimeError(f"PDM storage content listing failed: {type(exc).__name__}") from exc
         except ValueError as exc:
             raise RuntimeError("PDM storage content listing returned invalid JSON") from exc
-        volids = sorted({self._text(item.get("volid")) for item in items if isinstance(item, dict)} - {None})
+        volids = sorted({self._text(item) for item in items if isinstance(item, str)} - {None})
         return tuple(volids)
 
     @classmethod
