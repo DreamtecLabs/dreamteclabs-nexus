@@ -4,14 +4,17 @@ services:
     network_mode: host
     restart: unless-stopped
     stop_grace_period: 15s
+    # Pass every setting straight through from .env instead of hand-listing each
+    # one here: the hand-listed version silently fell out of sync every time a
+    # new Settings field was added in config.py (most recently: all of Power,
+    # Provisioning, Domains, and the Cloudflare DNS/tunnel management vars).
+    # NEXUS_DATA_DIR is still overridden below since the container-internal
+    # path must match the volume mount regardless of what .env's host-side
+    # value says.
+    env_file:
+      - .env
     environment:
-      NEXUS_ENVIRONMENT: ${NEXUS_ENVIRONMENT:-production}
       NEXUS_DATA_DIR: /var/lib/dreamteclabs-nexus
-      PDM_BASE_URL: ${PDM_BASE_URL:-https://127.0.0.1:8443}
-      PDM_VERIFY_TLS: ${PDM_VERIFY_TLS:-false}
-      PDM_HEALTH_PATH: ${PDM_HEALTH_PATH:-/api2/json/version}
-      NEXUS_SIGNOZ_URL: ${NEXUS_SIGNOZ_URL:-http://192.168.0.47:8080}
-      NEXUS_SIGNOZ_API_KEY: ${NEXUS_SIGNOZ_API_KEY:-}
     volumes:
       - /var/lib/dreamteclabs-nexus:/var/lib/dreamteclabs-nexus
     healthcheck:

@@ -44,6 +44,8 @@ The standalone Nexus UI is light-first: white surfaces, dark readable text and c
 
 The standalone runtime supports Compose and the native systemd deployment used by `nexus-01`. `deploy.sh` chooses native deployment when Docker Compose is unavailable. The native runtime installs Nexus Core into its venv, writes `nexus-core.service` and `nexus-otel.service`, restarts them and verifies health. Existing PDM services remain in place during migration; cutover happens domain-by-domain after parity validation.
 
+**Compose deployment is untested and does not support Domains & Hosting.** Production (`nexus-01`) runs native-only. The `nexus-core` container passes every `.env` value through (`env_file:`), so config drift is no longer a risk there, but the container still has no `ssh` client, no host SSH keys, and no mount for `services/nexus-domains-helper` — anything that reconciles a domain (onboard/migrate) will fail. Fix all three before relying on Compose for a domain that needs onboarding.
+
 ## Change policy
 
 New Nexus features belong under `nexus/`, not in upstream PDM backend/UI trees. Existing PDM customizations remain supported while migrated. Changes inside PDM are limited to provider compatibility, security, packaging and migration work.
