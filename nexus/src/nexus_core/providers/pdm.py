@@ -135,7 +135,7 @@ class PdmProvider:
             return None
         remote = quote(resource.remote, safe="")
         path = f"/api2/json/pve/remotes/{remote}/lxc/{resource.vmid}/config"
-        params: dict[str, object] = {}
+        params: dict[str, object] = {"state": "active"}
         if resource.node:
             params["node"] = resource.node
         try:

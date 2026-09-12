@@ -23,6 +23,7 @@ QEMU_GUEST = InfrastructureResource(id="remote/homelab/guest/106", provider="pdm
 async def test_pdm_guest_static_address_parses_net0_ip() -> None:
     def handler(request: httpx.Request) -> httpx.Response:
         assert request.url.path == "/api2/json/pve/remotes/homelab/lxc/104/config"
+        assert request.url.params["state"] == "active"
         return httpx.Response(200, json={"data": {"net0": "name=eth0,bridge=vmbr0,ip=192.168.0.10/24,gw=192.168.0.1", "hostname": "nginx"}})
 
     provider = PdmProvider(base_url="https://pdm.test", verify_tls=False, health_path="/api2/json/version", timeout_seconds=5, transport=httpx.MockTransport(handler))
