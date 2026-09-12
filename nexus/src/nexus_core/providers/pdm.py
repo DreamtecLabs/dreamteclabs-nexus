@@ -121,6 +121,43 @@ class PdmProvider:
         data = payload.get("data") if isinstance(payload, dict) else None
         return self._extract_task_reference(data)
 
+    async def guest_static_address(self, resource: InfrastructureResource) -> str | None:
+        """Best-effort: the static IPv4 configured on an LXC guest's primary NIC, if any.
+
+        Only LXC exposes a static address in its own PVE config (net0's ip= field).
+        QEMU here is ISO-installed with no cloud-init, so it has no equivalent
+        configured address to read -- always returns None for it.
+        """
+        if resource.type != "pve-lxc" or resource.vmid is None:
+            return None
+        remote = quote(resource.remote, safe="")
+        path = f"/api2/json/pve/remotes/{remote}/lxc/{resource.vmid}/config"
+        params: dict[str, object] = {}
+        if resource.node:
+            params["node"] = resource.node
+        try:
+            async with self._client() as client:
+                response = await client.get(path, params=params)
+                response.raise_for_status()
+                payload = response.json()
+        except httpx.HTTPError:
+            return None
+        except ValueError:
+            return None
+        data = payload.get("data") if isinstance(payload, dict) else None
+        if not isinstance(data, dict):
+            return None
+        for key, value in data.items():
+            if not (key == "net0" or (key.startswith("net") and key[3:].isdigit())):
+                continue
+            if not isinstance(value, str):
+                continue
+            for part in value.split(","):
+                part = part.strip()
+                if part.startswith("ip=") and part[3:].strip().lower() != "dhcp":
+                    return part[3:].strip().split("/", 1)[0]
+        return None
+
     async def destroy_guest(self, resource: InfrastructureResource, *, purge: bool = True) -> str | None:
         if resource.type == "pve-qemu":
             guest_kind = "qemu"

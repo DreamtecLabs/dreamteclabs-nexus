@@ -20,6 +20,9 @@ class Settings(BaseSettings):
     power_verification_attempts: int = Field(default=60, ge=1, le=120, alias="NEXUS_POWER_VERIFY_ATTEMPTS")
     power_verification_interval_seconds: float = Field(default=1.0, ge=0.1, le=10.0, alias="NEXUS_POWER_VERIFY_INTERVAL_SECONDS")
     decommission_enabled: bool = Field(default=False, alias="NEXUS_DECOMMISSION_ENABLED")
+    ipam_cidr: str = Field(default="192.168.0.0/24", alias="NEXUS_IPAM_CIDR")
+    ipam_dhcp_range_start: str = Field(default="192.168.0.50", alias="NEXUS_IPAM_DHCP_RANGE_START")
+    ipam_dhcp_range_end: str = Field(default="192.168.0.199", alias="NEXUS_IPAM_DHCP_RANGE_END")
     provisioning_enabled: bool = Field(default=False, alias="NEXUS_PROVISIONING_ENABLED")
     provisioning_verification_attempts: int = Field(default=90, ge=1, le=300, alias="NEXUS_PROVISIONING_VERIFY_ATTEMPTS")
     provisioning_verification_interval_seconds: float = Field(default=1.0, ge=0.1, le=10.0, alias="NEXUS_PROVISIONING_VERIFY_INTERVAL_SECONDS")
@@ -68,6 +71,10 @@ class Settings(BaseSettings):
     @property
     def domains_audit_path(self) -> Path:
         return self.data_dir / "domains-hosting-audit.jsonl"
+
+    @property
+    def ipam_manual_path(self) -> Path:
+        return self.data_dir / "ipam-manual.json"
 
 
 @lru_cache

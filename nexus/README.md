@@ -42,6 +42,16 @@ Read-only validation uses public DNS plus SMTP submission, IMAP TLS and webmail 
 
 Mutations are disabled by default with `NEXUS_DOMAINS_OPERATIONS_ENABLED=false`. When deliberately enabled, onboard/migrate calls the helper, persists a `pending` Nexus record, then repeats independent Nexus diagnostics. Success is reported only after all applicable post-operation checks pass; partial external success remains fail-visible as `pending`. Operations are appended to `${NEXUS_DATA_DIR}/domains-hosting-audit.jsonl`.
 
+## IP Address Management
+
+`/ipam` and `GET /api/v1/ipam` track the static ranges of `NEXUS_IPAM_CIDR` (default `192.168.0.0/24`), excluding the DHCP range `NEXUS_IPAM_DHCP_RANGE_START`–`NEXUS_IPAM_DHCP_RANGE_END` (default `.50`–`.199`) and the network/broadcast addresses. Nexus never manages DHCP itself, so that range is simply invisible to IPAM — it is neither "used" nor offered as "free".
+
+Two sources make up the "used" view, and neither is treated as more authoritative to persist than to compute:
+- **Guest entries** are derived live on every request by calling `PdmProvider.guest_static_address()` for each LXC in the current PDM snapshot (parsing its `net0` config for a non-`dhcp` `ip=` value); they are never written to disk, so they can never go stale.
+- **Manual entries** (router, switch, access points, anything Nexus doesn't provision) are the only persisted state, in `${NEXUS_DATA_DIR}/ipam.json`. `POST /api/v1/ipam/entries` and `DELETE /api/v1/ipam/entries/{address}` manage them; both reject an address inside the DHCP range or outside the tracked CIDR, and adding one already claimed by a guest is rejected outright rather than silently overwritten.
+
+If a manual entry's address is later claimed by a guest (the manual record went stale), the snapshot surfaces it as a conflict rather than silently picking one side — the guest still wins in the "used" view, but the stale manual entry stays visible until an operator deletes or edits it.
+
 ## Visual system
 
 The standalone Nexus UI is light-first: white surfaces, dark readable text and colorful accents/statuses. Dark application surfaces are not part of the vNext visual baseline.

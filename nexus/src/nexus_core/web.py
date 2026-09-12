@@ -115,6 +115,12 @@ async def infrastructure(request: Request) -> HTMLResponse:
     return _templates.TemplateResponse(request=request, name="infrastructure.html", context={"resources": resources, "remote_errors": snapshot.remote_errors, "summary": summary})
 
 
+@router.get("/ipam", response_class=HTMLResponse)
+async def ipam(request: Request) -> HTMLResponse:
+    snapshot = await request.app.state.ipam_service.snapshot()
+    return _templates.TemplateResponse(request=request, name="ipam.html", context={"snapshot": snapshot})
+
+
 @router.get("/infrastructure/estate", response_class=HTMLResponse)
 async def estate(request: Request) -> HTMLResponse:
     try: remotes = await request.app.state.infrastructure_service.estate_summary()

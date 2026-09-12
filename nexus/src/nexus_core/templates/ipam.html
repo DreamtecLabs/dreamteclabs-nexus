@@ -1,0 +1,104 @@
+{% extends "base.html" %}
+{% block title %}IP Addresses · Nexus{% endblock %}
+{% block content %}
+<section class="page-head">
+  <div><div class="eyebrow">Network</div><h1>IP Address Management</h1><p class="muted">{{ snapshot.cidr }}, excluding the DHCP range {{ snapshot.dhcp_range[0] }}–{{ snapshot.dhcp_range[1] }}.</p></div>
+</section>
+
+{% if snapshot.conflicts %}
+<section class="card warning-card">
+  <strong>Conflicts</strong>
+  <p class="muted small">These manually registered addresses are also in live use by a guest. The guest wins; resolve by editing or deleting the manual entry.</p>
+  {% for conflict in snapshot.conflicts %}<p class="muted small"><code>{{ conflict.address }}</code> — manual "{{ conflict.manual_entry.label }}" vs guest "{{ conflict.guest_entry.label }}"</p>{% endfor %}
+</section>
+{% endif %}
+
+<section class="grid detail-summary">
+  <article class="card"><span class="label">In use</span><strong class="metric">{{ snapshot.used|length }}</strong></article>
+  <article class="card"><span class="label">Free</span><strong class="metric">{{ snapshot.free|length }}</strong></article>
+</section>
+
+<section class="card form-card">
+  <div><strong>Register a manual address</strong><p class="muted small">For anything Nexus doesn't manage itself — router, switch, access points, etc.</p></div>
+  <div class="domain-form-row">
+    <input class="control" id="ipam-address" placeholder="192.168.0.1">
+    <input class="control" id="ipam-label" placeholder="Label (e.g. Router)">
+    <input class="control" id="ipam-notes" placeholder="Notes (optional)">
+    <button class="button" id="ipam-save">Add</button>
+  </div>
+  <p id="ipam-message" class="operation-message" hidden></p>
+</section>
+
+<section class="card table-card">
+  <div class="table-wrap">
+    <table>
+      <thead><tr><th>Address</th><th>Source</th><th>Label</th><th>Notes</th><th>Actions</th></tr></thead>
+      <tbody>
+      {% for entry in snapshot.used %}
+      <tr data-address="{{ entry.address }}">
+        <td><code>{{ entry.address }}</code></td>
+        <td><span class="pill {{ 'running' if entry.source == 'guest' else '' }}">{{ entry.source }}</span></td>
+        <td>{% if entry.resource_id %}<a href="/infrastructure/resource?id={{ entry.resource_id|urlencode }}">{{ entry.label }}</a>{% else %}{{ entry.label }}{% endif %}</td>
+        <td class="muted small">{{ entry.notes or "—" }}</td>
+        <td>{% if entry.source == "manual" %}<button class="action-button danger delete-entry" data-address="{{ entry.address }}">Delete</button>{% else %}<span class="muted small">—</span>{% endif %}</td>
+      </tr>
+      {% else %}
+      <tr><td class="empty" colspan="5">No addresses tracked yet.</td></tr>
+      {% endfor %}
+      </tbody>
+    </table>
+  </div>
+</section>
+
+<section class="section-head">
+  <div><div class="eyebrow">Available</div><h2>Free addresses ({{ snapshot.free|length }})</h2></div>
+</section>
+<section class="card">
+  <div class="free-address-grid">
+    {% for address in snapshot.free %}<code class="free-address">{{ address }}</code>{% else %}<p class="muted">No free addresses left in the tracked static ranges.</p>{% endfor %}
+  </div>
+</section>
+
+<script>
+(() => {
+  const message = document.getElementById('ipam-message');
+  const show = (text, kind) => { message.hidden = false; message.textContent = text; message.className = `operation-message ${kind}`; };
+
+  document.getElementById('ipam-save').addEventListener('click', async () => {
+    const address = document.getElementById('ipam-address').value.trim();
+    const label = document.getElementById('ipam-label').value.trim();
+    const notes = document.getElementById('ipam-notes').value.trim();
+    if (!address || !label) return show('Address and label are required.', 'error');
+    try {
+      const response = await fetch('/api/v1/ipam/entries', {
+        method: 'POST',
+        headers: {'Content-Type': 'application/json'},
+        body: JSON.stringify({address, label, notes}),
+      });
+      const data = await response.json();
+      if (!response.ok) throw new Error(data.detail || `HTTP ${response.status}`);
+      show(`Registered ${address}.`, 'success');
+      window.setTimeout(() => window.location.reload(), 500);
+    } catch (error) {
+      show(String(error.message || error), 'error');
+    }
+  });
+
+  document.querySelectorAll('.delete-entry').forEach(button => button.addEventListener('click', async () => {
+    const address = button.dataset.address;
+    if (!confirm(`Remove manual entry for ${address}?`)) return;
+    button.disabled = true;
+    try {
+      const response = await fetch(`/api/v1/ipam/entries/${encodeURIComponent(address)}`, {method: 'DELETE'});
+      const data = await response.json();
+      if (!response.ok) throw new Error(data.detail || `HTTP ${response.status}`);
+      show(`Removed ${address}.`, 'success');
+      window.setTimeout(() => window.location.reload(), 500);
+    } catch (error) {
+      button.disabled = false;
+      show(String(error.message || error), 'error');
+    }
+  }));
+})();
+</script>
+{% endblock %}

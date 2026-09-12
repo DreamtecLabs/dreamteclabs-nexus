@@ -245,3 +245,5 @@ tr[hidden]{display:none}
   .topbar{padding:12px 14px}
   .profile>span:last-child{display:none}
 }
+.free-address-grid{display:flex;flex-wrap:wrap;gap:8px}
+.free-address{background:var(--surface-alt);border:1px solid var(--border);border-radius:6px;padding:4px 9px;font-size:12.5px;color:var(--text-muted)}

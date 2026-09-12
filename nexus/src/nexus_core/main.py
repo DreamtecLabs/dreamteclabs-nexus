@@ -18,11 +18,13 @@ from nexus_core.providers.signoz import SigNozAlertingProvider, SigNozMetricsPro
 from nexus_core.ports.domains import TunnelIngressRule
 from nexus_core.repositories.domain_audit_jsonl import JsonlDomainAuditRepository
 from nexus_core.repositories.domains_json import JsonDomainRepository
+from nexus_core.repositories.ipam_json import JsonIpamRepository
 from nexus_core.repositories.monitoring_json import JsonMonitoringRepository
 from nexus_core.repositories.power_audit_jsonl import JsonlPowerAuditRepository
 from nexus_core.services.cloudflare import CloudflareOperationsDisabled, CloudflareService
 from nexus_core.services.domains import DomainOperationsDisabled, DomainService, DomainVerificationFailed
 from nexus_core.services.infrastructure import DecommissionDisabled, DecommissionNotAllowed, DecommissionVerificationTimeout, InfrastructureResourceNotFound, InfrastructureService, PowerActionNotAllowed, PowerOperationsDisabled, PowerVerificationTimeout
+from nexus_core.services.ipam import IpamService
 from nexus_core.services.monitoring import MonitoringService
 from nexus_core.services.providers import ProviderService
 from nexus_core.web import router as web_router
@@ -57,6 +59,12 @@ class DecommissionInput(BaseModel):
     resource_id: str = Field(min_length=1, max_length=255)
     confirmation: str = Field(min_length=1, max_length=128)
     purge: bool = True
+
+
+class IpamEntryInput(BaseModel):
+    address: str = Field(min_length=1, max_length=45)
+    label: str = Field(min_length=1, max_length=80)
+    notes: str = Field(default="", max_length=500)
 
 
 class DomainValidateInput(BaseModel):
@@ -134,6 +142,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     app.state.provider_service = ProviderService({pdm.name: pdm})
     app.state.monitoring_service = MonitoringService(monitoring_repository, alerting, telemetry_runtime, metrics)
     app.state.infrastructure_service = InfrastructureService(pdm, power_operations_enabled=settings.power_operations_enabled, verification_attempts=settings.power_verification_attempts, verification_interval_seconds=settings.power_verification_interval_seconds, audit_repository=power_audit_repository, decommission_enabled=settings.decommission_enabled, monitoring_service=app.state.monitoring_service)
+    app.state.ipam_service = IpamService(JsonIpamRepository(settings.ipam_manual_path), app.state.infrastructure_service, pdm, cidr=settings.ipam_cidr, dhcp_range_start=settings.ipam_dhcp_range_start, dhcp_range_end=settings.ipam_dhcp_range_end)
     app.state.domain_service = DomainService(domain_repository, domain_diagnostics, domain_orchestrator, domain_audit, operations_enabled=settings.domains_operations_enabled, verification_attempts=settings.domains_verification_attempts, verification_interval_seconds=settings.domains_verification_interval_seconds)
     app.state.cloudflare_service = CloudflareService(cloudflare, domain_audit, operations_enabled=settings.domains_operations_enabled)
     install_provisioning(app, settings, app.state.infrastructure_service, app.state.monitoring_service)
@@ -215,6 +224,29 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         except RuntimeError as exc:
             raise HTTPException(status_code=503, detail=str(exc)) from exc
         return asdict(result)
+
+    @app.get("/api/v1/ipam")
+    async def ipam_snapshot(request: Request) -> dict[str, object]:
+        snapshot = await request.app.state.ipam_service.snapshot()
+        return asdict(snapshot)
+
+    @app.post("/api/v1/ipam/entries")
+    async def ipam_add_entry(payload: IpamEntryInput, request: Request) -> dict[str, object]:
+        try:
+            entry = await request.app.state.ipam_service.add_manual_entry(**payload.model_dump())
+        except ValueError as exc:
+            raise HTTPException(status_code=422, detail=str(exc)) from exc
+        return asdict(entry)
+
+    @app.delete("/api/v1/ipam/entries/{address}")
+    async def ipam_delete_entry(address: str, request: Request) -> dict[str, str]:
+        try:
+            request.app.state.ipam_service.delete_manual_entry(address)
+        except KeyError as exc:
+            raise HTTPException(status_code=404, detail=str(exc)) from exc
+        except ValueError as exc:
+            raise HTTPException(status_code=422, detail=str(exc)) from exc
+        return {"address": address, "status": "deleted"}
 
     @app.get("/api/v1/monitoring/targets")
     async def monitoring_targets(request: Request) -> dict[str, object]:
