@@ -46,6 +46,21 @@ async def test_pdm_guest_static_address_returns_none_for_qemu() -> None:
     assert address is None
 
 
+@pytest.mark.asyncio
+async def test_pdm_list_infrastructure_endpoints_parses_remote_config() -> None:
+    def handler(request: httpx.Request) -> httpx.Response:
+        assert request.url.path == "/api2/json/config/remotes"
+        return httpx.Response(200, json={"data": [
+            {"type": "pve", "id": "homelab", "nodes": ["192.168.0.10:8006"], "authid": "root@pam!nexus"},
+            {"type": "pbs", "id": "backup", "nodes": ["hostname=192.168.0.11,fingerprint=aa:bb"], "authid": "root@pam!nexus"},
+        ]})
+
+    provider = PdmProvider(base_url="https://pdm.test", verify_tls=False, health_path="/api2/json/version", timeout_seconds=5, transport=httpx.MockTransport(handler))
+    endpoints = await provider.list_infrastructure_endpoints()
+    assert ("192.168.0.10", "homelab (pve)") in endpoints
+    assert ("192.168.0.11", "backup (pbs)") in endpoints
+
+
 class FakeInfrastructure:
     def __init__(self, resources) -> None:
         self.resources = tuple(resources)
@@ -55,11 +70,15 @@ class FakeInfrastructure:
 
 
 class FakeGuestAddresses:
-    def __init__(self, mapping: dict[str, str]) -> None:
+    def __init__(self, mapping: dict[str, str], infrastructure: list[tuple[str, str]] | None = None) -> None:
         self.mapping = mapping
+        self.infrastructure = infrastructure or []
 
     async def guest_static_address(self, resource: InfrastructureResource) -> str | None:
         return self.mapping.get(resource.id)
+
+    async def list_infrastructure_endpoints(self) -> list[tuple[str, str]]:
+        return self.infrastructure
 
 
 @pytest.mark.asyncio
@@ -128,10 +147,34 @@ async def test_snapshot_surfaces_conflict_when_guest_claims_manual_address(tmp_p
     assert len(snapshot.conflicts) == 1
     conflict = snapshot.conflicts[0]
     assert conflict.address == "192.168.0.10"
-    assert conflict.guest_entry.label == "nginx"
+    assert conflict.live_entry.label == "nginx"
     assert conflict.manual_entry.label == "Pre-existing note"
     # the guest wins over the stale manual entry in the "used" view
     assert next(entry for entry in snapshot.used if entry.address == "192.168.0.10").source == "guest"
+
+
+@pytest.mark.asyncio
+async def test_snapshot_reports_infrastructure_entries(tmp_path: Path) -> None:
+    repository = JsonIpamRepository(tmp_path / "ipam.json")
+    addresses = FakeGuestAddresses({}, infrastructure=[("192.168.0.10", "homelab (pve)"), ("192.168.0.11", "backup (pbs)")])
+    service = IpamService(repository, FakeInfrastructure([]), addresses)
+
+    snapshot = await service.snapshot()
+
+    used_by_address = {entry.address: entry for entry in snapshot.used}
+    assert used_by_address["192.168.0.10"].source == "infrastructure"
+    assert used_by_address["192.168.0.10"].label == "homelab (pve)"
+    assert "192.168.0.10" not in snapshot.free
+    assert "192.168.0.11" not in snapshot.free
+
+
+@pytest.mark.asyncio
+async def test_manual_entry_rejected_when_infrastructure_host_already_holds_address(tmp_path: Path) -> None:
+    repository = JsonIpamRepository(tmp_path / "ipam.json")
+    addresses = FakeGuestAddresses({}, infrastructure=[("192.168.0.10", "homelab (pve)")])
+    service = IpamService(repository, FakeInfrastructure([]), addresses)
+    with pytest.raises(ValueError, match="already in use by infrastructure 'homelab \\(pve\\)'"):
+        await service.add_manual_entry(address="192.168.0.10", label="Whoops")
 
 
 @pytest.mark.asyncio

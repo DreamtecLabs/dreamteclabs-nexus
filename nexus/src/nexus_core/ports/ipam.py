@@ -9,7 +9,7 @@ from nexus_core.ports.infrastructure import InfrastructureResource
 @dataclass(frozen=True, slots=True)
 class IpamEntry:
     address: str
-    source: str  # "guest" | "manual"
+    source: str  # "guest" | "infrastructure" | "manual"
     label: str
     resource_id: str | None = None
     notes: str = ""
@@ -18,7 +18,7 @@ class IpamEntry:
 @dataclass(frozen=True, slots=True)
 class IpamConflict:
     address: str
-    guest_entry: IpamEntry
+    live_entry: IpamEntry
     manual_entry: IpamEntry
 
 
@@ -41,5 +41,7 @@ class IpamRepository(Protocol):
     def delete_entry(self, address: str) -> IpamEntry: ...
 
 
-class GuestAddressProvider(Protocol):
+class AddressProvider(Protocol):
     async def guest_static_address(self, resource: InfrastructureResource) -> str | None: ...
+
+    async def list_infrastructure_endpoints(self) -> list[tuple[str, str]]: ...

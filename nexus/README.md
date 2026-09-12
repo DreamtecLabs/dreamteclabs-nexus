@@ -46,11 +46,12 @@ Mutations are disabled by default with `NEXUS_DOMAINS_OPERATIONS_ENABLED=false`.
 
 `/ipam` and `GET /api/v1/ipam` track the static ranges of `NEXUS_IPAM_CIDR` (default `192.168.0.0/24`), excluding the DHCP range `NEXUS_IPAM_DHCP_RANGE_START`–`NEXUS_IPAM_DHCP_RANGE_END` (default `.50`–`.199`) and the network/broadcast addresses. Nexus never manages DHCP itself, so that range is simply invisible to IPAM — it is neither "used" nor offered as "free".
 
-Two sources make up the "used" view, and neither is treated as more authoritative to persist than to compute:
-- **Guest entries** are derived live on every request by calling `PdmProvider.guest_static_address()` for each LXC in the current PDM snapshot (parsing its `net0` config for a non-`dhcp` `ip=` value); they are never written to disk, so they can never go stale.
-- **Manual entries** (router, switch, access points, anything Nexus doesn't provision) are the only persisted state, in `${NEXUS_DATA_DIR}/ipam.json`. `POST /api/v1/ipam/entries` and `DELETE /api/v1/ipam/entries/{address}` manage them; both reject an address inside the DHCP range or outside the tracked CIDR, and adding one already claimed by a guest is rejected outright rather than silently overwritten.
+Three sources make up the "used" view; only one of them is actually persisted:
+- **Guest entries** are derived live on every request by calling `PdmProvider.guest_static_address()` for each LXC in the current PDM snapshot (parsing its `net0` config for a non-`dhcp` `ip=` value); they are never written to disk, so creating or destroying a guest is reflected on the very next `/ipam` load with no extra step.
+- **Infrastructure entries** are the physical Proxmox and PBS hosts themselves, also derived live via `PdmProvider.list_infrastructure_endpoints()`, which reads PDM's own `GET /config/remotes` (a native PDM config endpoint PDM already exposes for its own remotes list, not a proxied PVE call, so this needed no Rust change) and extracts each configured remote's connection host. Adding or removing a PDM remote changes this set automatically, same as guests.
+- **Manual entries** (router, switch, access points, anything Nexus doesn't provision or manage as a PDM remote) are the only persisted state, in `${NEXUS_DATA_DIR}/ipam.json`. `POST /api/v1/ipam/entries` and `DELETE /api/v1/ipam/entries/{address}` manage them; both reject an address inside the DHCP range or outside the tracked CIDR, and adding one already claimed by a guest or infrastructure host is rejected outright rather than silently overwritten.
 
-If a manual entry's address is later claimed by a guest (the manual record went stale), the snapshot surfaces it as a conflict rather than silently picking one side — the guest still wins in the "used" view, but the stale manual entry stays visible until an operator deletes or edits it.
+If a manual entry's address is later claimed by a guest or infrastructure host (the manual record went stale), the snapshot surfaces it as a conflict rather than silently picking one side — the live entry still wins in the "used" view, but the stale manual entry stays visible until an operator deletes or edits it.
 
 ## Visual system
 

@@ -9,7 +9,7 @@
 <section class="card warning-card">
   <strong>Conflicts</strong>
   <p class="muted small">These manually registered addresses are also in live use by a guest. The guest wins; resolve by editing or deleting the manual entry.</p>
-  {% for conflict in snapshot.conflicts %}<p class="muted small"><code>{{ conflict.address }}</code> — manual "{{ conflict.manual_entry.label }}" vs guest "{{ conflict.guest_entry.label }}"</p>{% endfor %}
+  {% for conflict in snapshot.conflicts %}<p class="muted small"><code>{{ conflict.address }}</code> — manual "{{ conflict.manual_entry.label }}" vs {{ conflict.live_entry.source }} "{{ conflict.live_entry.label }}"</p>{% endfor %}
 </section>
 {% endif %}
 
@@ -37,7 +37,7 @@
       {% for entry in snapshot.used %}
       <tr data-address="{{ entry.address }}">
         <td><code>{{ entry.address }}</code></td>
-        <td><span class="pill {{ 'running' if entry.source == 'guest' else '' }}">{{ entry.source }}</span></td>
+        <td><span class="pill {{ 'running' if entry.source in ('guest', 'infrastructure') else '' }}">{{ entry.source }}</span></td>
         <td>{% if entry.resource_id %}<a href="/infrastructure/resource?id={{ entry.resource_id|urlencode }}">{{ entry.label }}</a>{% else %}{{ entry.label }}{% endif %}</td>
         <td class="muted small">{{ entry.notes or "—" }}</td>
         <td>{% if entry.source == "manual" %}<button class="action-button danger delete-entry" data-address="{{ entry.address }}">Delete</button>{% else %}<span class="muted small">—</span>{% endif %}</td>

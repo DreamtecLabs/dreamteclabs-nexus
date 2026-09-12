@@ -3,7 +3,7 @@ from __future__ import annotations
 import asyncio
 import ipaddress
 
-from nexus_core.ports.ipam import GuestAddressProvider, IpamConflict, IpamEntry, IpamRepository, IpamSnapshot
+from nexus_core.ports.ipam import AddressProvider, IpamConflict, IpamEntry, IpamRepository, IpamSnapshot
 
 
 class IpamService:
@@ -11,7 +11,7 @@ class IpamService:
         self,
         repository: IpamRepository,
         infrastructure_service,
-        guest_address_provider: GuestAddressProvider,
+        address_provider: AddressProvider,
         *,
         cidr: str = "192.168.0.0/24",
         dhcp_range_start: str = "192.168.0.50",
@@ -19,7 +19,7 @@ class IpamService:
     ) -> None:
         self._repository = repository
         self._infrastructure = infrastructure_service
-        self._guest_address_provider = guest_address_provider
+        self._address_provider = address_provider
         self._network = ipaddress.ip_network(cidr, strict=False)
         self._dhcp_start = ipaddress.ip_address(dhcp_range_start)
         self._dhcp_end = ipaddress.ip_address(dhcp_range_end)
@@ -45,7 +45,7 @@ class IpamService:
         snapshot = await self._infrastructure.list_resources()
         guests = [resource for resource in snapshot.resources if resource.is_guest]
         results = await asyncio.gather(
-            *(self._guest_address_provider.guest_static_address(guest) for guest in guests),
+            *(self._address_provider.guest_static_address(guest) for guest in guests),
             return_exceptions=True,
         )
         entries: dict[str, IpamEntry] = {}
@@ -61,16 +61,36 @@ class IpamService:
             entries[str(parsed)] = IpamEntry(address=str(parsed), source="guest", label=guest.name, resource_id=guest.id)
         return entries
 
+    async def _infrastructure_entries(self) -> dict[str, IpamEntry]:
+        try:
+            endpoints = await self._address_provider.list_infrastructure_endpoints()
+        except Exception:
+            return {}
+        entries: dict[str, IpamEntry] = {}
+        for host, label in endpoints:
+            try:
+                parsed = ipaddress.ip_address(host)
+            except ValueError:
+                continue
+            if parsed not in self._network or self._in_dhcp_range(parsed):
+                continue
+            entries[str(parsed)] = IpamEntry(address=str(parsed), source="infrastructure", label=label)
+        return entries
+
+    async def _live_entries(self) -> dict[str, IpamEntry]:
+        guest_entries, infrastructure_entries = await asyncio.gather(self._guest_entries(), self._infrastructure_entries())
+        return {**infrastructure_entries, **guest_entries}
+
     async def snapshot(self) -> IpamSnapshot:
-        guest_entries = await self._guest_entries()
+        live_entries = await self._live_entries()
         manual_entries = {entry.address: entry for entry in self._repository.list_entries()}
 
-        used: dict[str, IpamEntry] = dict(guest_entries)
+        used: dict[str, IpamEntry] = dict(live_entries)
         conflicts: list[IpamConflict] = []
         for address, manual_entry in manual_entries.items():
-            guest_entry = guest_entries.get(address)
-            if guest_entry is not None:
-                conflicts.append(IpamConflict(address=address, guest_entry=guest_entry, manual_entry=manual_entry))
+            live_entry = live_entries.get(address)
+            if live_entry is not None:
+                conflicts.append(IpamConflict(address=address, live_entry=live_entry, manual_entry=manual_entry))
                 continue
             used[address] = manual_entry
 
@@ -83,10 +103,10 @@ class IpamService:
         label = label.strip()
         if not label:
             raise ValueError("label is required")
-        guest_entries = await self._guest_entries()
-        existing_guest = guest_entries.get(validated)
-        if existing_guest is not None:
-            raise ValueError(f"{validated} is already in use by guest '{existing_guest.label}'")
+        live_entries = await self._live_entries()
+        existing_live = live_entries.get(validated)
+        if existing_live is not None:
+            raise ValueError(f"{validated} is already in use by {existing_live.source} '{existing_live.label}'")
         entry = IpamEntry(address=validated, source="manual", label=label, notes=notes.strip())
         self._repository.upsert_entry(entry)
         return entry

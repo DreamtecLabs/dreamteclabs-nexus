@@ -158,6 +158,53 @@ class PdmProvider:
                     return part[3:].strip().split("/", 1)[0]
         return None
 
+    async def list_infrastructure_endpoints(self) -> list[tuple[str, str]]:
+        """Best-effort: the connection host of every PVE/PBS remote PDM manages.
+
+        These are the physical Proxmox and PBS hosts themselves (not guests),
+        read from PDM's own remote configuration (GET /config/remotes) -- a
+        native PDM management endpoint, already redacted of the API token
+        before it's returned, not a proxied PVE call.
+        """
+        try:
+            async with self._client() as client:
+                response = await client.get("/api2/json/config/remotes")
+                response.raise_for_status()
+                payload = response.json()
+        except httpx.HTTPError:
+            return []
+        except ValueError:
+            return []
+        data = payload.get("data") if isinstance(payload, dict) else None
+        if not isinstance(data, list):
+            return []
+        endpoints: list[tuple[str, str]] = []
+        for remote in data:
+            if not isinstance(remote, dict):
+                continue
+            remote_id = remote.get("id")
+            nodes = remote.get("nodes")
+            if not isinstance(remote_id, str) or not isinstance(nodes, list):
+                continue
+            remote_type = remote.get("type")
+            label = f"{remote_id} ({remote_type})" if isinstance(remote_type, str) else remote_id
+            for node in nodes:
+                if not isinstance(node, str):
+                    continue
+                host = node
+                if "=" in host:
+                    for part in host.split(","):
+                        part = part.strip()
+                        if part.startswith("hostname="):
+                            host = part[len("hostname="):]
+                            break
+                if host.count(":") == 1:
+                    host = host.rsplit(":", 1)[0]
+                host = host.strip()
+                if host:
+                    endpoints.append((host, label))
+        return endpoints
+
     async def destroy_guest(self, resource: InfrastructureResource, *, purge: bool = True) -> str | None:
         if resource.type == "pve-qemu":
             guest_kind = "qemu"
