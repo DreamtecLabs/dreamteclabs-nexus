@@ -18,15 +18,18 @@ from nexus_core.providers.signoz import SigNozAlertingProvider, SigNozMetricsPro
 from nexus_core.ports.domains import TunnelIngressRule
 from nexus_core.repositories.domain_audit_jsonl import JsonlDomainAuditRepository
 from nexus_core.repositories.domains_json import JsonDomainRepository
+from nexus_core.repositories.fleet_scripts import FilesystemFleetScriptRepository
 from nexus_core.repositories.ipam_json import JsonIpamRepository
 from nexus_core.repositories.monitoring_json import JsonMonitoringRepository
 from nexus_core.repositories.power_audit_jsonl import JsonlPowerAuditRepository
 from nexus_core.services.cloudflare import CloudflareOperationsDisabled, CloudflareService
 from nexus_core.services.domains import DomainOperationsDisabled, DomainService, DomainVerificationFailed
+from nexus_core.services.fleet import FleetOperationsDisabled, FleetService
 from nexus_core.services.infrastructure import DecommissionDisabled, DecommissionNotAllowed, DecommissionVerificationTimeout, InfrastructureResourceNotFound, InfrastructureService, PowerActionNotAllowed, PowerOperationsDisabled, PowerVerificationTimeout
 from nexus_core.services.ipam import IpamService
 from nexus_core.services.monitoring import MonitoringService
 from nexus_core.services.providers import ProviderService
+from nexus_core.services.ssh_bootstrap import SshBootstrapService
 from nexus_core.web import router as web_router
 
 
@@ -65,6 +68,24 @@ class IpamEntryInput(BaseModel):
     address: str = Field(min_length=1, max_length=45)
     label: str = Field(min_length=1, max_length=80)
     notes: str = Field(default="", max_length=500)
+
+
+class FleetEnrollKeyInput(BaseModel):
+    address: str = Field(min_length=1, max_length=253)
+    username: str = Field(default="root", min_length=1, max_length=64)
+    password: str = Field(min_length=1, max_length=256)
+
+
+class FleetRunTargetInput(BaseModel):
+    resource_id: str = Field(min_length=1, max_length=255)
+    name: str = Field(min_length=1, max_length=255)
+    address: str = Field(min_length=1, max_length=253)
+
+
+class FleetRunInput(BaseModel):
+    script: str = Field(min_length=1, max_length=255)
+    targets: list[FleetRunTargetInput] = Field(min_length=1, max_length=200)
+    params: dict[str, str] = Field(default_factory=dict)
 
 
 class DomainValidateInput(BaseModel):
@@ -143,6 +164,8 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     app.state.monitoring_service = MonitoringService(monitoring_repository, alerting, telemetry_runtime, metrics)
     app.state.infrastructure_service = InfrastructureService(pdm, power_operations_enabled=settings.power_operations_enabled, verification_attempts=settings.power_verification_attempts, verification_interval_seconds=settings.power_verification_interval_seconds, audit_repository=power_audit_repository, decommission_enabled=settings.decommission_enabled, monitoring_service=app.state.monitoring_service)
     app.state.ipam_service = IpamService(JsonIpamRepository(settings.ipam_manual_path), app.state.infrastructure_service, pdm, cidr=settings.ipam_cidr, dhcp_range_start=settings.ipam_dhcp_range_start, dhcp_range_end=settings.ipam_dhcp_range_end)
+    fleet_ssh_bootstrap = SshBootstrapService(key_path=settings.ssh_bootstrap_key_path, attempts=settings.ssh_bootstrap_attempts, interval_seconds=settings.ssh_bootstrap_interval_seconds, run_timeout_seconds=settings.ssh_bootstrap_run_timeout_seconds)
+    app.state.fleet_service = FleetService(FilesystemFleetScriptRepository(settings.fleet_scripts_dir), app.state.infrastructure_service, pdm, fleet_ssh_bootstrap, enabled=settings.fleet_operations_enabled)
     app.state.domain_service = DomainService(domain_repository, domain_diagnostics, domain_orchestrator, domain_audit, operations_enabled=settings.domains_operations_enabled, verification_attempts=settings.domains_verification_attempts, verification_interval_seconds=settings.domains_verification_interval_seconds)
     app.state.cloudflare_service = CloudflareService(cloudflare, domain_audit, operations_enabled=settings.domains_operations_enabled)
     install_provisioning(app, settings, app.state.infrastructure_service, app.state.monitoring_service)
@@ -247,6 +270,38 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         except ValueError as exc:
             raise HTTPException(status_code=422, detail=str(exc)) from exc
         return {"address": address, "status": "deleted"}
+
+    @app.get("/api/v1/fleet/scripts")
+    async def fleet_scripts(request: Request) -> dict[str, object]:
+        return {"scripts": [asdict(script) for script in request.app.state.fleet_service.list_scripts()]}
+
+    @app.get("/api/v1/fleet/targets")
+    async def fleet_targets(request: Request) -> dict[str, object]:
+        try:
+            targets = await request.app.state.fleet_service.list_targets()
+        except RuntimeError as exc:
+            raise HTTPException(status_code=503, detail=str(exc)) from exc
+        return {"targets": [asdict(target) for target in targets]}
+
+    @app.post("/api/v1/fleet/enroll-key")
+    async def fleet_enroll_key(payload: FleetEnrollKeyInput, request: Request) -> dict[str, object]:
+        try:
+            result = await request.app.state.fleet_service.enroll_key(**payload.model_dump())
+        except FleetOperationsDisabled as exc:
+            raise HTTPException(status_code=403, detail=str(exc)) from exc
+        if not result.ok:
+            raise HTTPException(status_code=502, detail=result.detail)
+        return {"status": "ok", "detail": result.detail}
+
+    @app.post("/api/v1/fleet/run")
+    async def fleet_run(payload: FleetRunInput, request: Request) -> dict[str, object]:
+        try:
+            results = await request.app.state.fleet_service.run(script=payload.script, targets=[target.model_dump() for target in payload.targets], params=payload.params)
+        except FleetOperationsDisabled as exc:
+            raise HTTPException(status_code=403, detail=str(exc)) from exc
+        except KeyError as exc:
+            raise HTTPException(status_code=404, detail=f"unknown script: {exc}") from exc
+        return {"results": [asdict(result) for result in results]}
 
     @app.get("/api/v1/monitoring/targets")
     async def monitoring_targets(request: Request) -> dict[str, object]:

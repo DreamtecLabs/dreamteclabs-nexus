@@ -1,0 +1,132 @@
+{% extends "base.html" %}
+{% block title %}Fleet Ops · DreamtecLabs Nexus{% endblock %}
+{% block content %}
+<section class="page-head">
+  <div><div class="eyebrow">Automation</div><h1>Fleet Ops</h1><p class="muted">Push a script across existing LXC guests over SSH — a lightweight, no-deploy alternative to running Ansible by hand.</p></div>
+  <span class="provision-badge {{ 'ready' if enabled else 'locked' }}">{{ 'Runs enabled' if enabled else 'Runs locked' }}</span>
+</section>
+{% if not enabled %}<section class="card notice-card provision-lock"><strong>Fleet operations are locked.</strong><p class="muted small">Key enrollment and script runs are available to review here, but disabled server-side. Set <code>NEXUS_FLEET_OPERATIONS_ENABLED=true</code> once you're ready to push to real guests.</p></section>{% endif %}
+
+<section class="card form-card">
+  <div><strong>Authorize Nexus's SSH key on a guest</strong><p class="muted small">One-time step for guests Nexus didn't provision itself (so they don't already carry its key). Uses the guest's root password once, over SSH, just to append Nexus's public key to <code>authorized_keys</code> — the password is never stored.</p></div>
+  <div class="form-grid three">
+    <div class="field"><label>Address or hostname</label><input id="enroll-address" placeholder="192.168.0.10 or web-01.internal"></div>
+    <div class="field"><label>Username</label><input id="enroll-username" value="root"></div>
+    <div class="field"><label>Root password</label><input id="enroll-password" type="password" autocomplete="off"></div>
+  </div>
+  <button class="button" id="enroll-button" {% if not enabled %}disabled{% endif %}>Authorize key</button>
+  <p id="enroll-message" class="operation-message" hidden></p>
+</section>
+
+<section class="card form-card">
+  <div><strong>Run a script</strong><p class="muted small">Scripts are read fresh from <code>services/*.sh</code> on every load — drop a new one in with a <code># nexus-fleet:name=...</code> header and it shows up here without a Nexus deploy.</p></div>
+  <div class="field"><label>Script</label>
+    <select id="script-select">
+      <option value="">Select…</option>
+      {% for script in scripts %}<option value="{{ script.path }}" data-description="{{ script.description }}" data-params="{{ script.params|join(',') }}">{{ script.name }}</option>{% endfor %}
+    </select>
+    <p class="muted small" id="script-description"></p>
+  </div>
+  <div class="form-grid three" id="script-params"></div>
+
+  <div class="table-wrap" style="margin-top:14px">
+    <table>
+      <thead><tr><th style="width:2rem"></th><th>Guest</th><th>Address</th></tr></thead>
+      <tbody>
+      {% for target in targets %}
+      <tr>
+        <td><input type="checkbox" class="target-check" data-resource="{{ target.resource_id }}" data-name="{{ target.name }}"></td>
+        <td>{{ target.name }}</td>
+        <td><input class="control target-address" value="{{ target.address or '' }}" placeholder="IP or hostname"></td>
+      </tr>
+      {% else %}
+      <tr><td class="empty" colspan="3">No running LXC guests found.</td></tr>
+      {% endfor %}
+      </tbody>
+    </table>
+  </div>
+
+  <button class="button" id="run-button" style="margin-top:14px" {% if not enabled %}disabled{% endif %}>Run on selected guests</button>
+  <p id="run-message" class="operation-message" hidden></p>
+  <div class="table-wrap" id="run-results" hidden style="margin-top:14px">
+    <table>
+      <thead><tr><th>Guest</th><th>Address</th><th>Result</th><th>Detail</th></tr></thead>
+      <tbody id="run-results-body"></tbody>
+    </table>
+  </div>
+</section>
+
+<script>
+(() => {
+  const enrollMessage = document.getElementById('enroll-message');
+  const showMessage = (el, text, kind) => { el.hidden = false; el.textContent = text; el.className = `operation-message ${kind}`; };
+
+  document.getElementById('enroll-button').addEventListener('click', async () => {
+    const address = document.getElementById('enroll-address').value.trim();
+    const username = document.getElementById('enroll-username').value.trim() || 'root';
+    const password = document.getElementById('enroll-password').value;
+    if (!address || !password) return showMessage(enrollMessage, 'Address and password are required.', 'error');
+    try {
+      const response = await fetch('/api/v1/fleet/enroll-key', {
+        method: 'POST',
+        headers: {'Content-Type': 'application/json'},
+        body: JSON.stringify({address, username, password}),
+      });
+      const data = await response.json();
+      if (!response.ok) throw new Error(data.detail || `HTTP ${response.status}`);
+      showMessage(enrollMessage, data.detail, 'success');
+      document.getElementById('enroll-password').value = '';
+    } catch (error) {
+      showMessage(enrollMessage, String(error.message || error), 'error');
+    }
+  });
+
+  const scriptSelect = document.getElementById('script-select');
+  const scriptDescription = document.getElementById('script-description');
+  const scriptParams = document.getElementById('script-params');
+  scriptSelect.addEventListener('change', () => {
+    const option = scriptSelect.selectedOptions[0];
+    scriptDescription.textContent = option ? (option.dataset.description || '') : '';
+    const params = option && option.dataset.params ? option.dataset.params.split(',').filter(Boolean) : [];
+    scriptParams.innerHTML = params.map(name => `<div class="field"><label>${name}</label><input class="param-input" data-param="${name}" placeholder="Leave blank for the script's own default"></div>`).join('');
+  });
+
+  const runMessage = document.getElementById('run-message');
+  document.getElementById('run-button').addEventListener('click', async () => {
+    const script = scriptSelect.value;
+    if (!script) return showMessage(runMessage, 'Pick a script first.', 'error');
+    const targets = [...document.querySelectorAll('.target-check:checked')].map(checkbox => {
+      const row = checkbox.closest('tr');
+      const address = row.querySelector('.target-address').value.trim();
+      return {resource_id: checkbox.dataset.resource, name: checkbox.dataset.name, address};
+    });
+    if (!targets.length) return showMessage(runMessage, 'Select at least one guest.', 'error');
+    if (targets.some(t => !t.address)) return showMessage(runMessage, 'Every selected guest needs an address.', 'error');
+    const params = {};
+    document.querySelectorAll('.param-input').forEach(input => { params[input.dataset.param] = input.value; });
+
+    const button = document.getElementById('run-button');
+    button.disabled = true;
+    showMessage(runMessage, `Running "${scriptSelect.selectedOptions[0].textContent}" on ${targets.length} guest(s)…`, 'pending');
+    try {
+      const response = await fetch('/api/v1/fleet/run', {
+        method: 'POST',
+        headers: {'Content-Type': 'application/json'},
+        body: JSON.stringify({script, targets, params}),
+      });
+      const data = await response.json();
+      if (!response.ok) throw new Error(data.detail || `HTTP ${response.status}`);
+      const failures = data.results.filter(r => !r.ok).length;
+      showMessage(runMessage, failures ? `${failures} of ${data.results.length} failed.` : `All ${data.results.length} succeeded.`, failures ? 'error' : 'success');
+      const resultsSection = document.getElementById('run-results');
+      resultsSection.hidden = false;
+      document.getElementById('run-results-body').innerHTML = data.results.map(r => `<tr><td>${r.name}</td><td><code>${r.address}</code></td><td><span class="pill ${r.ok ? 'running' : ''}">${r.ok ? 'ok' : 'failed'}</span></td><td class="muted small">${r.detail}</td></tr>`).join('');
+    } catch (error) {
+      showMessage(runMessage, String(error.message || error), 'error');
+    } finally {
+      button.disabled = {{ 'false' if enabled else 'true' }};
+    }
+  });
+})();
+</script>
+{% endblock %}

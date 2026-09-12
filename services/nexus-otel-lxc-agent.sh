@@ -1,4 +1,7 @@
 #!/usr/bin/env bash
+# nexus-fleet:name=Install OTel Collector agent
+# nexus-fleet:description=Installs and configures the OpenTelemetry Collector agent used across the fleet, sending host metrics to SigNoz.
+# nexus-fleet:params=OTEL_VERSION,OTLP_HOST,OTLP_PORT
 set -euo pipefail
 
 # ============================================================

@@ -53,6 +53,24 @@ Three sources make up the "used" view; only one of them is actually persisted:
 
 If a manual entry's address is later claimed by a guest or infrastructure host (the manual record went stale), the snapshot surfaces it as a conflict rather than silently picking one side — the live entry still wins in the "used" view, but the stale manual entry stays visible until an operator deletes or edits it.
 
+## Fleet Ops
+
+`/fleet` and `POST /api/v1/fleet/{enroll-key,run}` are a lightweight, Ansible-style alternative for pushing a change across existing guests Nexus didn't necessarily provision itself — deliberately kept out of `deploy.sh`, since the whole point is to add a new task without touching Nexus Core or restarting it.
+
+Scripts are discovered by `FilesystemFleetScriptRepository` scanning `NEXUS_FLEET_SCRIPTS_DIR` (default `services/`, the same directory `nexus-otel-lxc-agent.sh` already lives in) for `.sh` files carrying an opt-in header:
+
+```bash
+# nexus-fleet:name=Set timezone
+# nexus-fleet:description=Sets the guest's system timezone.
+# nexus-fleet:params=TIMEZONE
+```
+
+A script without that header (e.g. `nexus-domains-helper`) never shows up in the picker. Adding a new fleet task is a file drop plus `git pull` — no Python change, no `./deploy.sh`, no Nexus Core restart. The `params` list becomes editable env-var inputs in `/fleet`; anything left blank falls through to the script's own `${VAR:-default}`.
+
+Guests Nexus didn't provision itself don't carry its SSH key yet. `SshBootstrapService.enroll_key()` is a one-time bootstrap: it connects once with a root password the operator types into the page, appends Nexus's existing public key (`${NEXUS_DATA_DIR}/nexus_ssh_key.pub`) to `~/.ssh/authorized_keys`, and never stores the password. Every run after that — enrollment included — is gated by `NEXUS_FLEET_OPERATIONS_ENABLED=false` by default, same as every other destructive/mutating feature area.
+
+`/fleet`'s target list is every running `pve-lxc` guest, with its address pre-filled from `PdmProvider.guest_static_address()` when known (blank/editable otherwise — a guest on DHCP still needs a reachable address typed in by hand today). QEMU guests are out of scope for the same reason they're out of scope for OTel bootstrap: no cloud-init, no guaranteed SSH.
+
 ## Visual system
 
 The standalone Nexus UI is light-first: white surfaces, dark readable text and colorful accents/statuses. Dark application surfaces are not part of the vNext visual baseline.

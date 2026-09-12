@@ -75,6 +75,24 @@ async def test_wait_and_run_reports_script_failure(tmp_path: Path, ssh_server: i
 
 
 @pytest.mark.asyncio
+async def test_enroll_key_appends_public_key_over_password_auth(tmp_path: Path, ssh_server: int) -> None:
+    service = SshBootstrapService(key_path=tmp_path / "key")
+    service.ensure_keypair()
+    result = await service.enroll_key("127.0.0.1", port=ssh_server, username="root", password="hunter2")
+    assert result.ok is True
+    assert result.detail == "Nexus SSH key enrolled"
+
+
+@pytest.mark.asyncio
+async def test_enroll_key_reports_unreachable_host(tmp_path: Path) -> None:
+    service = SshBootstrapService(key_path=tmp_path / "key")
+    service.ensure_keypair()
+    result = await service.enroll_key("127.0.0.1", port=1, username="root", password="hunter2")
+    assert result.ok is False
+    assert "could not reach" in result.detail
+
+
+@pytest.mark.asyncio
 async def test_wait_and_run_retries_until_giving_up(tmp_path: Path) -> None:
     service = SshBootstrapService(key_path=tmp_path / "key", attempts=2, interval_seconds=0.05, run_timeout_seconds=5)
     service.ensure_keypair()

@@ -121,6 +121,16 @@ async def ipam(request: Request) -> HTMLResponse:
     return _templates.TemplateResponse(request=request, name="ipam.html", context={"snapshot": snapshot})
 
 
+@router.get("/fleet", response_class=HTMLResponse)
+async def fleet(request: Request) -> HTMLResponse:
+    service = request.app.state.fleet_service
+    try:
+        targets = await service.list_targets()
+    except RuntimeError as exc:
+        raise HTTPException(status_code=503, detail=str(exc)) from exc
+    return _templates.TemplateResponse(request=request, name="fleet.html", context={"scripts": service.list_scripts(), "targets": targets, "enabled": service.enabled})
+
+
 @router.get("/infrastructure/estate", response_class=HTMLResponse)
 async def estate(request: Request) -> HTMLResponse:
     try: remotes = await request.app.state.infrastructure_service.estate_summary()

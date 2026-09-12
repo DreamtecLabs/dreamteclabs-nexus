@@ -67,6 +67,33 @@ class SshBootstrapService:
                     await self._sleep(self._interval_seconds)
         return BootstrapResult(False, f"could not reach {address} over SSH: {last_error}")
 
+    async def enroll_key(self, address: str, *, username: str = "root", password: str, port: int = 22) -> BootstrapResult:
+        """One-time bootstrap for a pre-existing guest: use a password to authorize
+        Nexus's own key, so every later connection can use wait_and_run/run as usual."""
+        public_key = self.ensure_keypair()
+        command = (
+            "mkdir -p ~/.ssh && chmod 700 ~/.ssh && touch ~/.ssh/authorized_keys && "
+            f"grep -qxF {self._shell_quote(public_key)} ~/.ssh/authorized_keys || "
+            f"echo {self._shell_quote(public_key)} >> ~/.ssh/authorized_keys && "
+            "chmod 600 ~/.ssh/authorized_keys"
+        )
+        try:
+            async with asyncssh.connect(
+                address,
+                port=port,
+                username=username,
+                password=password,
+                known_hosts=None,
+                connect_timeout=10,
+            ) as conn:
+                result = await conn.run(command, check=False, timeout=30, stdin=asyncssh.DEVNULL)
+        except (OSError, asyncssh.Error) as exc:
+            return BootstrapResult(False, f"could not reach {address} over SSH with password auth: {exc}")
+        if result.exit_status != 0:
+            output = "\n".join(part for part in (result.stdout, result.stderr) if part).strip()
+            return BootstrapResult(False, f"key enrollment exited {result.exit_status}: {output[-500:] if output else 'no output'}")
+        return BootstrapResult(True, "Nexus SSH key enrolled")
+
     async def _run_script(self, conn: asyncssh.SSHClientConnection, script: str, env: dict[str, str]) -> BootstrapResult:
         prefix = "".join(f"export {key}={self._shell_quote(value)}\n" for key, value in env.items())
         try:
