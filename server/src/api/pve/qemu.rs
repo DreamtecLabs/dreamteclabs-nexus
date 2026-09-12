@@ -1,4 +1,5 @@
 use anyhow::{Context, Error, bail};
+use proxmox_client::{ApiPathBuilder, HttpApiClient};
 
 use proxmox_access_control::CachedUserInfo;
 use proxmox_router::{
@@ -10,7 +11,7 @@ use proxmox_sortable_macro::sortable;
 use pdm_api_types::remotes::REMOTE_ID_SCHEMA;
 use pdm_api_types::remotes::Remote;
 use pdm_api_types::{
-    Authid, CIDR_FORMAT, ConfigurationState, NODE_SCHEMA, PRIV_RESOURCE_AUDIT,
+    Authid, CIDR_FORMAT, ConfigurationState, NODE_SCHEMA, PRIV_RESOURCE_AUDIT, PRIV_RESOURCE_DELETE,
     PRIV_RESOURCE_MANAGE, PRIV_RESOURCE_MIGRATE, PRIV_SYS_CONSOLE, RemoteUpid,
     SNAPSHOT_NAME_SCHEMA, VMID_SCHEMA,
 };
@@ -33,6 +34,7 @@ pub const ROUTER: Router = Router::new()
 
 const QEMU_VM_ROUTER: Router = Router::new()
     .get(&list_subdirs_api_method!(QEMU_VM_SUBDIRS))
+    .delete(&API_METHOD_QEMU_DESTROY)
     .subdirs(QEMU_VM_SUBDIRS);
 #[sortable]
 const QEMU_VM_SUBDIRS: SubdirMap = &sorted!([
@@ -1026,4 +1028,63 @@ async fn qemu_vnc_ticket(
     }
 
     Ok(output)
+}
+
+
+#[api(
+    input: {
+        properties: {
+            remote: { schema: REMOTE_ID_SCHEMA },
+            node: {
+                schema: NODE_SCHEMA,
+                optional: true,
+            },
+            vmid: { schema: VMID_SCHEMA },
+            purge: {
+                description: "Remove qemu from all related configurations (backup jobs, replication jobs, HA, ...).",
+                optional: true,
+                default: false,
+            },
+            "destroy-unreferenced-disks": {
+                description: "Also destroy unreferenced disk images on the storage, if any exist.",
+                optional: true,
+                default: false,
+            },
+        },
+    },
+    returns: { type: String, description: "PVE task ID (UPID) for the destroy task." },
+    access: {
+        permission: &Permission::Privilege(&["resource", "{remote}", "guest", "{vmid}"], PRIV_RESOURCE_DELETE, false),
+    },
+)]
+/// Destroy a QEMU VM: stop it (if running) and remove it, including its disks.
+///
+/// pve-api-types 8.1.12 does not implement DELETE /nodes/{node}/qemu/{vmid}
+/// (see the "not handled" doc comment at the top of its generated/code.rs),
+/// so this goes straight to the raw HttpApiClient the same way
+/// storage.rs::get_content already does, instead of the typed PveClient trait.
+pub async fn qemu_destroy(
+    remote: String,
+    node: Option<String>,
+    vmid: u32,
+    purge: bool,
+    destroy_unreferenced_disks: bool,
+    rpcenv: &mut dyn RpcEnvironment,
+) -> Result<String, Error> {
+    check_guest_delete_perms(rpcenv, &remote, vmid)?;
+
+    let pve = connect_to_remote_by_id(&remote)?;
+    let node = find_node_for_vm(node, vmid, pve.as_ref()).await?;
+
+    let (remotes, _) = pdm_config::remotes::config()?;
+    let remote_config = super::get_remote(&remotes, &remote)?;
+    let client = crate::connection::make_raw_client(remote_config)?;
+
+    let path = ApiPathBuilder::new(format!("/api2/extjs/nodes/{node}/qemu/{vmid}"))
+        .maybe_bool_arg("purge", Some(purge))
+        .maybe_bool_arg("destroy-unreferenced-disks", Some(destroy_unreferenced_disks))
+        .build();
+
+    let upid: String = client.delete(&path).await?.expect_json()?.data;
+    Ok(upid)
 }

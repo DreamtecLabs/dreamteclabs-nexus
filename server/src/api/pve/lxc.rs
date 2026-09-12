@@ -1,4 +1,5 @@
 use anyhow::{Context, Error, bail};
+use proxmox_client::{ApiPathBuilder, HttpApiClient};
 use serde_json::Value;
 
 use proxmox_access_control::CachedUserInfo;
@@ -13,7 +14,7 @@ use pve_api_types::PendingConfigValue;
 use pdm_api_types::remotes::REMOTE_ID_SCHEMA;
 use pdm_api_types::remotes::Remote;
 use pdm_api_types::{
-    Authid, ConfigurationState, NODE_SCHEMA, PRIV_RESOURCE_AUDIT, PRIV_RESOURCE_MANAGE,
+    Authid, ConfigurationState, NODE_SCHEMA, PRIV_RESOURCE_AUDIT, PRIV_RESOURCE_DELETE, PRIV_RESOURCE_MANAGE,
     PRIV_RESOURCE_MIGRATE, PRIV_SYS_CONSOLE, RemoteUpid, SNAPSHOT_NAME_SCHEMA, VMID_SCHEMA,
 };
 
@@ -34,6 +35,7 @@ pub const ROUTER: Router = Router::new()
 
 const LXC_VM_ROUTER: Router = Router::new()
     .get(&list_subdirs_api_method!(LXC_VM_SUBDIRS))
+    .delete(&API_METHOD_LXC_DESTROY)
     .subdirs(LXC_VM_SUBDIRS);
 #[sortable]
 const LXC_VM_SUBDIRS: SubdirMap = &sorted!([
@@ -857,4 +859,63 @@ crate::api::remotes::shell::upgrade_to_websocket_impl! {
         .arg("port", port)
         .build()
     },
+}
+
+
+#[api(
+    input: {
+        properties: {
+            remote: { schema: REMOTE_ID_SCHEMA },
+            node: {
+                schema: NODE_SCHEMA,
+                optional: true,
+            },
+            vmid: { schema: VMID_SCHEMA },
+            purge: {
+                description: "Remove lxc from all related configurations (backup jobs, replication jobs, HA, ...).",
+                optional: true,
+                default: false,
+            },
+            "destroy-unreferenced-disks": {
+                description: "Also destroy unreferenced disk images on the storage, if any exist.",
+                optional: true,
+                default: false,
+            },
+        },
+    },
+    returns: { type: String, description: "PVE task ID (UPID) for the destroy task." },
+    access: {
+        permission: &Permission::Privilege(&["resource", "{remote}", "guest", "{vmid}"], PRIV_RESOURCE_DELETE, false),
+    },
+)]
+/// Destroy an LXC container: stop it (if running) and remove it, including its disks.
+///
+/// pve-api-types 8.1.12 does not implement DELETE /nodes/{node}/lxc/{vmid}
+/// (see the "not handled" doc comment at the top of its generated/code.rs),
+/// so this goes straight to the raw HttpApiClient the same way
+/// storage.rs::get_content already does, instead of the typed PveClient trait.
+pub async fn lxc_destroy(
+    remote: String,
+    node: Option<String>,
+    vmid: u32,
+    purge: bool,
+    destroy_unreferenced_disks: bool,
+    rpcenv: &mut dyn RpcEnvironment,
+) -> Result<String, Error> {
+    check_guest_delete_perms(rpcenv, &remote, vmid)?;
+
+    let pve = connect_to_remote_by_id(&remote)?;
+    let node = find_node_for_vm(node, vmid, pve.as_ref()).await?;
+
+    let (remotes, _) = pdm_config::remotes::config()?;
+    let remote_config = super::get_remote(&remotes, &remote)?;
+    let client = crate::connection::make_raw_client(remote_config)?;
+
+    let path = ApiPathBuilder::new(format!("/api2/extjs/nodes/{node}/lxc/{vmid}"))
+        .maybe_bool_arg("purge", Some(purge))
+        .maybe_bool_arg("destroy-unreferenced-disks", Some(destroy_unreferenced_disks))
+        .build();
+
+    let upid: String = client.delete(&path).await?.expect_json()?.data;
+    Ok(upid)
 }
