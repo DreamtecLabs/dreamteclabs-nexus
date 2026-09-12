@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import socket
 from pathlib import Path
 
 import httpx
@@ -47,18 +48,37 @@ async def test_pdm_guest_static_address_returns_none_for_qemu() -> None:
 
 
 @pytest.mark.asyncio
-async def test_pdm_list_infrastructure_endpoints_parses_remote_config() -> None:
+async def test_pdm_list_infrastructure_endpoints_parses_remote_config(monkeypatch: pytest.MonkeyPatch) -> None:
+    # Real PDM PropertyString shape: the default "hostname" key is written bare
+    # ("pve-01,fingerprint=..."), and cluster nodes are usually hostnames that
+    # need DNS resolution, not IP literals.
     def handler(request: httpx.Request) -> httpx.Response:
         assert request.url.path == "/api2/json/remotes/remote"
         return httpx.Response(200, json={"data": [
-            {"type": "pve", "id": "homelab", "nodes": ["192.168.0.10:8006"], "authid": "root@pam!nexus"},
-            {"type": "pbs", "id": "backup", "nodes": ["hostname=192.168.0.11,fingerprint=aa:bb"], "authid": "root@pam!nexus"},
+            {"type": "pve", "id": "homelab", "nodes": ["pve-01,fingerprint=aa:bb", "192.168.0.11:8006"], "authid": "root@pam!nexus"},
+            {"type": "pbs", "id": "pbs-01", "nodes": ["pbs-01,fingerprint=cc:dd"], "authid": "root@pam!nexus"},
         ]})
 
+    monkeypatch.setattr(socket, "gethostbyname", {"pve-01": "192.168.0.10", "pbs-01": "192.168.0.12"}.__getitem__)
     provider = PdmProvider(base_url="https://pdm.test", verify_tls=False, health_path="/api2/json/version", timeout_seconds=5, transport=httpx.MockTransport(handler))
     endpoints = await provider.list_infrastructure_endpoints()
-    assert ("192.168.0.10", "homelab (pve)") in endpoints
-    assert ("192.168.0.11", "backup (pbs)") in endpoints
+    assert ("192.168.0.10", "homelab (pve-01)") in endpoints
+    assert ("192.168.0.11", "homelab (192.168.0.11)") in endpoints
+    assert ("192.168.0.12", "pbs-01 (pbs)") in endpoints
+
+
+@pytest.mark.asyncio
+async def test_pdm_list_infrastructure_endpoints_skips_unresolvable_host(monkeypatch: pytest.MonkeyPatch) -> None:
+    def handler(request: httpx.Request) -> httpx.Response:
+        return httpx.Response(200, json={"data": [{"type": "pve", "id": "homelab", "nodes": ["ghost-node,fingerprint=aa:bb"]}]})
+
+    def raise_gaierror(host: str) -> str:
+        raise socket.gaierror("Name or service not known")
+
+    monkeypatch.setattr(socket, "gethostbyname", raise_gaierror)
+    provider = PdmProvider(base_url="https://pdm.test", verify_tls=False, health_path="/api2/json/version", timeout_seconds=5, transport=httpx.MockTransport(handler))
+    endpoints = await provider.list_infrastructure_endpoints()
+    assert endpoints == []
 
 
 class FakeInfrastructure:

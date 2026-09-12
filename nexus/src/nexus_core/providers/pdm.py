@@ -1,5 +1,8 @@
 from __future__ import annotations
 
+import asyncio
+import ipaddress
+import socket
 from typing import Any
 from urllib.parse import quote
 
@@ -187,23 +190,42 @@ class PdmProvider:
             if not isinstance(remote_id, str) or not isinstance(nodes, list):
                 continue
             remote_type = remote.get("type")
-            label = f"{remote_id} ({remote_type})" if isinstance(remote_type, str) else remote_id
             for node in nodes:
                 if not isinstance(node, str):
                     continue
-                host = node
-                if "=" in host:
-                    for part in host.split(","):
-                        part = part.strip()
-                        if part.startswith("hostname="):
-                            host = part[len("hostname="):]
-                            break
-                if host.count(":") == 1:
-                    host = host.rsplit(":", 1)[0]
-                host = host.strip()
-                if host:
-                    endpoints.append((host, label))
+                # PropertyString form: the default key ("hostname") is written bare,
+                # e.g. "pve-01,fingerprint=aa:bb:...", not "hostname=pve-01,...".
+                hostname = node.split(",", 1)[0].strip()
+                if hostname.startswith("hostname="):
+                    hostname = hostname[len("hostname="):]
+                if hostname.count(":") == 1:
+                    hostname = hostname.rsplit(":", 1)[0]
+                hostname = hostname.strip()
+                if not hostname:
+                    continue
+                address = await self._resolve_host(hostname)
+                if not address:
+                    continue
+                if hostname == remote_id:
+                    label = f"{remote_id} ({remote_type})" if isinstance(remote_type, str) else remote_id
+                else:
+                    label = f"{remote_id} ({hostname})"
+                endpoints.append((address, label))
         return endpoints
+
+    @staticmethod
+    async def _resolve_host(host: str) -> str | None:
+        """PDM's remote "nodes" list is often a hostname (e.g. cluster node names
+        resolved via /etc/hosts), not a literal IP -- resolve it off the event loop."""
+        try:
+            ipaddress.ip_address(host)
+            return host
+        except ValueError:
+            pass
+        try:
+            return await asyncio.to_thread(socket.gethostbyname, host)
+        except (socket.gaierror, OSError):
+            return None
 
     async def destroy_guest(self, resource: InfrastructureResource, *, purge: bool = True) -> str | None:
         if resource.type == "pve-qemu":
