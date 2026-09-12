@@ -49,7 +49,7 @@ async def test_pdm_guest_static_address_returns_none_for_qemu() -> None:
 @pytest.mark.asyncio
 async def test_pdm_list_infrastructure_endpoints_parses_remote_config() -> None:
     def handler(request: httpx.Request) -> httpx.Response:
-        assert request.url.path == "/api2/json/config/remotes"
+        assert request.url.path == "/api2/json/remotes/remote"
         return httpx.Response(200, json={"data": [
             {"type": "pve", "id": "homelab", "nodes": ["192.168.0.10:8006"], "authid": "root@pam!nexus"},
             {"type": "pbs", "id": "backup", "nodes": ["hostname=192.168.0.11,fingerprint=aa:bb"], "authid": "root@pam!nexus"},

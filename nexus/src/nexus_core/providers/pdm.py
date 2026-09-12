@@ -162,13 +162,13 @@ class PdmProvider:
         """Best-effort: the connection host of every PVE/PBS remote PDM manages.
 
         These are the physical Proxmox and PBS hosts themselves (not guests),
-        read from PDM's own remote configuration (GET /config/remotes) -- a
+        read from PDM's own remote configuration (GET /remotes/remote) -- a
         native PDM management endpoint, already redacted of the API token
         before it's returned, not a proxied PVE call.
         """
         try:
             async with self._client() as client:
-                response = await client.get("/api2/json/config/remotes")
+                response = await client.get("/api2/json/remotes/remote")
                 response.raise_for_status()
                 payload = response.json()
         except httpx.HTTPError:
