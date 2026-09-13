@@ -9,6 +9,12 @@
 
 <section class="card form-card">
   <div><strong>Authorize Nexus's SSH key on a guest</strong><p class="muted small">One-time step for guests Nexus didn't provision itself (so they don't already carry its key). Uses the guest's root password once, over SSH, just to append Nexus's public key to <code>authorized_keys</code> — the password is never stored.</p></div>
+  <div class="field"><label>Guest</label>
+    <select id="enroll-target-select">
+      <option value="">Pick a known guest, or type an address manually below…</option>
+      {% for target in targets %}<option value="{{ target.address or '' }}">{{ target.name }}{% if target.address %} · {{ target.address }}{% else %} (no known address){% endif %}</option>{% endfor %}
+    </select>
+  </div>
   <div class="form-grid three">
     <div class="field"><label>Address or hostname</label><input id="enroll-address" placeholder="192.168.0.10 or web-01.internal"></div>
     <div class="field"><label>Username</label><input id="enroll-username" value="root"></div>
@@ -60,6 +66,10 @@
 (() => {
   const enrollMessage = document.getElementById('enroll-message');
   const showMessage = (el, text, kind) => { el.hidden = false; el.textContent = text; el.className = `operation-message ${kind}`; };
+
+  document.getElementById('enroll-target-select').addEventListener('change', e => {
+    if (e.target.value) document.getElementById('enroll-address').value = e.target.value;
+  });
 
   document.getElementById('enroll-button').addEventListener('click', async () => {
     const address = document.getElementById('enroll-address').value.trim();
