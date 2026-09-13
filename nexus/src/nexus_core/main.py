@@ -7,6 +7,7 @@ from fastapi import FastAPI, HTTPException, Request
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field
 
+from nexus_core.auth import install_auth
 from nexus_core.config import Settings, get_settings
 from nexus_core.provisioning_api import install_provisioning
 from nexus_core.providers.alerting import UnconfiguredAlertingProvider, UnconfiguredMetricsProvider
@@ -178,6 +179,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         yield
 
     app = FastAPI(title="DreamtecLabs Nexus", version="0.9.0", lifespan=lifespan)
+    install_auth(app, settings)
     app.state.provider_service = ProviderService({pdm.name: pdm})
     app.state.monitoring_service = MonitoringService(monitoring_repository, alerting, telemetry_runtime, metrics)
     app.state.infrastructure_service = InfrastructureService(pdm, power_operations_enabled=settings.power_operations_enabled, verification_attempts=settings.power_verification_attempts, verification_interval_seconds=settings.power_verification_interval_seconds, audit_repository=power_audit_repository, decommission_enabled=settings.decommission_enabled, monitoring_service=app.state.monitoring_service)

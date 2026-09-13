@@ -55,6 +55,28 @@ Three sources make up the "used" view; only one of them is actually persisted:
 
 If a manual entry's address is later claimed by a guest or infrastructure host (the manual record went stale), the snapshot surfaces it as a conflict rather than silently picking one side — the live entry still wins in the "used" view, but the stale manual entry stays visible until an operator deletes or edits it.
 
+## Login (OIDC / Authentik)
+
+Nexus Core has no login of its own by default — every page above says so explicitly. `NEXUS_AUTH_ENABLED=true` turns on standard OIDC login (Authentik, or any other compliant provider) without changing how any feature above works; every existing route, flag, and audit log is unaffected. Off by default, so nothing here changes behavior until it's deliberately configured.
+
+**Authentik-side setup:**
+1. Create an OAuth2/OpenID provider: type "Authorization code", redirect URI `https://<your-nexus-host>/auth/callback`, scopes `openid profile email`.
+2. Create an Application bound to that provider and note its **slug** — the issuer URL is `https://<your-authentik-host>/application/o/<slug>/`.
+3. Copy the provider's Client ID and Client Secret.
+
+**Nexus-side setup** (`.env`):
+```
+NEXUS_AUTH_ENABLED=true
+NEXUS_OIDC_ISSUER=https://auth.dreamteclabs.com/application/o/nexus/
+NEXUS_OIDC_CLIENT_ID=...
+NEXUS_OIDC_CLIENT_SECRET=...
+```
+`NEXUS_OIDC_REDIRECT_URL` is optional — Nexus infers `https://<host>/auth/callback` from the incoming request by default; set it explicitly only if Nexus sits behind something that changes the scheme/host PDM sees (a reverse proxy terminating TLS, a tunnel), and make sure it exactly matches what's configured on the Authentik provider.
+
+**How it works:** `install_auth()` (`nexus_core/auth.py`) registers `authlib`'s Starlette OIDC client against Authentik's discovery document, adds `/login`, `/auth/callback` and `/logout`, and — only when enabled — a `RequireLoginMiddleware` that fails closed: every path needs a session unless explicitly allow-listed (`/login`, `/auth/callback`, `/logout`, `/health`, `/static/*`). An HTML page redirects to `/login?next=<path>`; an `/api/*` call gets a `401` JSON body instead, since a redirect makes no sense for `fetch()`. `SessionMiddleware`'s signing key is generated once at `${NEXUS_DATA_DIR}/session-secret.key` (mode 600), the same lazy on-disk-once pattern as the Nexus SSH key and the Vault's encryption key.
+
+This is real authentication, not just a label on the topbar: it's the same mechanism the user asked for specifically to close the gap called out on every Power/Decommission/Fleet/Vault page above.
+
 ## Fleet Ops
 
 `/fleet` and `POST /api/v1/fleet/{enroll-key,run}` are a lightweight, Ansible-style alternative for pushing a change across existing guests Nexus didn't necessarily provision itself — deliberately kept out of `deploy.sh`, since the whole point is to add a new task without touching Nexus Core or restarting it.
@@ -89,7 +111,7 @@ Encryption uses `cryptography.fernet.Fernet` — already a transitive dependency
 
 A secret can be pasted as text or attached as a file (certificates, key files, anything) — the browser reads the file as base64 and stores it under the same encrypted `value`, plus the original filename. Revealing a file-backed secret triggers a download of the original bytes instead of showing text inline; the file identity can't be changed later, only its notes (delete and re-add to replace the file itself).
 
-**This is encryption at rest, not an access-control boundary.** Nexus Core has no login of its own — anyone who can reach a page here can reach `/vault` and click Reveal, exactly as they could today with the Power Center or Decommission. The vault protects secrets from disk theft, backups, and git, not from network access to Nexus itself.
+**This is encryption at rest, not an access-control boundary by itself.** Without `NEXUS_AUTH_ENABLED=true` (see Login above), anyone who can reach a page here can reach `/vault` and click Reveal, exactly as they could today with the Power Center or Decommission — the vault protects secrets from disk theft, backups, and git, not from network access to an unauthenticated Nexus.
 
 ## Visual system
 

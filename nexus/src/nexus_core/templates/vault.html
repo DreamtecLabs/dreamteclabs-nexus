@@ -5,10 +5,12 @@
   <div><div class="eyebrow">Security</div><h1>Vault</h1><p class="muted">Encrypted-at-rest storage for keys, certificates and other secrets — a home for what's currently scattered across <code>.env</code> files and notes.</p></div>
 </section>
 
+{% if not request.session.get('user') %}
 <section class="card warning-card">
   <strong>Nexus Core has no login of its own.</strong>
-  <p class="muted small">Encryption at rest keeps a secret safe on disk, in backups, and out of <code>.env</code>/git — but revealing one through this page is only as protected as reaching Nexus itself is. Treat this like any other page here until Nexus has its own authentication.</p>
+  <p class="muted small">Encryption at rest keeps a secret safe on disk, in backups, and out of <code>.env</code>/git — but revealing one through this page is only as protected as reaching Nexus itself is. Set <code>NEXUS_AUTH_ENABLED=true</code> (see the README's Login section) to put every page here behind Authentik or any OIDC provider.</p>
 </section>
+{% endif %}
 
 <section class="card form-card">
   <div><strong>Add a secret</strong><p class="muted small">Name must be unique. The value is encrypted before it ever touches disk.</p></div>

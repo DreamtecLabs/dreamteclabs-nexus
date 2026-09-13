@@ -93,7 +93,15 @@
         <button class="icon-btn" type="button" aria-label="Notifications">
           <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M6 8a6 6 0 0 1 12 0c0 5 2 6 2 6H4s2-1 2-6Z"/><path d="M10 21a2 2 0 0 0 4 0"/></svg>
         </button>
-        <div class="profile"><span class="avatar">CK</span><span><strong>Claudio Kaist</strong><small>Administrator</small></span></div>
+        {% set current_user = request.session.get('user') %}
+        <div class="profile">
+          {% if current_user %}
+          <span class="avatar">{{ (current_user.name or current_user.email or '?')[:2]|upper }}</span><span><strong>{{ current_user.name or current_user.email }}</strong><small>{{ current_user.email or '' }}</small></span>
+          {% else %}
+          <span class="avatar">CK</span><span><strong>Claudio Kaist</strong><small>Administrator</small></span>
+          {% endif %}
+        </div>
+        {% if current_user %}<a class="icon-btn" href="/logout" aria-label="Log out" title="Log out"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4"/><path d="M16 17l5-5-5-5"/><path d="M21 12H9"/></svg></a>{% endif %}
       </div>
     </header>
     <main class="page">{% block content %}{% endblock %}</main>

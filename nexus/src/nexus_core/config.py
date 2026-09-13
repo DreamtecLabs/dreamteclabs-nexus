@@ -47,6 +47,11 @@ class Settings(BaseSettings):
     fleet_operations_enabled: bool = Field(default=False, alias="NEXUS_FLEET_OPERATIONS_ENABLED")
     fleet_scripts_dir: Path = Field(default=Path("/opt/dreamteclabs-nexus/services"), alias="NEXUS_FLEET_SCRIPTS_DIR")
     backup_stale_after_hours: int = Field(default=48, ge=1, le=720, alias="NEXUS_BACKUP_STALE_AFTER_HOURS")
+    auth_enabled: bool = Field(default=False, alias="NEXUS_AUTH_ENABLED")
+    oidc_issuer: str | None = Field(default=None, alias="NEXUS_OIDC_ISSUER")
+    oidc_client_id: str | None = Field(default=None, alias="NEXUS_OIDC_CLIENT_ID")
+    oidc_client_secret: str | None = Field(default=None, alias="NEXUS_OIDC_CLIENT_SECRET")
+    oidc_redirect_url: str | None = Field(default=None, alias="NEXUS_OIDC_REDIRECT_URL")
 
     @property
     def ssh_bootstrap_key_path(self) -> Path:
@@ -91,6 +96,10 @@ class Settings(BaseSettings):
     @property
     def vault_audit_path(self) -> Path:
         return self.data_dir / "vault-audit.jsonl"
+
+    @property
+    def session_secret_path(self) -> Path:
+        return self.data_dir / "session-secret.key"
 
 
 @lru_cache
