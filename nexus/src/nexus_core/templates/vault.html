@@ -1,0 +1,147 @@
+{% extends "base.html" %}
+{% block title %}Vault · DreamtecLabs Nexus{% endblock %}
+{% block content %}
+<section class="page-head">
+  <div><div class="eyebrow">Security</div><h1>Vault</h1><p class="muted">Encrypted-at-rest storage for keys, certificates and other secrets — a home for what's currently scattered across <code>.env</code> files and notes.</p></div>
+</section>
+
+<section class="card warning-card">
+  <strong>Nexus Core has no login of its own.</strong>
+  <p class="muted small">Encryption at rest keeps a secret safe on disk, in backups, and out of <code>.env</code>/git — but revealing one through this page is only as protected as reaching Nexus itself is. Treat this like any other page here until Nexus has its own authentication.</p>
+</section>
+
+<section class="card form-card">
+  <div><strong>Add a secret</strong><p class="muted small">Name must be unique. The value is encrypted before it ever touches disk.</p></div>
+  <div class="form-grid three">
+    <div class="field"><label>Name</label><input id="vault-name" placeholder="signoz-api-key"></div>
+    <div class="field"><label>Type</label><input id="vault-type" list="vault-type-options" value="generic" placeholder="generic"><datalist id="vault-type-options"><option value="generic"><option value="password"><option value="api-token"><option value="ssh-key"><option value="certificate"></datalist></div>
+    <div class="field"><label>Notes</label><input id="vault-notes" placeholder="Optional"></div>
+  </div>
+  <div class="field full"><label>Value</label><textarea id="vault-value" rows="3" placeholder="Paste the secret, key, or certificate here…"></textarea></div>
+  <button class="button" id="vault-save">Add secret</button>
+  <p id="vault-message" class="operation-message" hidden></p>
+</section>
+
+<section class="card table-card">
+  <div class="table-wrap">
+    <table>
+      <thead><tr><th>Name</th><th>Type</th><th>Notes</th><th>Updated</th><th>Actions</th></tr></thead>
+      <tbody>
+      {% for secret in secrets %}
+      <tr data-name="{{ secret.name }}">
+        <td><code>{{ secret.name }}</code></td>
+        <td><span class="pill">{{ secret.type }}</span></td>
+        <td class="muted small">{{ secret.notes or "—" }}</td>
+        <td class="muted small">{{ secret.updated_at }}</td>
+        <td class="vault-actions">
+          <button class="action-button reveal-secret" data-name="{{ secret.name }}">Reveal</button>
+          <button class="action-button danger delete-secret" data-name="{{ secret.name }}">Delete</button>
+        </td>
+      </tr>
+      <tr class="reveal-row" id="reveal-{{ secret.name|replace(' ', '-') }}" hidden><td colspan="5"><code class="reveal-value"></code> <button class="action-button copy-secret" hidden>Copy</button></td></tr>
+      {% else %}
+      <tr><td class="empty" colspan="5">No secrets stored yet.</td></tr>
+      {% endfor %}
+      </tbody>
+    </table>
+  </div>
+</section>
+
+{% if audit %}
+<section class="section-head"><div><div class="eyebrow">History</div><h2>Recent activity</h2></div></section>
+<section class="card table-card">
+  <div class="table-wrap">
+    <table>
+      <thead><tr><th>When</th><th>Secret</th><th>Action</th></tr></thead>
+      <tbody>
+      {% for entry in audit %}<tr><td class="muted small">{{ entry.timestamp }}</td><td><code>{{ entry.name }}</code></td><td>{{ entry.action }}</td></tr>{% endfor %}
+      </tbody>
+    </table>
+  </div>
+</section>
+{% endif %}
+
+<script>
+(() => {
+  const message = document.getElementById('vault-message');
+  const show = (text, kind) => { message.hidden = false; message.textContent = text; message.className = `operation-message ${kind}`; };
+
+  document.getElementById('vault-save').addEventListener('click', async () => {
+    const name = document.getElementById('vault-name').value.trim();
+    const type = document.getElementById('vault-type').value.trim() || 'generic';
+    const notes = document.getElementById('vault-notes').value.trim();
+    const value = document.getElementById('vault-value').value;
+    if (!name || !value) return show('Name and value are required.', 'error');
+    try {
+      const response = await fetch('/api/v1/vault', {
+        method: 'POST',
+        headers: {'Content-Type': 'application/json'},
+        body: JSON.stringify({name, type, notes, value}),
+      });
+      const data = await response.json();
+      if (!response.ok) throw new Error(data.detail || `HTTP ${response.status}`);
+      show(`Stored "${name}".`, 'success');
+      window.setTimeout(() => window.location.reload(), 500);
+    } catch (error) {
+      show(String(error.message || error), 'error');
+    }
+  });
+
+  const copyToClipboard = async (text) => {
+    try {
+      await navigator.clipboard.writeText(text);
+      return true;
+    } catch (e) {
+      const helper = document.createElement('textarea');
+      helper.value = text;
+      helper.style.position = 'fixed';
+      helper.style.opacity = '0';
+      document.body.appendChild(helper);
+      helper.select();
+      let ok = false;
+      try { ok = document.execCommand('copy'); } catch (err) { ok = false; }
+      document.body.removeChild(helper);
+      return ok;
+    }
+  };
+
+  document.querySelectorAll('.reveal-secret').forEach(button => button.addEventListener('click', async () => {
+    const name = button.dataset.name;
+    const row = document.getElementById(`reveal-${name.replace(/ /g, '-')}`);
+    if (!row.hidden) { row.hidden = true; return; }
+    button.disabled = true;
+    try {
+      const response = await fetch(`/api/v1/vault/${encodeURIComponent(name)}/reveal`, {method: 'POST'});
+      const data = await response.json();
+      if (!response.ok) throw new Error(data.detail || `HTTP ${response.status}`);
+      const valueEl = row.querySelector('.reveal-value');
+      const copyButton = row.querySelector('.copy-secret');
+      valueEl.textContent = data.value;
+      copyButton.hidden = false;
+      copyButton.onclick = async () => { copyButton.textContent = (await copyToClipboard(data.value)) ? 'Copied!' : 'Select the text and copy manually'; };
+      row.hidden = false;
+    } catch (error) {
+      show(String(error.message || error), 'error');
+    } finally {
+      button.disabled = false;
+    }
+  }));
+
+  document.querySelectorAll('.delete-secret').forEach(button => button.addEventListener('click', async () => {
+    const name = button.dataset.name;
+    if (!confirm(`Delete the secret "${name}"? This cannot be undone.`)) return;
+    button.disabled = true;
+    try {
+      const response = await fetch(`/api/v1/vault/${encodeURIComponent(name)}`, {method: 'DELETE'});
+      const data = await response.json();
+      if (!response.ok) throw new Error(data.detail || `HTTP ${response.status}`);
+      show(`Deleted "${name}".`, 'success');
+      window.setTimeout(() => window.location.reload(), 500);
+    } catch (error) {
+      button.disabled = false;
+      show(String(error.message || error), 'error');
+    }
+  }));
+})();
+</script>
+{% endblock %}

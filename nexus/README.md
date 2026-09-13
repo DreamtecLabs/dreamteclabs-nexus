@@ -73,6 +73,14 @@ Guests Nexus didn't provision itself don't carry its SSH key yet. `SshBootstrapS
 
 `/fleet`'s target list is every running `pve-lxc` guest, with its address pre-filled from `PdmProvider.guest_static_address()` when known (blank/editable otherwise — a guest on DHCP still needs a reachable address typed in by hand today). QEMU guests are out of scope for the same reason they're out of scope for OTel bootstrap: no cloud-init, no guaranteed SSH.
 
+## Vault
+
+`/vault` and `POST/GET/PUT/DELETE /api/v1/vault(/{name}(/reveal))` are encrypted-at-rest storage for keys, certificates and other secrets — a home for what's otherwise scattered across `.env` files and notes. v1 is purely new storage: nothing already in `.env` (the PDM token, Cloudflare token, Nexus's own SSH key) has been migrated to it, so those still work exactly as before.
+
+Encryption uses `cryptography.fernet.Fernet` — already a transitive dependency via `asyncssh`, so no new package was needed. `VaultService.ensure_vault_key()` generates a key once at `${NEXUS_DATA_DIR}/vault.key` (mode 600, same lazy-on-first-use pattern as `SshBootstrapService.ensure_keypair()`); `JsonVaultRepository` only ever stores and returns ciphertext (`${NEXUS_DATA_DIR}/vault.json`, mode 600) — encryption and decryption both happen in `VaultService`, never in the repository. Every create/update/delete/reveal is appended to `${NEXUS_DATA_DIR}/vault-audit.jsonl` and shown on the page, so there's a record of when a secret was last actually read, not just changed.
+
+**This is encryption at rest, not an access-control boundary.** Nexus Core has no login of its own — anyone who can reach a page here can reach `/vault` and click Reveal, exactly as they could today with the Power Center or Decommission. The vault protects secrets from disk theft, backups, and git, not from network access to Nexus itself.
+
 ## Visual system
 
 The standalone Nexus UI is light-first: white surfaces, dark readable text and colorful accents/statuses. Dark application surfaces are not part of the vNext visual baseline.

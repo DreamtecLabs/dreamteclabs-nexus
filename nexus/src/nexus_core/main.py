@@ -2,6 +2,7 @@ from contextlib import asynccontextmanager
 from dataclasses import asdict
 from pathlib import Path
 
+from cryptography.fernet import Fernet
 from fastapi import FastAPI, HTTPException, Request
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field
@@ -22,6 +23,8 @@ from nexus_core.repositories.fleet_scripts import FilesystemFleetScriptRepositor
 from nexus_core.repositories.ipam_json import JsonIpamRepository
 from nexus_core.repositories.monitoring_json import JsonMonitoringRepository
 from nexus_core.repositories.power_audit_jsonl import JsonlPowerAuditRepository
+from nexus_core.repositories.vault_audit_jsonl import JsonlVaultAuditRepository
+from nexus_core.repositories.vault_json import JsonVaultRepository
 from nexus_core.services.cloudflare import CloudflareOperationsDisabled, CloudflareService
 from nexus_core.services.domains import DomainOperationsDisabled, DomainService, DomainVerificationFailed
 from nexus_core.services.fleet import FleetOperationsDisabled, FleetService
@@ -30,6 +33,7 @@ from nexus_core.services.ipam import IpamService
 from nexus_core.services.monitoring import MonitoringService
 from nexus_core.services.providers import ProviderService
 from nexus_core.services.ssh_bootstrap import SshBootstrapService
+from nexus_core.services.vault import VaultService, ensure_vault_key
 from nexus_core.web import router as web_router
 
 
@@ -86,6 +90,18 @@ class FleetRunInput(BaseModel):
     script: str = Field(min_length=1, max_length=255)
     targets: list[FleetRunTargetInput] = Field(min_length=1, max_length=200)
     params: dict[str, str] = Field(default_factory=dict)
+
+
+class VaultSecretInput(BaseModel):
+    name: str = Field(min_length=1, max_length=80)
+    value: str = Field(min_length=1, max_length=16384)
+    type: str = Field(default="generic", max_length=32)
+    notes: str = Field(default="", max_length=500)
+
+
+class VaultSecretUpdateInput(BaseModel):
+    value: str | None = Field(default=None, max_length=16384)
+    notes: str | None = Field(default=None, max_length=500)
 
 
 class DomainValidateInput(BaseModel):
@@ -166,6 +182,8 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     app.state.ipam_service = IpamService(JsonIpamRepository(settings.ipam_manual_path), app.state.infrastructure_service, pdm, cidr=settings.ipam_cidr, dhcp_range_start=settings.ipam_dhcp_range_start, dhcp_range_end=settings.ipam_dhcp_range_end)
     fleet_ssh_bootstrap = SshBootstrapService(key_path=settings.ssh_bootstrap_key_path, attempts=settings.ssh_bootstrap_attempts, interval_seconds=settings.ssh_bootstrap_interval_seconds, run_timeout_seconds=settings.ssh_bootstrap_run_timeout_seconds)
     app.state.fleet_service = FleetService(FilesystemFleetScriptRepository(settings.fleet_scripts_dir), app.state.infrastructure_service, pdm, fleet_ssh_bootstrap, enabled=settings.fleet_operations_enabled)
+    vault_cipher = Fernet(ensure_vault_key(settings.vault_key_path))
+    app.state.vault_service = VaultService(JsonVaultRepository(settings.vault_data_path), vault_cipher, JsonlVaultAuditRepository(settings.vault_audit_path))
     app.state.domain_service = DomainService(domain_repository, domain_diagnostics, domain_orchestrator, domain_audit, operations_enabled=settings.domains_operations_enabled, verification_attempts=settings.domains_verification_attempts, verification_interval_seconds=settings.domains_verification_interval_seconds)
     app.state.cloudflare_service = CloudflareService(cloudflare, domain_audit, operations_enabled=settings.domains_operations_enabled)
     install_provisioning(app, settings, app.state.infrastructure_service, app.state.monitoring_service)
@@ -302,6 +320,44 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         except KeyError as exc:
             raise HTTPException(status_code=404, detail=f"unknown script: {exc}") from exc
         return {"results": [asdict(result) for result in results]}
+
+    @app.get("/api/v1/vault")
+    async def vault_list(request: Request) -> dict[str, object]:
+        return {"secrets": [asdict(secret) for secret in request.app.state.vault_service.list_secrets()]}
+
+    @app.post("/api/v1/vault")
+    async def vault_create(payload: VaultSecretInput, request: Request) -> dict[str, object]:
+        try:
+            meta = request.app.state.vault_service.create_secret(**payload.model_dump())
+        except ValueError as exc:
+            raise HTTPException(status_code=422, detail=str(exc)) from exc
+        return asdict(meta)
+
+    @app.put("/api/v1/vault/{name}")
+    async def vault_update(name: str, payload: VaultSecretUpdateInput, request: Request) -> dict[str, object]:
+        try:
+            meta = request.app.state.vault_service.update_secret(name, **payload.model_dump())
+        except KeyError as exc:
+            raise HTTPException(status_code=404, detail=str(exc)) from exc
+        return asdict(meta)
+
+    @app.post("/api/v1/vault/{name}/reveal")
+    async def vault_reveal(name: str, request: Request) -> dict[str, str]:
+        try:
+            value = request.app.state.vault_service.reveal_secret(name)
+        except KeyError as exc:
+            raise HTTPException(status_code=404, detail=str(exc)) from exc
+        except RuntimeError as exc:
+            raise HTTPException(status_code=500, detail=str(exc)) from exc
+        return {"name": name, "value": value}
+
+    @app.delete("/api/v1/vault/{name}")
+    async def vault_delete(name: str, request: Request) -> dict[str, str]:
+        try:
+            request.app.state.vault_service.delete_secret(name)
+        except KeyError as exc:
+            raise HTTPException(status_code=404, detail=str(exc)) from exc
+        return {"name": name, "status": "deleted"}
 
     @app.get("/api/v1/monitoring/targets")
     async def monitoring_targets(request: Request) -> dict[str, object]:

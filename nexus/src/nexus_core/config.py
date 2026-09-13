@@ -79,6 +79,18 @@ class Settings(BaseSettings):
     def ipam_manual_path(self) -> Path:
         return self.data_dir / "ipam-manual.json"
 
+    @property
+    def vault_key_path(self) -> Path:
+        return self.data_dir / "vault.key"
+
+    @property
+    def vault_data_path(self) -> Path:
+        return self.data_dir / "vault.json"
+
+    @property
+    def vault_audit_path(self) -> Path:
+        return self.data_dir / "vault-audit.jsonl"
+
 
 @lru_cache
 def get_settings() -> Settings:

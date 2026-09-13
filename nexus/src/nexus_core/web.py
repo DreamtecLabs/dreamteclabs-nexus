@@ -131,6 +131,12 @@ async def fleet(request: Request) -> HTMLResponse:
     return _templates.TemplateResponse(request=request, name="fleet.html", context={"scripts": service.list_scripts(), "targets": targets, "enabled": service.enabled})
 
 
+@router.get("/vault", response_class=HTMLResponse)
+async def vault(request: Request) -> HTMLResponse:
+    service = request.app.state.vault_service
+    return _templates.TemplateResponse(request=request, name="vault.html", context={"secrets": service.list_secrets(), "audit": service.list_audit(10)})
+
+
 @router.get("/infrastructure/estate", response_class=HTMLResponse)
 async def estate(request: Request) -> HTMLResponse:
     try: remotes = await request.app.state.infrastructure_service.estate_summary()
