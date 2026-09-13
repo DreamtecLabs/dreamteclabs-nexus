@@ -41,7 +41,7 @@ class VaultService:
     def list_audit(self, limit: int = 25) -> tuple[VaultAuditEntry, ...]:
         return self._audit.list_recent(limit) if self._audit is not None else ()
 
-    def create_secret(self, *, name: str, value: str, type: str = "generic", notes: str = "") -> VaultSecretMeta:
+    def create_secret(self, *, name: str, value: str, type: str = "generic", notes: str = "", filename: str | None = None) -> VaultSecretMeta:
         name = name.strip()
         if not name:
             raise ValueError("name is required")
@@ -50,7 +50,7 @@ class VaultService:
         if self._repository.get_secret(name) is not None:
             raise ValueError(f"a secret named '{name}' already exists")
         now = _now()
-        record = VaultSecretRecord(name=name, type=type.strip() or "generic", notes=notes.strip(), created_at=now, updated_at=now, ciphertext=self._encrypt(value))
+        record = VaultSecretRecord(name=name, type=type.strip() or "generic", notes=notes.strip(), created_at=now, updated_at=now, filename=(filename.strip() or None) if filename else None, ciphertext=self._encrypt(value))
         self._repository.upsert_secret(record)
         self._log(name, "create")
         return self._meta(record)
@@ -65,6 +65,7 @@ class VaultService:
             notes=existing.notes if notes is None else notes.strip(),
             created_at=existing.created_at,
             updated_at=_now(),
+            filename=existing.filename,
             ciphertext=self._encrypt(value) if value else existing.ciphertext,
         )
         self._repository.upsert_secret(record)
@@ -75,7 +76,10 @@ class VaultService:
         self._repository.delete_secret(name)
         self._log(name, "delete")
 
-    def reveal_secret(self, name: str) -> str:
+    def reveal_secret(self, name: str) -> tuple[str, str | None]:
+        """Returns (value, filename). filename is set when the secret was stored
+        as a file upload -- the caller should offer it back as a download instead
+        of displaying it inline (value is base64 in that case, plain text otherwise)."""
         record = self._repository.get_secret(name)
         if record is None:
             raise KeyError(name)
@@ -84,7 +88,7 @@ class VaultService:
         except InvalidToken as exc:
             raise RuntimeError("stored secret could not be decrypted -- the vault key may have changed") from exc
         self._log(name, "reveal")
-        return value
+        return value, record.filename
 
     def _encrypt(self, value: str) -> str:
         return self._cipher.encrypt(value.encode("utf-8")).decode("ascii")
@@ -95,4 +99,4 @@ class VaultService:
 
     @staticmethod
     def _meta(record: VaultSecretRecord) -> VaultSecretMeta:
-        return VaultSecretMeta(name=record.name, type=record.type, notes=record.notes, created_at=record.created_at, updated_at=record.updated_at)
+        return VaultSecretMeta(name=record.name, type=record.type, notes=record.notes, created_at=record.created_at, updated_at=record.updated_at, filename=record.filename)

@@ -79,6 +79,8 @@ Guests Nexus didn't provision itself don't carry its SSH key yet. `SshBootstrapS
 
 Encryption uses `cryptography.fernet.Fernet` — already a transitive dependency via `asyncssh`, so no new package was needed. `VaultService.ensure_vault_key()` generates a key once at `${NEXUS_DATA_DIR}/vault.key` (mode 600, same lazy-on-first-use pattern as `SshBootstrapService.ensure_keypair()`); `JsonVaultRepository` only ever stores and returns ciphertext (`${NEXUS_DATA_DIR}/vault.json`, mode 600) — encryption and decryption both happen in `VaultService`, never in the repository. Every create/update/delete/reveal is appended to `${NEXUS_DATA_DIR}/vault-audit.jsonl` and shown on the page, so there's a record of when a secret was last actually read, not just changed.
 
+A secret can be pasted as text or attached as a file (certificates, key files, anything) — the browser reads the file as base64 and stores it under the same encrypted `value`, plus the original filename. Revealing a file-backed secret triggers a download of the original bytes instead of showing text inline; the file identity can't be changed later, only its notes (delete and re-add to replace the file itself).
+
 **This is encryption at rest, not an access-control boundary.** Nexus Core has no login of its own — anyone who can reach a page here can reach `/vault` and click Reveal, exactly as they could today with the Power Center or Decommission. The vault protects secrets from disk theft, backups, and git, not from network access to Nexus itself.
 
 ## Visual system

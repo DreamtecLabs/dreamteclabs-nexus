@@ -20,12 +20,15 @@ class JsonVaultRepository:
     def list_secrets(self) -> list[VaultSecretMeta]:
         with self._lock:
             payload = self._read()
-        return [VaultSecretMeta(name=item["name"], type=item["type"], notes=item["notes"], created_at=item["created_at"], updated_at=item["updated_at"]) for item in payload["secrets"].values()]
+        return [VaultSecretMeta(name=item["name"], type=item["type"], notes=item["notes"], created_at=item["created_at"], updated_at=item["updated_at"], filename=item.get("filename")) for item in payload["secrets"].values()]
 
     def get_secret(self, name: str) -> VaultSecretRecord | None:
         with self._lock:
             raw = self._read()["secrets"].get(name)
-        return VaultSecretRecord(**raw) if raw is not None else None
+        if raw is None:
+            return None
+        raw.setdefault("filename", None)
+        return VaultSecretRecord(**raw)
 
     def upsert_secret(self, record: VaultSecretRecord) -> None:
         with self._lock:

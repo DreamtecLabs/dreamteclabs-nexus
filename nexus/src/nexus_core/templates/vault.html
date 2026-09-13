@@ -18,6 +18,7 @@
     <div class="field"><label>Notes</label><input id="vault-notes" placeholder="Optional"></div>
   </div>
   <div class="field full"><label>Value</label><textarea id="vault-value" rows="3" placeholder="Paste the secret, key, or certificate here…"></textarea></div>
+  <div class="field full"><label>…or attach a file</label><input type="file" id="vault-file"><span class="hint">A certificate, key file, or any other file — stored as an encrypted blob and handed back as a download on Reveal. Overrides the pasted value above when both are set.</span></div>
   <button class="button" id="vault-save">Add secret</button>
   <p id="vault-message" class="operation-message" hidden></p>
 </section>
@@ -29,12 +30,12 @@
       <tbody>
       {% for secret in secrets %}
       <tr data-name="{{ secret.name }}">
-        <td><code>{{ secret.name }}</code></td>
+        <td><code>{{ secret.name }}</code>{% if secret.filename %}<div class="muted small">📎 {{ secret.filename }}</div>{% endif %}</td>
         <td><span class="pill">{{ secret.type }}</span></td>
         <td class="muted small">{{ secret.notes or "—" }}</td>
         <td class="muted small">{{ secret.updated_at }}</td>
         <td class="vault-actions">
-          <button class="action-button reveal-secret" data-name="{{ secret.name }}">Reveal</button>
+          <button class="action-button reveal-secret" data-name="{{ secret.name }}">{{ 'Download' if secret.filename else 'Reveal' }}</button>
           <button class="action-button danger delete-secret" data-name="{{ secret.name }}">Delete</button>
         </td>
       </tr>
@@ -66,17 +67,31 @@
   const message = document.getElementById('vault-message');
   const show = (text, kind) => { message.hidden = false; message.textContent = text; message.className = `operation-message ${kind}`; };
 
+  const fileToBase64 = file => new Promise((resolve, reject) => {
+    const reader = new FileReader();
+    reader.onload = () => resolve(reader.result.split(',')[1]);
+    reader.onerror = () => reject(new Error('Could not read the file.'));
+    reader.readAsDataURL(file);
+  });
+
   document.getElementById('vault-save').addEventListener('click', async () => {
     const name = document.getElementById('vault-name').value.trim();
     const type = document.getElementById('vault-type').value.trim() || 'generic';
     const notes = document.getElementById('vault-notes').value.trim();
-    const value = document.getElementById('vault-value').value;
+    const file = document.getElementById('vault-file').files[0];
+    let value, filename = null;
+    try {
+      if (file) { value = await fileToBase64(file); filename = file.name; }
+      else { value = document.getElementById('vault-value').value; }
+    } catch (error) {
+      return show(String(error.message || error), 'error');
+    }
     if (!name || !value) return show('Name and value are required.', 'error');
     try {
       const response = await fetch('/api/v1/vault', {
         method: 'POST',
         headers: {'Content-Type': 'application/json'},
-        body: JSON.stringify({name, type, notes, value}),
+        body: JSON.stringify({name, type, notes, value, filename}),
       });
       const data = await response.json();
       if (!response.ok) throw new Error(data.detail || `HTTP ${response.status}`);
@@ -86,6 +101,18 @@
       show(String(error.message || error), 'error');
     }
   });
+
+  const downloadBase64 = (base64, filename) => {
+    const bytes = Uint8Array.from(atob(base64), c => c.charCodeAt(0));
+    const url = URL.createObjectURL(new Blob([bytes]));
+    const link = document.createElement('a');
+    link.href = url;
+    link.download = filename;
+    document.body.appendChild(link);
+    link.click();
+    link.remove();
+    URL.revokeObjectURL(url);
+  };
 
   const copyToClipboard = async (text) => {
     try {
@@ -114,12 +141,16 @@
       const response = await fetch(`/api/v1/vault/${encodeURIComponent(name)}/reveal`, {method: 'POST'});
       const data = await response.json();
       if (!response.ok) throw new Error(data.detail || `HTTP ${response.status}`);
-      const valueEl = row.querySelector('.reveal-value');
-      const copyButton = row.querySelector('.copy-secret');
-      valueEl.textContent = data.value;
-      copyButton.hidden = false;
-      copyButton.onclick = async () => { copyButton.textContent = (await copyToClipboard(data.value)) ? 'Copied!' : 'Select the text and copy manually'; };
-      row.hidden = false;
+      if (data.filename) {
+        downloadBase64(data.value, data.filename);
+      } else {
+        const valueEl = row.querySelector('.reveal-value');
+        const copyButton = row.querySelector('.copy-secret');
+        valueEl.textContent = data.value;
+        copyButton.hidden = false;
+        copyButton.onclick = async () => { copyButton.textContent = (await copyToClipboard(data.value)) ? 'Copied!' : 'Select the text and copy manually'; };
+        row.hidden = false;
+      }
     } catch (error) {
       show(String(error.message || error), 'error');
     } finally {

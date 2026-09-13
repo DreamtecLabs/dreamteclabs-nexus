@@ -69,11 +69,38 @@ def test_reveal_secret_returns_original_value_and_logs_audit(tmp_path: Path) -> 
     service = _service(tmp_path)
     service.create_secret(name="cf-token", value="cf-abc123", type="api-token")
 
-    value = service.reveal_secret("cf-token")
+    value, filename = service.reveal_secret("cf-token")
 
     assert value == "cf-abc123"
+    assert filename is None
     actions = [entry.action for entry in service.list_audit()]
     assert actions == ["reveal", "create"]
+
+
+def test_create_secret_with_filename_round_trips_through_reveal(tmp_path: Path) -> None:
+    service = _service(tmp_path)
+    base64_content = "LS0tLS1CRUdJTi0tLS0t"  # arbitrary base64, stands in for a real cert/key upload
+    meta = service.create_secret(name="prod-cert", value=base64_content, type="certificate", filename="prod.pem")
+
+    assert meta.filename == "prod.pem"
+    assert service.list_secrets()[0].filename == "prod.pem"
+    value, filename = service.reveal_secret("prod-cert")
+    assert value == base64_content
+    assert filename == "prod.pem"
+
+
+def test_create_secret_without_filename_has_none(tmp_path: Path) -> None:
+    service = _service(tmp_path)
+    meta = service.create_secret(name="plain", value="just text")
+    assert meta.filename is None
+    assert service.reveal_secret("plain")[1] is None
+
+
+def test_update_secret_keeps_filename_unchanged(tmp_path: Path) -> None:
+    service = _service(tmp_path)
+    service.create_secret(name="cert", value="v1", filename="cert.pem")
+    updated = service.update_secret("cert", notes="rotated")
+    assert updated.filename == "cert.pem"
 
 
 def test_reveal_missing_secret_raises_key_error(tmp_path: Path) -> None:
@@ -90,7 +117,7 @@ def test_update_secret_rotates_value_and_keeps_created_at(tmp_path: Path) -> Non
 
     assert updated.created_at == created.created_at
     assert updated.updated_at != created.updated_at
-    assert service.reveal_secret("rotating") == "v2"
+    assert service.reveal_secret("rotating")[0] == "v2"
 
 
 def test_update_secret_notes_only_keeps_value(tmp_path: Path) -> None:
@@ -99,7 +126,7 @@ def test_update_secret_notes_only_keeps_value(tmp_path: Path) -> None:
 
     service.update_secret("s", notes="new note")
 
-    assert service.reveal_secret("s") == "unchanged"
+    assert service.reveal_secret("s")[0] == "unchanged"
     assert service.list_secrets()[0].notes == "new note"
 
 
@@ -155,7 +182,22 @@ def test_vault_reveal_route_returns_plaintext(tmp_path: Path) -> None:
         client.post("/api/v1/vault", json={"name": "k", "value": "plaintext-value"})
         response = client.post("/api/v1/vault/k/reveal")
     assert response.status_code == 200
-    assert response.json()["value"] == "plaintext-value"
+    body = response.json()
+    assert body["value"] == "plaintext-value"
+    assert body["filename"] is None
+
+
+def test_vault_create_and_reveal_route_with_file_attachment(tmp_path: Path) -> None:
+    app = _app(tmp_path)
+    with TestClient(app) as client:
+        create_response = client.post("/api/v1/vault", json={"name": "cert", "value": "ZmFrZS1jZXJ0LWJ5dGVz", "type": "certificate", "filename": "server.pem"})
+        assert create_response.status_code == 200
+        assert create_response.json()["filename"] == "server.pem"
+        reveal_response = client.post("/api/v1/vault/cert/reveal")
+    assert reveal_response.status_code == 200
+    body = reveal_response.json()
+    assert body["value"] == "ZmFrZS1jZXJ0LWJ5dGVz"
+    assert body["filename"] == "server.pem"
 
 
 def test_vault_reveal_route_missing_secret_404(tmp_path: Path) -> None:

@@ -11,6 +11,7 @@ class VaultSecretMeta:
     notes: str
     created_at: str
     updated_at: str
+    filename: str | None
 
 
 @dataclass(frozen=True, slots=True)

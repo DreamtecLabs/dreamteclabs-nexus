@@ -94,13 +94,14 @@ class FleetRunInput(BaseModel):
 
 class VaultSecretInput(BaseModel):
     name: str = Field(min_length=1, max_length=80)
-    value: str = Field(min_length=1, max_length=16384)
+    value: str = Field(min_length=1, max_length=2_000_000)
     type: str = Field(default="generic", max_length=32)
     notes: str = Field(default="", max_length=500)
+    filename: str | None = Field(default=None, max_length=255)
 
 
 class VaultSecretUpdateInput(BaseModel):
-    value: str | None = Field(default=None, max_length=16384)
+    value: str | None = Field(default=None, max_length=2_000_000)
     notes: str | None = Field(default=None, max_length=500)
 
 
@@ -342,14 +343,14 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         return asdict(meta)
 
     @app.post("/api/v1/vault/{name}/reveal")
-    async def vault_reveal(name: str, request: Request) -> dict[str, str]:
+    async def vault_reveal(name: str, request: Request) -> dict[str, str | None]:
         try:
-            value = request.app.state.vault_service.reveal_secret(name)
+            value, filename = request.app.state.vault_service.reveal_secret(name)
         except KeyError as exc:
             raise HTTPException(status_code=404, detail=str(exc)) from exc
         except RuntimeError as exc:
             raise HTTPException(status_code=500, detail=str(exc)) from exc
-        return {"name": name, "value": value}
+        return {"name": name, "value": value, "filename": filename}
 
     @app.delete("/api/v1/vault/{name}")
     async def vault_delete(name: str, request: Request) -> dict[str, str]:
