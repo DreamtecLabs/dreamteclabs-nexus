@@ -1,4 +1,6 @@
 import json
+import time
+from datetime import datetime, timezone
 from pathlib import Path
 
 from fastapi import APIRouter, HTTPException, Request
@@ -33,6 +35,16 @@ def _pct(used: float | int | None, total: float | int | None = None) -> str:
     if used is None: return "—"
     ratio = float(used) if total in {None, 0} else float(used) / float(total)
     return f"{ratio * 100:.1f}%"
+
+
+def _epoch_relative(epoch: int | None) -> str:
+    if epoch is None: return "never"
+    return f"{_human_uptime(max(0, int(time.time() - epoch)))} ago"
+
+
+def _epoch_date(epoch: int | None) -> str:
+    if epoch is None: return "—"
+    return datetime.fromtimestamp(epoch, tz=timezone.utc).strftime("%Y-%m-%d %H:%M UTC")
 
 
 def _resource_view(resource):
@@ -129,6 +141,27 @@ async def fleet(request: Request) -> HTMLResponse:
     except RuntimeError as exc:
         raise HTTPException(status_code=503, detail=str(exc)) from exc
     return _templates.TemplateResponse(request=request, name="fleet.html", context={"scripts": service.list_scripts(), "targets": targets, "enabled": service.enabled})
+
+
+@router.get("/backup", response_class=HTMLResponse)
+async def backup(request: Request) -> HTMLResponse:
+    overview = await request.app.state.backup_service.overview()
+    return _templates.TemplateResponse(
+        request=request,
+        name="backup.html",
+        context={
+            "overview": overview,
+            "summary": {
+                "total": len(overview.guests),
+                "ok": sum(not g.stale for g in overview.guests),
+                "stale": sum(g.stale for g in overview.guests),
+                "orphans": len(overview.orphans),
+            },
+            "human_bytes": _human_bytes,
+            "epoch_relative": _epoch_relative,
+            "epoch_date": _epoch_date,
+        },
+    )
 
 
 @router.get("/vault", response_class=HTMLResponse)

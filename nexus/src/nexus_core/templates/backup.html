@@ -1,0 +1,67 @@
+{% extends "base.html" %}
+{% block title %}Backup · DreamtecLabs Nexus{% endblock %}
+{% block content %}
+<section class="page-head">
+  <div><div class="eyebrow">Data protection</div><h1>Backup</h1><p class="muted">What actually landed in PBS for each guest — not just whether a job is configured.</p></div>
+</section>
+
+{% if overview.datastore_errors %}
+<section class="card warning-card">
+  <strong>Some datastores could not be read.</strong>
+  {% for error in overview.datastore_errors %}<p class="muted small">{{ error }}</p>{% endfor %}
+</section>
+{% endif %}
+
+<section class="grid detail-summary">
+  <article class="card"><span class="label">Guests</span><strong class="metric">{{ summary.total }}</strong></article>
+  <article class="card"><span class="label">Backed up</span><strong class="metric">{{ summary.ok }}</strong></article>
+  <article class="card"><span class="label">Stale or missing</span><strong class="metric">{{ summary.stale }}</strong></article>
+  <article class="card"><span class="label">Orphan backups</span><strong class="metric">{{ summary.orphans }}</strong></article>
+</section>
+<p class="muted small">"Stale" means no successful backup in the last {{ overview.stale_after_hours }}h (<code>NEXUS_BACKUP_STALE_AFTER_HOURS</code>).</p>
+
+<section class="card table-card">
+  <div class="table-wrap">
+    <table>
+      <thead><tr><th>Guest</th><th>Remote</th><th>Last backup</th><th>Size</th><th>Count</th><th>Status</th></tr></thead>
+      <tbody>
+      {% for guest in overview.guests %}
+      <tr>
+        <td><a href="/infrastructure/resource?id={{ guest.resource_id|urlencode }}">{{ guest.name }}</a></td>
+        <td class="muted small">{{ guest.remote }} · {{ 'LXC' if guest.type == 'pve-lxc' else 'VM' }}</td>
+        <td>{% if guest.last_backup %}{{ epoch_relative(guest.last_backup.timestamp_epoch) }}<div class="muted small">{{ epoch_date(guest.last_backup.timestamp_epoch) }}</div>{% else %}<span class="muted">never</span>{% endif %}</td>
+        <td class="muted small">{{ human_bytes(guest.last_backup.size_bytes) if guest.last_backup else "—" }}</td>
+        <td class="muted small">{{ guest.backup_count }}</td>
+        <td><span class="pill {{ '' if guest.stale else 'running' }}">{{ 'stale' if guest.stale else 'ok' }}</span></td>
+      </tr>
+      {% else %}
+      <tr><td class="empty" colspan="6">No guests found.</td></tr>
+      {% endfor %}
+      </tbody>
+    </table>
+  </div>
+</section>
+
+{% if overview.orphans %}
+<section class="section-head"><div><div class="eyebrow">Cleanup</div><h2>Orphan backups</h2></div></section>
+<section class="card table-card">
+  <p class="muted small" style="padding:0 20px">Snapshots in PBS with no matching guest in current inventory — likely destroyed without decommission, or from a vmid/remote Nexus doesn't track.</p>
+  <div class="table-wrap">
+    <table>
+      <thead><tr><th>VMID</th><th>Type</th><th>Datastore</th><th>Last backup</th><th>Count</th></tr></thead>
+      <tbody>
+      {% for orphan in overview.orphans %}
+      <tr>
+        <td><code>{{ orphan.vmid }}</code></td>
+        <td class="muted small">{{ 'LXC' if orphan.guest_type == 'ct' else 'VM' }}</td>
+        <td class="muted small">{{ orphan.remote }} / {{ orphan.datastore }}</td>
+        <td>{{ epoch_relative(orphan.last_backup.timestamp_epoch) }}<div class="muted small">{{ epoch_date(orphan.last_backup.timestamp_epoch) }}</div></td>
+        <td class="muted small">{{ orphan.backup_count }}</td>
+      </tr>
+      {% endfor %}
+      </tbody>
+    </table>
+  </div>
+</section>
+{% endif %}
+{% endblock %}

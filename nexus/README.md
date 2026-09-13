@@ -73,6 +73,14 @@ Guests Nexus didn't provision itself don't carry its SSH key yet. `SshBootstrapS
 
 `/fleet`'s target list is every running `pve-lxc` guest, with its address pre-filled from `PdmProvider.guest_static_address()` when known (blank/editable otherwise — a guest on DHCP still needs a reachable address typed in by hand today). QEMU guests are out of scope for the same reason they're out of scope for OTel bootstrap: no cloud-init, no guaranteed SSH.
 
+## Backup
+
+`/backup` and `GET /api/v1/backup` are read-only visibility into PBS backup coverage: per-guest last-successful-backup time and size, and any PBS snapshot that no longer matches a guest in current inventory ("orphan backups" — usually a guest destroyed without decommission, which only cleans up its Nexus monitoring target, not its PBS history).
+
+This is intentionally status-only for now — no "run a backup now" and no restore. Whether a job is *configured* in PVE isn't answerable yet: `GET /cluster/backup` 404s on PDM (confirmed against the real server, not implemented), so that would need the same raw-HttpApiClient Rust patch pattern as `storage.rs`/`lxc.rs`/`qemu.rs`. What actually landed in PBS turned out to be the stronger signal anyway — a configured-but-silently-failing job is worse than no job, and only the PBS side can tell those apart. `PdmProvider.pbs_snapshots()` reads `GET /pbs/remotes/{remote}/datastore/{datastore}/snapshots`, which already exists on PDM (a `stream: true` proxmox_router method, but the HTTP body is still a plain `{"data": [...]}` array — no special client handling needed) — every `pbs-datastore` resource already in the PDM inventory is queried directly, no new Rust required for this feature.
+
+A guest is "stale" when its most recent successful backup is older than `NEXUS_BACKUP_STALE_AFTER_HOURS` (default 48) or it has never been backed up at all. One datastore failing to respond only removes that datastore's coverage from the page (surfaced as a warning) rather than blanking the whole view.
+
 ## Vault
 
 `/vault` and `POST/GET/PUT/DELETE /api/v1/vault(/{name}(/reveal))` are encrypted-at-rest storage for keys, certificates and other secrets — a home for what's otherwise scattered across `.env` files and notes. v1 is purely new storage: nothing already in `.env` (the PDM token, Cloudflare token, Nexus's own SSH key) has been migrated to it, so those still work exactly as before.

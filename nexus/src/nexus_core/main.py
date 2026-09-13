@@ -25,6 +25,7 @@ from nexus_core.repositories.monitoring_json import JsonMonitoringRepository
 from nexus_core.repositories.power_audit_jsonl import JsonlPowerAuditRepository
 from nexus_core.repositories.vault_audit_jsonl import JsonlVaultAuditRepository
 from nexus_core.repositories.vault_json import JsonVaultRepository
+from nexus_core.services.backup import BackupService
 from nexus_core.services.cloudflare import CloudflareOperationsDisabled, CloudflareService
 from nexus_core.services.domains import DomainOperationsDisabled, DomainService, DomainVerificationFailed
 from nexus_core.services.fleet import FleetOperationsDisabled, FleetService
@@ -185,6 +186,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     app.state.fleet_service = FleetService(FilesystemFleetScriptRepository(settings.fleet_scripts_dir), app.state.infrastructure_service, pdm, fleet_ssh_bootstrap, enabled=settings.fleet_operations_enabled)
     vault_cipher = Fernet(ensure_vault_key(settings.vault_key_path))
     app.state.vault_service = VaultService(JsonVaultRepository(settings.vault_data_path), vault_cipher, JsonlVaultAuditRepository(settings.vault_audit_path))
+    app.state.backup_service = BackupService(app.state.infrastructure_service, pdm, stale_after_hours=settings.backup_stale_after_hours)
     app.state.domain_service = DomainService(domain_repository, domain_diagnostics, domain_orchestrator, domain_audit, operations_enabled=settings.domains_operations_enabled, verification_attempts=settings.domains_verification_attempts, verification_interval_seconds=settings.domains_verification_interval_seconds)
     app.state.cloudflare_service = CloudflareService(cloudflare, domain_audit, operations_enabled=settings.domains_operations_enabled)
     install_provisioning(app, settings, app.state.infrastructure_service, app.state.monitoring_service)
@@ -359,6 +361,14 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         except KeyError as exc:
             raise HTTPException(status_code=404, detail=str(exc)) from exc
         return {"name": name, "status": "deleted"}
+
+    @app.get("/api/v1/backup")
+    async def backup_overview(request: Request) -> dict[str, object]:
+        try:
+            overview = await request.app.state.backup_service.overview()
+        except RuntimeError as exc:
+            raise HTTPException(status_code=503, detail=str(exc)) from exc
+        return asdict(overview)
 
     @app.get("/api/v1/monitoring/targets")
     async def monitoring_targets(request: Request) -> dict[str, object]:

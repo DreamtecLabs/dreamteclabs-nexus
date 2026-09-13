@@ -46,6 +46,7 @@ class Settings(BaseSettings):
     ssh_bootstrap_run_timeout_seconds: float = Field(default=180.0, ge=10, le=900, alias="NEXUS_SSH_BOOTSTRAP_RUN_TIMEOUT_SECONDS")
     fleet_operations_enabled: bool = Field(default=False, alias="NEXUS_FLEET_OPERATIONS_ENABLED")
     fleet_scripts_dir: Path = Field(default=Path("/opt/dreamteclabs-nexus/services"), alias="NEXUS_FLEET_SCRIPTS_DIR")
+    backup_stale_after_hours: int = Field(default=48, ge=1, le=720, alias="NEXUS_BACKUP_STALE_AFTER_HOURS")
 
     @property
     def ssh_bootstrap_key_path(self) -> Path:

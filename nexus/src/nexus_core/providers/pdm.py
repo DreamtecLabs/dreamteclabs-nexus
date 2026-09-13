@@ -213,6 +213,30 @@ class PdmProvider:
                 endpoints.append((address, label))
         return endpoints
 
+    async def pbs_snapshots(self, remote: str, datastore: str) -> list[dict]:
+        """Raw PBS snapshot list entries for one remote/datastore.
+
+        GET /pbs/remotes/{remote}/datastore/{datastore}/snapshots is a native
+        PDM endpoint (proxmox_router `stream: true`, but the body is still a
+        plain {"data": [...]} JSON array -- httpx doesn't need to treat it
+        differently). Best-effort: any failure returns an empty list rather
+        than raising, since one bad datastore shouldn't blank the whole page.
+        """
+        remote_q = quote(remote, safe="")
+        datastore_q = quote(datastore, safe="")
+        path = f"/api2/json/pbs/remotes/{remote_q}/datastore/{datastore_q}/snapshots"
+        try:
+            async with self._client() as client:
+                response = await client.get(path)
+                response.raise_for_status()
+                payload = response.json()
+        except httpx.HTTPError:
+            return []
+        except ValueError:
+            return []
+        data = payload.get("data") if isinstance(payload, dict) else None
+        return data if isinstance(data, list) else []
+
     @staticmethod
     async def _resolve_host(host: str) -> str | None:
         """PDM's remote "nodes" list is often a hostname (e.g. cluster node names
