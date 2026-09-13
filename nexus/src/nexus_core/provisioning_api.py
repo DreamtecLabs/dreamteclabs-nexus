@@ -177,5 +177,6 @@ def install_provisioning(
         otel_agent_script_path=settings.otel_agent_script_path,
         otel_agent_version=settings.otel_agent_version,
         signoz_otlp_endpoint=settings.signoz_otlp_endpoint,
+        enable_root_ssh_password_script_path=settings.enable_root_ssh_password_script_path,
     )
     app.include_router(router)

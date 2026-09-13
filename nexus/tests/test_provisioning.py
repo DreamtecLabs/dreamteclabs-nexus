@@ -209,6 +209,61 @@ async def test_root_password_warns_and_is_not_applied_for_qemu() -> None:
 
 
 @pytest.mark.asyncio
+async def test_root_password_enables_ssh_password_login_when_configured(tmp_path: Path) -> None:
+    provider = FakeProvider()
+    bootstrap = FakeSshBootstrap()
+    script_path = tmp_path / "enable-root-ssh-password.sh"
+    script_path.write_text("echo allowing root password login\n")
+    service = ProvisioningService(
+        provider, AppearingInfrastructure(), FakeMonitoring(), enabled=True, verification_attempts=1,
+        ssh_bootstrap=bootstrap, enable_root_ssh_password_script_path=script_path,
+    )
+    result = await service.provision(_request(root_password="correct-horse"))
+    assert result.status == "ready"
+    assert next(step for step in result.steps if step.name == "root-ssh-password").status == "success"
+    # Most templates disable password root login by default -- Nexus's own key (merged
+    # in for this, same mechanism as bootstrap_otel) is what makes reaching the guest possible at all.
+    assert "ssh-ed25519 AAAANEXUSKEY nexus-provisioning" in provider.last_request.ssh_public_key
+    assert bootstrap.calls == [{"address": "192.168.0.50", "username": "root", "script": "echo allowing root password login\n", "env": {}}]
+
+
+@pytest.mark.asyncio
+async def test_root_password_ssh_enable_warns_without_static_address() -> None:
+    provider = FakeProvider()
+    bootstrap = FakeSshBootstrap()
+    service = ProvisioningService(
+        provider, AppearingInfrastructure(), FakeMonitoring(), enabled=True, verification_attempts=1,
+        ssh_bootstrap=bootstrap, enable_root_ssh_password_script_path=Path("/dev/null"),
+    )
+    result = await service.provision(_request(root_password="correct-horse", ip_config="dhcp"))
+    assert result.status == "ready-with-warnings"
+    assert bootstrap.calls == []
+    assert next(step for step in result.steps if step.name == "root-ssh-password").status == "warning"
+
+
+@pytest.mark.asyncio
+async def test_root_password_ssh_enable_warns_when_script_fails() -> None:
+    provider = FakeProvider()
+    bootstrap = FakeSshBootstrap(ok=False, detail="could not reach 192.168.0.50 over SSH: timeout")
+    service = ProvisioningService(
+        provider, AppearingInfrastructure(), FakeMonitoring(), enabled=True, verification_attempts=1,
+        ssh_bootstrap=bootstrap, enable_root_ssh_password_script_path=Path("/dev/null"),
+    )
+    result = await service.provision(_request(root_password="correct-horse"))
+    assert result.status == "ready-with-warnings"
+    assert any("could not reach" in warning for warning in result.warnings)
+
+
+@pytest.mark.asyncio
+async def test_root_password_without_ssh_bootstrap_configured_skips_silently() -> None:
+    provider = FakeProvider()
+    service = ProvisioningService(provider, AppearingInfrastructure(), FakeMonitoring(), enabled=True, verification_attempts=1)
+    result = await service.provision(_request(root_password="correct-horse"))
+    assert result.status == "ready"
+    assert not any(step.name == "root-ssh-password" for step in result.steps)
+
+
+@pytest.mark.asyncio
 async def test_otel_bootstrap_merges_nexus_key_and_reports_success(tmp_path: Path) -> None:
     provider = FakeProvider()
     bootstrap = FakeSshBootstrap()

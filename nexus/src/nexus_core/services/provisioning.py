@@ -40,6 +40,7 @@ class ProvisioningService:
         otel_agent_script_path=None,
         otel_agent_version: str = "0.139.0",
         signoz_otlp_endpoint: str = "192.168.0.47:4317",
+        enable_root_ssh_password_script_path=None,
     ) -> None:
         self._provider = provider
         self._infrastructure = infrastructure_service
@@ -51,6 +52,7 @@ class ProvisioningService:
         self._ssh_bootstrap = ssh_bootstrap
         self._otel_agent_script_path = otel_agent_script_path
         self._otel_agent_version = otel_agent_version
+        self._enable_root_ssh_password_script_path = enable_root_ssh_password_script_path
         otlp_host, _, otlp_port = signoz_otlp_endpoint.strip().partition(":")
         self._otlp_host = otlp_host or "127.0.0.1"
         self._otlp_port = otlp_port or "4317"
@@ -80,7 +82,8 @@ class ProvisioningService:
         steps: list[ProvisioningStep] = []
         warnings: list[str] = []
         create_request = request
-        if request.kind == "lxc" and request.bootstrap_otel and self._ssh_bootstrap is not None:
+        needs_nexus_key = request.kind == "lxc" and self._ssh_bootstrap is not None and (request.bootstrap_otel or request.root_password)
+        if needs_nexus_key:
             nexus_public_key = self._ssh_bootstrap.ensure_keypair()
             merged_key = "\n".join(part for part in (request.ssh_public_key, nexus_public_key) if part)
             create_request = dataclasses.replace(request, ssh_enabled=True, ssh_public_key=merged_key)
@@ -113,6 +116,7 @@ class ProvisioningService:
         if request.root_password:
             if request.kind == "lxc":
                 steps.append(ProvisioningStep("root-password", "success", "Root password set on the LXC guest"))
+                await self._enable_root_ssh_password(request, steps, warnings)
             else:
                 warning = "Root password was set but is not applied to QEMU guests (ISO-based install, no cloud-init)"
                 warnings.append(warning)
@@ -191,6 +195,34 @@ class ProvisioningService:
             steps.append(ProvisioningStep("monitoring", "warning", warning))
         result_status = "ready" if not warnings else "ready-with-warnings"
         return ProvisioningResult(resource_id=resource.id, resource_name=resource.name, status=result_status, task_reference=created.task_reference, steps=tuple(steps), warnings=tuple(warnings))
+
+    async def _enable_root_ssh_password(self, request: GuestProvisionRequest, steps: list[ProvisioningStep], warnings: list[str]) -> None:
+        """Most templates ship with password root login disabled by default, so a
+        root_password set through the wizard wouldn't actually let anyone SSH in
+        with it. Uses the Nexus key (already merged in for this request, same as
+        bootstrap_otel) to flip sshd_config once, right after creation."""
+        if self._ssh_bootstrap is None or self._enable_root_ssh_password_script_path is None:
+            return
+        address = self._guest_address(request)
+        if not address:
+            warning = "Root password was set, but enabling SSH password login requires a static IP; the guest's own sshd defaults still apply"
+            warnings.append(warning)
+            steps.append(ProvisioningStep("root-ssh-password", "warning", warning))
+            return
+        try:
+            script = self._enable_root_ssh_password_script_path.read_text()
+        except OSError as exc:
+            warning = f"Could not enable root SSH password login: {exc}"
+            warnings.append(warning)
+            steps.append(ProvisioningStep("root-ssh-password", "warning", warning))
+            return
+        result = await self._ssh_bootstrap.wait_and_run(address, username="root", script=script, env={})
+        if result.ok:
+            steps.append(ProvisioningStep("root-ssh-password", "success", "Root SSH login with password is now allowed"))
+        else:
+            warning = f"Root password was set, but enabling SSH password login failed: {result.detail}"
+            warnings.append(warning)
+            steps.append(ProvisioningStep("root-ssh-password", "warning", warning))
 
     @staticmethod
     def _validate_request(request: GuestProvisionRequest) -> None:

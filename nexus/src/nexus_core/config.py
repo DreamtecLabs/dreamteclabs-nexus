@@ -40,6 +40,7 @@ class Settings(BaseSettings):
     signoz_otlp_endpoint: str = Field(default="192.168.0.47:4317", alias="SIGNOZ_OTLP_ENDPOINT")
     otel_agent_version: str = Field(default="0.139.0", alias="NEXUS_OTEL_AGENT_VERSION")
     otel_agent_script_path: Path = Field(default=Path("/opt/dreamteclabs-nexus/services/nexus-otel-lxc-agent.sh"), alias="NEXUS_OTEL_AGENT_SCRIPT_PATH")
+    enable_root_ssh_password_script_path: Path = Field(default=Path("/opt/dreamteclabs-nexus/services/nexus-fleet-enable-root-ssh-password.sh"), alias="NEXUS_ENABLE_ROOT_SSH_PASSWORD_SCRIPT_PATH")
     ssh_bootstrap_attempts: int = Field(default=30, ge=1, le=120, alias="NEXUS_SSH_BOOTSTRAP_ATTEMPTS")
     ssh_bootstrap_interval_seconds: float = Field(default=5.0, ge=0.5, le=30, alias="NEXUS_SSH_BOOTSTRAP_INTERVAL_SECONDS")
     ssh_bootstrap_run_timeout_seconds: float = Field(default=180.0, ge=10, le=900, alias="NEXUS_SSH_BOOTSTRAP_RUN_TIMEOUT_SECONDS")
