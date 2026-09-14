@@ -1,11 +1,14 @@
 from __future__ import annotations
 
 import asyncio
+import re
 from collections.abc import Awaitable, Callable
 from dataclasses import dataclass
 from pathlib import Path
 
 import asyncssh
+
+_ENV_NAME_RE = re.compile(r"^[A-Za-z_][A-Za-z0-9_]*$")
 
 
 @dataclass(frozen=True, slots=True)
@@ -95,6 +98,15 @@ class SshBootstrapService:
         return BootstrapResult(True, "Nexus SSH key enrolled")
 
     async def _run_script(self, conn: asyncssh.SSHClientConnection, script: str, env: dict[str, str]) -> BootstrapResult:
+        # Only the value is shell-quoted below -- an env var *name* is spliced
+        # into the script unquoted (`export {key}=...`), same as a real shell
+        # export statement. Reject anything that isn't a plain identifier so a
+        # caller-supplied key (e.g. Fleet Ops script params, which come
+        # straight from the API with no character restriction) can never
+        # smuggle a `;` or `&&` into the command Nexus runs as root.
+        for key in env:
+            if not _ENV_NAME_RE.fullmatch(key):
+                return BootstrapResult(False, f"invalid parameter name: {key}")
         prefix = "".join(f"export {key}={self._shell_quote(value)}\n" for key, value in env.items())
         try:
             result = await conn.run(f"{prefix}bash -s", input=script, check=False, timeout=self._run_timeout_seconds)

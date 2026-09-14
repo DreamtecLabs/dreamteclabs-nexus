@@ -140,10 +140,21 @@ class CloudflareService:
 
         if not hostname or not hostname.strip():
             # The trailing catch-all has no hostname and is always unique --
-            # editing it just means swapping its service.
+            # editing it just means swapping its service. But this branch is
+            # also reached if the caller was editing a NAMED rule and cleared
+            # its hostname, so the original rule (identified by
+            # original_hostname/original_path) has to be dropped too, not
+            # just any pre-existing catch-all -- otherwise the old named rule
+            # is left behind alongside a freshly appended catch-all.
+            original_hostname_norm = self._normalize_ingress_hostname(original_hostname) if original_hostname else None
+            original_path_norm = self._normalize_ingress_path(original_path) if original_path else None
             try:
                 ingress = await self._provider.get_tunnel_ingress_raw()
-                named = [item for item in ingress if item.get("hostname")]
+                named = [
+                    item
+                    for item in ingress
+                    if item.get("hostname") and not (original_hostname_norm and self._matches(item, original_hostname_norm, original_path_norm))
+                ]
                 named.append({"service": normalized_service})
                 await self._provider.put_tunnel_ingress_raw(named)
             except RuntimeError as exc:

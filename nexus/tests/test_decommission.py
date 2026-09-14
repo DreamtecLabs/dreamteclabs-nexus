@@ -189,6 +189,25 @@ async def test_decommission_times_out_if_guest_never_disappears() -> None:
 
 
 @pytest.mark.asyncio
+async def test_decommission_refuses_to_destroy_a_guest_that_never_stops() -> None:
+    """A hung shutdown must never fall through to destroy_guest -- the
+    verification loop existed specifically to make sure the guest is
+    actually stopped first."""
+
+    class HungStopProvider(DecommissionProvider):
+        async def execute_power_action(self, resource: InfrastructureResource, action: str) -> str:
+            assert action == "stop"
+            self.stop_calls += 1
+            return "UPID:stop"  # accepted, but status never actually flips to "stopped"
+
+    provider = HungStopProvider(RUNNING_LXC)
+    service = InfrastructureService(provider, decommission_enabled=True, verification_attempts=2, verification_interval_seconds=0, sleep=_no_sleep)
+    with pytest.raises(DecommissionVerificationTimeout):
+        await service.decommission(resource_id=RUNNING_LXC.id, confirmation=RUNNING_LXC.name)
+    assert provider.destroy_calls == 0
+
+
+@pytest.mark.asyncio
 async def test_decommission_raises_not_found_for_unknown_resource() -> None:
     service = InfrastructureService(DecommissionProvider(STOPPED_QEMU), decommission_enabled=True, sleep=_no_sleep)
     with pytest.raises(InfrastructureResourceNotFound):

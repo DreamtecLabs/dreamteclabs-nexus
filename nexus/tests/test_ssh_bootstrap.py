@@ -93,6 +93,20 @@ async def test_enroll_key_reports_unreachable_host(tmp_path: Path) -> None:
 
 
 @pytest.mark.asyncio
+async def test_wait_and_run_rejects_shell_metacharacters_in_env_names(tmp_path: Path, ssh_server: int) -> None:
+    """env is only value-quoted (`export {key}={quoted value}`) -- a key with
+    shell metacharacters would otherwise inject commands into the script
+    prefix. Fleet Ops passes caller-supplied param names straight through as
+    env keys, so this must fail closed rather than execute anything."""
+    service = SshBootstrapService(key_path=tmp_path / "key", attempts=1, interval_seconds=0.1, run_timeout_seconds=5)
+    service.ensure_keypair()
+    malicious_env = {"X; echo INJECTED #": "value"}
+    result = await service.wait_and_run("127.0.0.1", port=ssh_server, username="root", script="echo hi", env=malicious_env)
+    assert result.ok is False
+    assert result.detail == "invalid parameter name: X; echo INJECTED #"
+
+
+@pytest.mark.asyncio
 async def test_wait_and_run_retries_until_giving_up(tmp_path: Path) -> None:
     service = SshBootstrapService(key_path=tmp_path / "key", attempts=2, interval_seconds=0.05, run_timeout_seconds=5)
     service.ensure_keypair()

@@ -34,10 +34,11 @@ def _is_protected(path: str) -> bool:
 
 
 def _safe_next(value: str | None) -> str:
-    """Only ever redirect to a same-site relative path -- a bare '//host/x'
-    is browser-parsed as protocol-relative and would send the login result
-    off-site."""
-    if not value or not value.startswith("/") or value.startswith("//"):
+    """Only ever redirect to a same-site relative path. Both '//host/x' and
+    '/\\host/x' are browser-parsed as protocol-relative (backslash is
+    normalized to slash by the WHATWG URL parser for http(s) URLs) and would
+    send the login result off-site, so both leading forms are rejected."""
+    if not value or not value.startswith("/") or (len(value) > 1 and value[1] in ("/", "\\")):
         return "/"
     return value
 

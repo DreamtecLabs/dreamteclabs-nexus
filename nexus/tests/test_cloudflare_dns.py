@@ -365,6 +365,24 @@ async def test_cloudflare_service_upsert_catch_all_replaces_only_its_service(tmp
 
 
 @pytest.mark.asyncio
+async def test_cloudflare_service_upsert_to_blank_hostname_removes_the_original_named_rule(tmp_path: Path) -> None:
+    """Clearing a named rule's hostname in the edit form routes into the
+    catch-all branch (hostname is now empty) -- the original named rule must
+    be removed too, not left behind alongside a freshly appended catch-all."""
+    audit = JsonlDomainAuditRepository(tmp_path / "audit.jsonl")
+    provider = FakeCloudflareProvider(
+        ingress=[{"hostname": "a.example.com", "service": "http://old:80"}, {"service": "http_status:404"}]
+    )
+    service = CloudflareService(provider, audit, operations_enabled=True)
+
+    await service.upsert_tunnel_rule(original_hostname="a.example.com", original_path=None, hostname=None, service="http_status:530")
+
+    saved = provider.put_ingress_calls[0]
+    assert not any(item.get("hostname") == "a.example.com" for item in saved)
+    assert saved == [{"service": "http_status:530"}]
+
+
+@pytest.mark.asyncio
 async def test_cloudflare_service_delete_tunnel_rule_removes_only_the_match(tmp_path: Path) -> None:
     audit = JsonlDomainAuditRepository(tmp_path / "audit.jsonl")
     provider = FakeCloudflareProvider(

@@ -201,6 +201,10 @@ class InfrastructureService:
                         break
                     if attempt + 1 < self._verification_attempts:
                         await self._sleep(self._verification_interval_seconds)
+                else:
+                    raise DecommissionVerificationTimeout(
+                        f"PDM accepted stop for {resource.name}, but Nexus never observed it as stopped after {self._verification_attempts} checks -- refusing to destroy a guest that may still be running"
+                    )
             task_reference = await self._provider.destroy_guest(resource, purge=purge)
             for attempt in range(self._verification_attempts):
                 snapshot = await self.list_resources()

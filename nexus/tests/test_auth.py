@@ -45,6 +45,7 @@ def test_is_protected(path: str, expected: bool) -> None:
         ("/vault", "/vault"),
         ("/vault?x=1", "/vault?x=1"),
         ("//evil.example.com/phish", "/"),
+        ("/\\evil.example.com", "/"),  # backslash is browser-normalized to '/', same off-site redirect as '//'
         ("https://evil.example.com", "/"),
         ("not-a-path", "/"),
     ],
