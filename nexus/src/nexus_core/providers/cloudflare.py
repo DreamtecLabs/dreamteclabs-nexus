@@ -209,31 +209,16 @@ class CloudflareApiProvider:
         return rules
 
     async def list_tunnel_ingress(self) -> list[TunnelIngressRule]:
+        return self._parse_ingress(await self.get_tunnel_ingress_raw())
+
+    async def get_tunnel_ingress_raw(self) -> list[dict[str, object]]:
         data = await self._request("GET", f"/accounts/{self._account_id}/cfd_tunnel/{self._tunnel_id}/configurations")
         result = data.get("result")
         config = result.get("config") if isinstance(result, dict) else None
         ingress = config.get("ingress") if isinstance(config, dict) else None
-        return self._parse_ingress(ingress)
+        return [item for item in ingress if isinstance(item, dict)] if isinstance(ingress, list) else []
 
-    async def set_tunnel_ingress(self, rules: list[TunnelIngressRule]) -> None:
-        ingress: list[dict[str, object]] = []
-        for rule in rules:
-            entry: dict[str, object] = {"service": rule.service}
-            if rule.hostname:
-                entry["hostname"] = rule.hostname
-                if rule.path:
-                    entry["path"] = rule.path
-                origin_request: dict[str, object] = {"noTLSVerify": rule.no_tls_verify}
-                if rule.http_host_header:
-                    origin_request["httpHostHeader"] = rule.http_host_header
-                if rule.origin_server_name:
-                    origin_request["originServerName"] = rule.origin_server_name
-                if rule.connect_timeout_seconds is not None:
-                    origin_request["connectTimeout"] = f"{rule.connect_timeout_seconds}s"
-                entry["originRequest"] = origin_request
-            ingress.append(entry)
-        if not ingress or ingress[-1].get("hostname") is not None:
-            ingress.append({"service": "http_status:404"})
+    async def put_tunnel_ingress_raw(self, ingress: list[dict[str, object]]) -> None:
         await self._request(
             "PUT",
             f"/accounts/{self._account_id}/cfd_tunnel/{self._tunnel_id}/configurations",
@@ -261,5 +246,8 @@ class UnconfiguredCloudflareProvider:
     async def list_tunnel_ingress(self) -> list[TunnelIngressRule]:
         raise RuntimeError("NEXUS_CF_API_TOKEN is not configured")
 
-    async def set_tunnel_ingress(self, rules: list[TunnelIngressRule]) -> None:
+    async def get_tunnel_ingress_raw(self) -> list[dict[str, object]]:
+        raise RuntimeError("NEXUS_CF_API_TOKEN is not configured")
+
+    async def put_tunnel_ingress_raw(self, ingress: list[dict[str, object]]) -> None:
         raise RuntimeError("NEXUS_CF_API_TOKEN is not configured")

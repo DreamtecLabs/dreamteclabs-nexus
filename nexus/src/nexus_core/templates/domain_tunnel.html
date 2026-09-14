@@ -11,13 +11,13 @@
 {% endif %}
 
 <section class="card form-card">
-  <div><strong id="ingress-form-title">Add ingress rule</strong><p class="muted small">Staged locally — nothing changes in Cloudflare until you click "Save all changes".</p></div>
+  <div><strong id="ingress-form-title">Add ingress rule</strong><p class="muted small">Writes straight to Cloudflare when you click "Save rule" — only the one rule below is touched, every other hostname on the tunnel is left exactly as-is.</p></div>
   <div class="domain-form-row">
     <input class="control" id="ingress-hostname" placeholder="hostname (e.g. app.example.com)">
     <input class="control" id="ingress-service" placeholder="service (e.g. http://192.168.0.29:80)">
     <input class="control" id="ingress-path" placeholder="path (optional, e.g. /api/*)">
     <label class="muted small"><input type="checkbox" id="ingress-no-tls"> No TLS verify</label>
-    <button class="button" id="ingress-add" {% if not operations_enabled %}disabled{% endif %}>Add / Update rule</button>
+    <button class="button" id="ingress-save" {% if not operations_enabled %}disabled{% endif %}>Save rule</button>
     <button class="button secondary" id="ingress-cancel" hidden>Cancel edit</button>
   </div>
   <details id="ingress-advanced">
@@ -28,10 +28,11 @@
       <input class="control" id="ingress-connect-timeout" type="number" min="1" max="300" placeholder="Connect timeout, seconds (optional)">
     </div>
   </details>
+  <p id="ingress-message" class="operation-message" hidden></p>
 </section>
 
 <section class="card">
-  <p class="muted small">The last row (no hostname) is the required catch-all — it's kept automatically when you save.</p>
+  <p class="muted small">The last row (no hostname) is the catch-all — it's kept automatically and can only have its service edited.</p>
   <div class="table-wrap">
     <table id="ingress-table">
       <thead><tr><th>Hostname</th><th>Service</th><th>Path</th><th>No TLS Verify</th><th>Advanced</th><th>Actions</th></tr></thead>
@@ -46,7 +47,7 @@
         <td>
           <div class="actions">
             <button class="action-button edit-rule" {% if not operations_enabled %}disabled{% endif %}>Edit</button>
-            {% if rule.hostname %}<button class="action-button delete-rule" {% if not operations_enabled %}disabled{% endif %}>Remove</button>{% endif %}
+            {% if rule.hostname %}<button class="action-button danger delete-rule" {% if not operations_enabled %}disabled{% endif %}>Remove</button>{% endif %}
           </div>
         </td>
       </tr>
@@ -54,11 +55,6 @@
       </tbody>
     </table>
   </div>
-</section>
-
-<section class="card">
-  <button class="button" id="ingress-save-all" {% if not operations_enabled %}disabled{% endif %}>Save all changes to Cloudflare</button>
-  <p id="ingress-message" class="operation-message" hidden></p>
 </section>
 
 <script>
@@ -74,22 +70,15 @@
   const originSniEl = document.getElementById('ingress-origin-sni');
   const connectTimeoutEl = document.getElementById('ingress-connect-timeout');
   const advancedEl = document.getElementById('ingress-advanced');
-  const addBtn = document.getElementById('ingress-add');
+  const saveBtn = document.getElementById('ingress-save');
   const cancelBtn = document.getElementById('ingress-cancel');
   const titleEl = document.getElementById('ingress-form-title');
-  let editingRow = null;
-
-  function readRules() {
-    return Array.from(tbody.querySelectorAll('tr')).map(row => ({
-      hostname: row.dataset.hostname || null,
-      service: row.dataset.service,
-      path: row.dataset.path || null,
-      no_tls_verify: row.dataset.noTlsVerify === 'true',
-      http_host_header: row.dataset.hostHeader || null,
-      origin_server_name: row.dataset.originSni || null,
-      connect_timeout_seconds: row.dataset.connectTimeout ? parseInt(row.dataset.connectTimeout, 10) : null,
-    }));
-  }
+  // {hostname, path} of the row currently being edited, or null when adding
+  // a brand-new rule. Sent as original_hostname/original_path so the backend
+  // knows exactly which existing rule to replace -- by identity, not by
+  // whatever the form currently says, since editing can also change the
+  // hostname/path themselves.
+  let editingOriginal = null;
 
   function hasAdvanced(row) {
     return !!(row.dataset.hostHeader || row.dataset.originSni || row.dataset.connectTimeout);
@@ -97,7 +86,7 @@
 
   function wireRow(row) {
     row.querySelector('.edit-rule').addEventListener('click', () => {
-      editingRow = row;
+      editingOriginal = {hostname: row.dataset.hostname || null, path: row.dataset.path || null};
       hostnameEl.value = row.dataset.hostname;
       serviceEl.value = row.dataset.service;
       pathEl.value = row.dataset.path || '';
@@ -108,57 +97,52 @@
       advancedEl.open = hasAdvanced(row);
       titleEl.textContent = `Editing ${row.dataset.hostname || '(catch-all)'}`;
       cancelBtn.hidden = false;
+      hostnameEl.disabled = !row.dataset.hostname;
+      window.scrollTo({top: 0, behavior: 'smooth'});
     });
     const deleteBtn = row.querySelector('.delete-rule');
-    if (deleteBtn) deleteBtn.addEventListener('click', () => {
-      row.remove();
-      show('Rule removed locally — click "Save all changes" to apply.', 'pending');
+    if (deleteBtn) deleteBtn.addEventListener('click', async () => {
+      const hostname = row.dataset.hostname;
+      const path = row.dataset.path || '';
+      if (!confirm(`Remove ${hostname}${path ? ' (' + path + ')' : ''} from the tunnel? Only this rule is touched.`)) return;
+      deleteBtn.disabled = true;
+      show(`Removing ${hostname}…`, 'pending');
+      try {
+        const query = new URLSearchParams({hostname});
+        if (path) query.set('path', path);
+        const response = await fetch(`/api/v1/cloudflare/tunnel/ingress?${query}`, {method: 'DELETE'});
+        const data = await response.json();
+        if (!response.ok) throw new Error(data.detail || `HTTP ${response.status}`);
+        show(`Removed ${hostname}.`, 'success');
+        window.setTimeout(() => window.location.reload(), 500);
+      } catch (error) {
+        deleteBtn.disabled = false;
+        show(String(error.message || error), 'error');
+      }
     });
-  }
-
-  function applyRuleToRow(row, rule) {
-    row.dataset.hostname = rule.hostname || '';
-    row.dataset.service = rule.service;
-    row.dataset.path = rule.path || '';
-    row.dataset.noTlsVerify = rule.no_tls_verify ? 'true' : 'false';
-    row.dataset.hostHeader = rule.http_host_header || '';
-    row.dataset.originSni = rule.origin_server_name || '';
-    row.dataset.connectTimeout = rule.connect_timeout_seconds != null ? String(rule.connect_timeout_seconds) : '';
-    row.children[0].textContent = rule.hostname || '(catch-all)';
-    row.children[1].textContent = rule.service;
-    row.children[2].textContent = rule.path || '—';
-    row.children[3].textContent = rule.no_tls_verify ? 'Yes' : '—';
-    row.children[4].textContent = hasAdvanced(row) ? 'Yes' : '—';
-  }
-
-  function renderRow(rule) {
-    const row = document.createElement('tr');
-    const actions = rule.hostname
-      ? '<div class="actions"><button class="action-button edit-rule">Edit</button><button class="action-button delete-rule">Remove</button></div>'
-      : '<div class="actions"><button class="action-button edit-rule">Edit</button></div>';
-    row.innerHTML = `<td></td><td class="muted small"></td><td class="muted small"></td><td></td><td class="muted small"></td><td>${actions}</td>`;
-    applyRuleToRow(row, rule);
-    wireRow(row);
-    return row;
   }
 
   tbody.querySelectorAll('tr').forEach(wireRow);
 
   function resetForm() {
-    editingRow = null;
+    editingOriginal = null;
     hostnameEl.value = ''; serviceEl.value = ''; pathEl.value = ''; noTlsEl.checked = false;
     hostHeaderEl.value = ''; originSniEl.value = ''; connectTimeoutEl.value = '';
+    hostnameEl.disabled = false;
     advancedEl.open = false;
     titleEl.textContent = 'Add ingress rule';
     cancelBtn.hidden = true;
   }
   cancelBtn.addEventListener('click', resetForm);
 
-  addBtn.addEventListener('click', () => {
+  saveBtn.addEventListener('click', async () => {
     const service = serviceEl.value.trim();
     const hostname = hostnameEl.value.trim() || null;
     if (!service) return show('Service is required.', 'error');
-    const rule = {
+    if (!hostname && !editingOriginal) return show('Hostname is required for a new rule.', 'error');
+    const body = {
+      original_hostname: editingOriginal ? editingOriginal.hostname : null,
+      original_path: editingOriginal ? editingOriginal.path : null,
       hostname,
       service,
       path: pathEl.value.trim() || null,
@@ -167,38 +151,20 @@
       origin_server_name: originSniEl.value.trim() || null,
       connect_timeout_seconds: connectTimeoutEl.value ? parseInt(connectTimeoutEl.value, 10) : null,
     };
-    if (editingRow) {
-      applyRuleToRow(editingRow, rule);
-    } else {
-      const lastRow = tbody.lastElementChild;
-      const newRow = renderRow(rule);
-      if (lastRow && !lastRow.dataset.hostname) {
-        tbody.insertBefore(newRow, lastRow);
-      } else {
-        tbody.appendChild(newRow);
-      }
-    }
-    resetForm();
-    show('Rule staged locally — click "Save all changes" to apply.', 'pending');
-  });
-
-  document.getElementById('ingress-save-all').addEventListener('click', async () => {
-    const rules = readRules();
-    const button = document.getElementById('ingress-save-all');
-    button.disabled = true;
-    show('Saving to Cloudflare…', 'pending');
+    saveBtn.disabled = true;
+    show(`Saving ${hostname || '(catch-all)'} to Cloudflare…`, 'pending');
     try {
       const response = await fetch('/api/v1/cloudflare/tunnel/ingress', {
         method: 'PUT',
         headers: {'Content-Type': 'application/json'},
-        body: JSON.stringify({rules}),
+        body: JSON.stringify(body),
       });
       const data = await response.json();
       if (!response.ok) throw new Error(data.detail || `HTTP ${response.status}`);
-      show('Saved.', 'success');
-      window.setTimeout(() => window.location.reload(), 700);
+      show(`Saved ${hostname || '(catch-all)'}.`, 'success');
+      window.setTimeout(() => window.location.reload(), 500);
     } catch (error) {
-      button.disabled = false;
+      saveBtn.disabled = false;
       show(String(error.message || error), 'error');
     }
   });

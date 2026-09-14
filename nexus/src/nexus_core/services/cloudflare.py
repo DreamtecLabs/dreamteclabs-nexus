@@ -17,7 +17,11 @@ from nexus_core.ports.domains import (
 # validation -- Cloudflare's own API is authoritative for correctness.
 _DNS_NAME_RE = re.compile(r"^[A-Za-z0-9_*](?:[A-Za-z0-9_.*-]{0,251}[A-Za-z0-9_])?$")
 _RECORD_ID_RE = re.compile(r"^[A-Za-z0-9_-]{1,64}$")
-_SERVICE_RE = re.compile(r"^(https?://\S+|tcp://\S+|http_status:\d{3})$")
+# Cloudflare Tunnel ingress accepts several service schemes beyond plain
+# HTTP(S)/TCP -- ssh/rdp/smb power its browser-rendered Infrastructure Access,
+# and unix: addresses a local socket. Reject only obvious garbage; Cloudflare's
+# own API is authoritative for whether a given target is actually valid.
+_SERVICE_RE = re.compile(r"^(https?://\S+|tcp://\S+|ssh://\S+|rdp://\S+|smb://\S+|unix:\S+|http_status:\d{3})$")
 _VALID_RECORD_TYPES = frozenset({"A", "AAAA", "CNAME", "TXT", "MX", "NS", "SRV", "CAA"})
 _SRV_REQUIRED_FIELDS = ("service", "proto", "name", "priority", "weight", "port", "target")
 _CAA_TAGS = frozenset({"issue", "issuewild", "iodef"})
@@ -112,16 +116,101 @@ class CloudflareService:
     async def list_tunnel_ingress(self) -> list[TunnelIngressRule]:
         return await self._provider.list_tunnel_ingress()
 
-    async def set_tunnel_ingress(self, rules: list[TunnelIngressRule]) -> list[TunnelIngressRule]:
+    async def upsert_tunnel_rule(
+        self,
+        *,
+        original_hostname: str | None,
+        original_path: str | None,
+        hostname: str | None,
+        service: str,
+        path: str | None = None,
+        no_tls_verify: bool = False,
+        http_host_header: str | None = None,
+        origin_server_name: str | None = None,
+        connect_timeout_seconds: int | None = None,
+    ) -> None:
+        """Add or edit exactly one ingress rule, in place, without touching any
+        other rule. Fetches the live config fresh right before writing (never
+        the possibly-stale page load) and passes every other entry through
+        untouched -- so a rule this code doesn't fully model (an exotic
+        service scheme, extra originRequest fields) can never be silently
+        dropped or corrupted just because a neighboring rule was edited."""
         self._require_enabled()
-        normalized = self._normalize_ingress(rules)
+        normalized_service = self._normalize_service(service)
+
+        if not hostname or not hostname.strip():
+            # The trailing catch-all has no hostname and is always unique --
+            # editing it just means swapping its service.
+            try:
+                ingress = await self._provider.get_tunnel_ingress_raw()
+                named = [item for item in ingress if item.get("hostname")]
+                named.append({"service": normalized_service})
+                await self._provider.put_tunnel_ingress_raw(named)
+            except RuntimeError as exc:
+                self._audit_record("tunnel", "tunnel-ingress-upsert", "failed", f"(catch-all): {exc}")
+                raise
+            self._audit_record("tunnel", "tunnel-ingress-upsert", "success", f"(catch-all) -> {normalized_service}")
+            return
+
+        normalized_hostname = self._normalize_ingress_hostname(hostname)
+        normalized_path = self._normalize_ingress_path(path)
+        normalized_host_header = self._normalize_ingress_hostlike(http_host_header, "HTTP host header")
+        normalized_sni = self._normalize_ingress_hostlike(origin_server_name, "origin server name")
+        if connect_timeout_seconds is not None and not (1 <= connect_timeout_seconds <= 300):
+            raise ValueError("connect timeout must be between 1 and 300 seconds")
+
+        entry: dict[str, object] = {"hostname": normalized_hostname, "service": normalized_service}
+        if normalized_path:
+            entry["path"] = normalized_path
+        origin_request: dict[str, object] = {}
+        if no_tls_verify:
+            origin_request["noTLSVerify"] = True
+        if normalized_host_header:
+            origin_request["httpHostHeader"] = normalized_host_header
+        if normalized_sni:
+            origin_request["originServerName"] = normalized_sni
+        if connect_timeout_seconds is not None:
+            origin_request["connectTimeout"] = f"{connect_timeout_seconds}s"
+        if origin_request:
+            entry["originRequest"] = origin_request
+
+        original_hostname_norm = self._normalize_ingress_hostname(original_hostname) if original_hostname else None
+        original_path_norm = self._normalize_ingress_path(original_path) if original_path else None
+
         try:
-            await self._provider.set_tunnel_ingress(normalized)
+            ingress = await self._provider.get_tunnel_ingress_raw()
+            if original_hostname_norm:
+                remaining = [item for item in ingress if not self._matches(item, original_hostname_norm, original_path_norm)]
+            else:
+                remaining = list(ingress)
+            catchall_index = next((i for i, item in enumerate(remaining) if not item.get("hostname")), len(remaining))
+            remaining.insert(catchall_index, entry)
+            if not any(not item.get("hostname") for item in remaining):
+                remaining.append({"service": "http_status:404"})
+            await self._provider.put_tunnel_ingress_raw(remaining)
         except RuntimeError as exc:
-            self._audit_record("tunnel", "tunnel-ingress-update", "failed", str(exc))
+            self._audit_record("tunnel", "tunnel-ingress-upsert", "failed", f"{normalized_hostname}: {exc}")
             raise
-        self._audit_record("tunnel", "tunnel-ingress-update", "success", f"{len(normalized)} rule(s)")
-        return normalized
+        self._audit_record("tunnel", "tunnel-ingress-upsert", "success", f"{normalized_hostname} -> {normalized_service}")
+
+    async def delete_tunnel_rule(self, hostname: str, path: str | None = None) -> None:
+        self._require_enabled()
+        normalized_hostname = self._normalize_ingress_hostname(hostname)
+        normalized_path = self._normalize_ingress_path(path)
+        try:
+            ingress = await self._provider.get_tunnel_ingress_raw()
+            remaining = [item for item in ingress if not self._matches(item, normalized_hostname, normalized_path)]
+            if not any(not item.get("hostname") for item in remaining):
+                remaining.append({"service": "http_status:404"})
+            await self._provider.put_tunnel_ingress_raw(remaining)
+        except RuntimeError as exc:
+            self._audit_record("tunnel", "tunnel-ingress-delete", "failed", f"{normalized_hostname}: {exc}")
+            raise
+        self._audit_record("tunnel", "tunnel-ingress-delete", "success", normalized_hostname)
+
+    @staticmethod
+    def _matches(item: dict[str, object], hostname: str, path: str | None) -> bool:
+        return item.get("hostname") == hostname and (item.get("path") or None) == path
 
     def _audit_record(self, domain: str, action: str, result: str, detail: str) -> None:
         self._audit.record(
@@ -218,49 +307,33 @@ class CloudflareService:
         return record_id
 
     @staticmethod
-    def _normalize_ingress(rules: list[TunnelIngressRule]) -> list[TunnelIngressRule]:
-        if not rules:
-            raise ValueError("ingress list cannot be empty")
-        normalized: list[TunnelIngressRule] = []
-        for index, rule in enumerate(rules):
-            is_last = index == len(rules) - 1
-            service = rule.service.strip()
-            if not _SERVICE_RE.fullmatch(service):
-                raise ValueError(f"invalid service target: {rule.service}")
-            hostname = rule.hostname.strip().lower().rstrip(".") if rule.hostname else None
-            if hostname:
-                if len(hostname) > 253 or not _DNS_NAME_RE.fullmatch(hostname):
-                    raise ValueError(f"invalid hostname: {rule.hostname}")
-            elif not is_last:
-                raise ValueError("only the last ingress rule may omit a hostname (catch-all)")
+    def _normalize_service(value: str) -> str:
+        service = value.strip()
+        if not _SERVICE_RE.fullmatch(service):
+            raise ValueError(f"invalid service target: {value}")
+        return service
 
-            path = rule.path.strip() if rule.path else None
-            if path and (len(path) > 512 or "\n" in path):
-                raise ValueError(f"invalid path pattern: {rule.path}")
+    @staticmethod
+    def _normalize_ingress_hostname(value: str) -> str:
+        hostname = value.strip().lower().rstrip(".")
+        if not hostname or len(hostname) > 253 or not _DNS_NAME_RE.fullmatch(hostname):
+            raise ValueError(f"invalid hostname: {value}")
+        return hostname
 
-            http_host_header = rule.http_host_header.strip() if rule.http_host_header else None
-            if http_host_header and (len(http_host_header) > 253 or not _DNS_NAME_RE.fullmatch(http_host_header.lower())):
-                raise ValueError(f"invalid HTTP host header: {rule.http_host_header}")
+    @staticmethod
+    def _normalize_ingress_path(value: str | None) -> str | None:
+        if not value or not value.strip():
+            return None
+        path = value.strip()
+        if len(path) > 512 or "\n" in path:
+            raise ValueError(f"invalid path pattern: {value}")
+        return path
 
-            origin_server_name = rule.origin_server_name.strip() if rule.origin_server_name else None
-            if origin_server_name and (len(origin_server_name) > 253 or not _DNS_NAME_RE.fullmatch(origin_server_name.lower())):
-                raise ValueError(f"invalid origin server name: {rule.origin_server_name}")
-
-            connect_timeout = rule.connect_timeout_seconds
-            if connect_timeout is not None and not (1 <= connect_timeout <= 300):
-                raise ValueError("connect timeout must be between 1 and 300 seconds")
-
-            normalized.append(
-                TunnelIngressRule(
-                    hostname=hostname,
-                    service=service,
-                    path=path,
-                    no_tls_verify=rule.no_tls_verify,
-                    http_host_header=http_host_header,
-                    origin_server_name=origin_server_name,
-                    connect_timeout_seconds=connect_timeout,
-                )
-            )
-        if normalized[-1].hostname is not None:
-            normalized.append(TunnelIngressRule(hostname=None, service="http_status:404"))
-        return normalized
+    @staticmethod
+    def _normalize_ingress_hostlike(value: str | None, label: str) -> str | None:
+        if not value or not value.strip():
+            return None
+        cleaned = value.strip()
+        if len(cleaned) > 253 or not _DNS_NAME_RE.fullmatch(cleaned.lower()):
+            raise ValueError(f"invalid {label}: {value}")
+        return cleaned

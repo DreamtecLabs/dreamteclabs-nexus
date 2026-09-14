@@ -17,7 +17,6 @@ from nexus_core.providers.domain_helper import DomainHelperProvider
 from nexus_core.providers.file_sd import CompositeTelemetryRuntime, FileSdTelemetryRuntime, IcmpFileSdTelemetryRuntime
 from nexus_core.providers.pdm import PdmProvider
 from nexus_core.providers.signoz import SigNozAlertingProvider, SigNozMetricsProvider
-from nexus_core.ports.domains import TunnelIngressRule
 from nexus_core.repositories.domain_audit_jsonl import JsonlDomainAuditRepository
 from nexus_core.repositories.domains_json import JsonDomainRepository
 from nexus_core.repositories.fleet_scripts import FilesystemFleetScriptRepository
@@ -127,7 +126,14 @@ class DnsRecordInput(BaseModel):
     data: dict[str, object] | None = Field(default=None)
 
 
-class TunnelIngressRuleInput(BaseModel):
+class TunnelIngressUpsertInput(BaseModel):
+    # Identity of the rule being replaced, as it existed before this edit --
+    # None/empty means "this is a brand-new rule, nothing to remove first".
+    # Needed (rather than matching on the new hostname) because a tunnel can
+    # legitimately have the same hostname more than once with different
+    # `path` values, so hostname alone isn't a stable identity.
+    original_hostname: str | None = Field(default=None, max_length=253)
+    original_path: str | None = Field(default=None, max_length=512)
     hostname: str | None = Field(default=None, max_length=253)
     service: str = Field(min_length=1, max_length=512)
     path: str | None = Field(default=None, max_length=512)
@@ -135,10 +141,6 @@ class TunnelIngressRuleInput(BaseModel):
     http_host_header: str | None = Field(default=None, max_length=253)
     origin_server_name: str | None = Field(default=None, max_length=253)
     connect_timeout_seconds: int | None = Field(default=None, ge=1, le=300)
-
-
-class TunnelIngressInput(BaseModel):
-    rules: list[TunnelIngressRuleInput] = Field(min_length=1, max_length=200)
 
 
 def create_app(settings: Settings | None = None) -> FastAPI:
@@ -524,17 +526,28 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         return {"rules": [asdict(rule) for rule in rules], "count": len(rules)}
 
     @app.put("/api/v1/cloudflare/tunnel/ingress")
-    async def set_tunnel_ingress(payload: TunnelIngressInput, request: Request) -> dict[str, object]:
-        rules = [TunnelIngressRule(**rule.model_dump()) for rule in payload.rules]
+    async def upsert_tunnel_ingress_rule(payload: TunnelIngressUpsertInput, request: Request) -> dict[str, object]:
         try:
-            saved = await request.app.state.cloudflare_service.set_tunnel_ingress(rules)
+            await request.app.state.cloudflare_service.upsert_tunnel_rule(**payload.model_dump())
         except CloudflareOperationsDisabled as exc:
             raise HTTPException(status_code=403, detail=str(exc)) from exc
         except ValueError as exc:
             raise HTTPException(status_code=422, detail=str(exc)) from exc
         except RuntimeError as exc:
             raise HTTPException(status_code=503, detail=str(exc)) from exc
-        return {"rules": [asdict(rule) for rule in saved], "count": len(saved)}
+        return {"hostname": payload.hostname, "saved": True}
+
+    @app.delete("/api/v1/cloudflare/tunnel/ingress")
+    async def delete_tunnel_ingress_rule(request: Request, hostname: str, path: str | None = None) -> dict[str, object]:
+        try:
+            await request.app.state.cloudflare_service.delete_tunnel_rule(hostname, path)
+        except CloudflareOperationsDisabled as exc:
+            raise HTTPException(status_code=403, detail=str(exc)) from exc
+        except ValueError as exc:
+            raise HTTPException(status_code=422, detail=str(exc)) from exc
+        except RuntimeError as exc:
+            raise HTTPException(status_code=503, detail=str(exc)) from exc
+        return {"hostname": hostname, "deleted": True}
 
     return app
 

@@ -16,13 +16,13 @@ from nexus_core.services.cloudflare import CloudflareOperationsDisabled, Cloudfl
 
 
 class FakeCloudflareProvider:
-    def __init__(self, records: list[DnsRecord] | None = None, ingress: list[TunnelIngressRule] | None = None) -> None:
+    def __init__(self, records: list[DnsRecord] | None = None, ingress: list[dict[str, object]] | None = None) -> None:
         self.records = list(records or [])
-        self.ingress = list(ingress or [TunnelIngressRule(hostname=None, service="http_status:404")])
+        self.raw_ingress: list[dict[str, object]] = list(ingress or [{"service": "http_status:404"}])
         self.created: list[tuple[str, dict[str, object]]] = []
         self.updated: list[tuple[str, str, dict[str, object]]] = []
         self.deleted: list[tuple[str, str]] = []
-        self.set_ingress_calls: list[list[TunnelIngressRule]] = []
+        self.put_ingress_calls: list[list[dict[str, object]]] = []
 
     async def list_dns_records(self, zone_name: str) -> list[DnsRecord]:
         return self.records
@@ -39,11 +39,14 @@ class FakeCloudflareProvider:
         self.deleted.append((zone_name, record_id))
 
     async def list_tunnel_ingress(self) -> list[TunnelIngressRule]:
-        return self.ingress
+        return CloudflareApiProvider._parse_ingress(self.raw_ingress)
 
-    async def set_tunnel_ingress(self, rules: list[TunnelIngressRule]) -> None:
-        self.set_ingress_calls.append(rules)
-        self.ingress = rules
+    async def get_tunnel_ingress_raw(self) -> list[dict[str, object]]:
+        return list(self.raw_ingress)
+
+    async def put_tunnel_ingress_raw(self, ingress: list[dict[str, object]]) -> None:
+        self.put_ingress_calls.append(ingress)
+        self.raw_ingress = ingress
 
 
 @pytest.mark.asyncio
@@ -126,32 +129,27 @@ async def test_cloudflare_provider_reports_errors_from_response_body() -> None:
 
 
 @pytest.mark.asyncio
-async def test_cloudflare_provider_roundtrips_advanced_ingress_fields() -> None:
-    captured: dict[str, object] = {}
-
+async def test_cloudflare_provider_parses_advanced_ingress_fields() -> None:
     def handler(request: httpx.Request) -> httpx.Response:
-        if request.method == "GET":
-            return httpx.Response(
-                200,
-                json={
-                    "success": True,
-                    "result": {
-                        "config": {
-                            "ingress": [
-                                {
-                                    "hostname": "app.example.com",
-                                    "path": "/api/*",
-                                    "service": "http://192.168.0.10:80",
-                                    "originRequest": {"noTLSVerify": True, "httpHostHeader": "internal.example", "originServerName": "internal.example", "connectTimeout": "15s"},
-                                },
-                                {"service": "http_status:404"},
-                            ]
-                        }
-                    },
+        return httpx.Response(
+            200,
+            json={
+                "success": True,
+                "result": {
+                    "config": {
+                        "ingress": [
+                            {
+                                "hostname": "app.example.com",
+                                "path": "/api/*",
+                                "service": "http://192.168.0.10:80",
+                                "originRequest": {"noTLSVerify": True, "httpHostHeader": "internal.example", "originServerName": "internal.example", "connectTimeout": "15s"},
+                            },
+                            {"service": "http_status:404"},
+                        ]
+                    }
                 },
-            )
-        captured["body"] = json.loads(request.content)
-        return httpx.Response(200, json={"success": True, "result": {}})
+            },
+        )
 
     provider = CloudflareApiProvider(
         api_base="http://cf.test", api_token="secret", account_id="acct", tunnel_id="tunnel", transport=httpx.MockTransport(handler)
@@ -162,30 +160,28 @@ async def test_cloudflare_provider_roundtrips_advanced_ingress_fields() -> None:
     assert rules[0].origin_server_name == "internal.example"
     assert rules[0].connect_timeout_seconds == 15
 
-    await provider.set_tunnel_ingress(rules)
-    saved = captured["body"]["config"]["ingress"][0]
-    assert saved["path"] == "/api/*"
-    assert saved["originRequest"]["httpHostHeader"] == "internal.example"
-    assert saved["originRequest"]["connectTimeout"] == "15s"
-
 
 @pytest.mark.asyncio
-async def test_cloudflare_provider_appends_catch_all_when_missing() -> None:
+async def test_cloudflare_provider_raw_get_and_put_roundtrip() -> None:
     captured: dict[str, object] = {}
 
     def handler(request: httpx.Request) -> httpx.Response:
         if request.method == "GET":
-            return httpx.Response(200, json={"success": True, "result": {"config": {"ingress": []}}})
+            return httpx.Response(
+                200,
+                json={"success": True, "result": {"config": {"ingress": [{"hostname": "app.example.com", "service": "http://192.168.0.10:80"}, {"service": "http_status:404"}]}}},
+            )
         captured["body"] = json.loads(request.content)
         return httpx.Response(200, json={"success": True, "result": {}})
 
     provider = CloudflareApiProvider(
         api_base="http://cf.test", api_token="secret", account_id="acct", tunnel_id="tunnel", transport=httpx.MockTransport(handler)
     )
-    await provider.set_tunnel_ingress([TunnelIngressRule(hostname="app.example.com", service="http://192.168.0.10:80")])
-    ingress = captured["body"]["config"]["ingress"]
-    assert ingress[-1] == {"service": "http_status:404"}
-    assert ingress[0]["hostname"] == "app.example.com"
+    raw = await provider.get_tunnel_ingress_raw()
+    assert raw == [{"hostname": "app.example.com", "service": "http://192.168.0.10:80"}, {"service": "http_status:404"}]
+
+    await provider.put_tunnel_ingress_raw(raw)
+    assert captured["body"] == {"config": {"ingress": raw}}
 
 
 @pytest.mark.asyncio
@@ -253,35 +249,143 @@ async def test_cloudflare_service_requires_and_validates_structured_data_for_srv
 
 
 @pytest.mark.asyncio
-async def test_cloudflare_service_normalizes_tunnel_ingress(tmp_path: Path) -> None:
+async def test_cloudflare_service_upsert_adds_new_rule_and_keeps_catch_all(tmp_path: Path) -> None:
     audit = JsonlDomainAuditRepository(tmp_path / "audit.jsonl")
     provider = FakeCloudflareProvider()
     service = CloudflareService(provider, audit, operations_enabled=True)
 
-    with pytest.raises(ValueError):
-        await service.set_tunnel_ingress([])
+    await service.upsert_tunnel_rule(original_hostname=None, original_path=None, hostname="a.example.com", service="http://x:80")
+    saved = provider.put_ingress_calls[0]
+    assert [item.get("hostname") for item in saved] == ["a.example.com", None]
+    assert saved[-1] == {"service": "http_status:404"}
+    assert audit.list_recent(1)[0].action == "tunnel-ingress-upsert"
+    assert audit.list_recent(1)[0].result == "success"
 
-    with pytest.raises(ValueError):
-        # a non-last rule may not omit its hostname
-        await service.set_tunnel_ingress(
-            [TunnelIngressRule(hostname=None, service="http_status:404"), TunnelIngressRule(hostname="a.example.com", service="http://x:80")]
-        )
 
-    saved = await service.set_tunnel_ingress([TunnelIngressRule(hostname="a.example.com", service="http://x:80")])
-    assert saved[-1].hostname is None
-    assert provider.set_ingress_calls[0][-1].service == "http_status:404"
-
-    with pytest.raises(ValueError):
-        await service.set_tunnel_ingress([TunnelIngressRule(hostname="a.example.com", service="http://x:80", connect_timeout_seconds=999)])
-
-    with pytest.raises(ValueError):
-        await service.set_tunnel_ingress([TunnelIngressRule(hostname="a.example.com", service="http://x:80", http_host_header="bad header!")])
-
-    saved_advanced = await service.set_tunnel_ingress(
-        [TunnelIngressRule(hostname="a.example.com", service="http://x:80", path="/api/*", http_host_header="internal.example", origin_server_name="internal.example", connect_timeout_seconds=30)]
+@pytest.mark.asyncio
+async def test_cloudflare_service_upsert_only_touches_the_edited_rule(tmp_path: Path) -> None:
+    """The core guarantee behind the per-rule save flow: editing one hostname
+    must never reshape or drop any other rule already on the tunnel, even one
+    Nexus doesn't fully model (an unrecognized field, an exotic scheme)."""
+    audit = JsonlDomainAuditRepository(tmp_path / "audit.jsonl")
+    untouched_exotic = {"hostname": "legacy.example.com", "service": "rdp://192.168.0.5:3389", "someFutureField": "keep-me"}
+    provider = FakeCloudflareProvider(
+        ingress=[
+            {"hostname": "a.example.com", "service": "http://old:80"},
+            untouched_exotic,
+            {"service": "http_status:404"},
+        ]
     )
-    assert saved_advanced[0].path == "/api/*"
-    assert saved_advanced[0].connect_timeout_seconds == 30
+    service = CloudflareService(provider, audit, operations_enabled=True)
+
+    await service.upsert_tunnel_rule(original_hostname="a.example.com", original_path=None, hostname="a.example.com", service="http://new:80")
+
+    saved = provider.put_ingress_calls[0]
+    assert saved[0] == untouched_exotic  # passed through byte-for-byte, never re-validated or reshaped
+    assert saved[1]["service"] == "http://new:80"
+    assert saved[-1] == {"service": "http_status:404"}
+
+
+@pytest.mark.asyncio
+async def test_cloudflare_service_upsert_disambiguates_duplicate_hostnames_by_path(tmp_path: Path) -> None:
+    """A tunnel can legitimately route the same hostname to different services
+    by path -- editing one path must not touch the other."""
+    audit = JsonlDomainAuditRepository(tmp_path / "audit.jsonl")
+    provider = FakeCloudflareProvider(
+        ingress=[
+            {"hostname": "family.example.com", "service": "http://api:3001", "path": "/api/v1/*"},
+            {"hostname": "family.example.com", "service": "http://web:3000"},
+            {"service": "http_status:404"},
+        ]
+    )
+    service = CloudflareService(provider, audit, operations_enabled=True)
+
+    await service.upsert_tunnel_rule(
+        original_hostname="family.example.com", original_path=None, hostname="family.example.com", service="http://web:3999"
+    )
+
+    saved = provider.put_ingress_calls[0]
+    api_rule = next(item for item in saved if item.get("path"))
+    web_rule = next(item for item in saved if item.get("service", "").startswith("http://web"))
+    assert api_rule["service"] == "http://api:3001"  # untouched
+    assert web_rule["service"] == "http://web:3999"
+
+
+@pytest.mark.asyncio
+async def test_cloudflare_service_upsert_validates_new_rule_fields(tmp_path: Path) -> None:
+    audit = JsonlDomainAuditRepository(tmp_path / "audit.jsonl")
+    provider = FakeCloudflareProvider()
+    locked = CloudflareService(provider, audit, operations_enabled=False)
+    with pytest.raises(CloudflareOperationsDisabled):
+        await locked.upsert_tunnel_rule(original_hostname=None, original_path=None, hostname="a.example.com", service="http://x:80")
+
+    service = CloudflareService(provider, audit, operations_enabled=True)
+
+    with pytest.raises(ValueError, match="invalid service target"):
+        await service.upsert_tunnel_rule(original_hostname=None, original_path=None, hostname="a.example.com", service="not-a-service")
+
+    with pytest.raises(ValueError):
+        await service.upsert_tunnel_rule(original_hostname=None, original_path=None, hostname="a.example.com", service="http://x:80", connect_timeout_seconds=999)
+
+    with pytest.raises(ValueError):
+        await service.upsert_tunnel_rule(original_hostname=None, original_path=None, hostname="a.example.com", service="http://x:80", http_host_header="bad header!")
+
+    # Cloudflare's browser-rendered Infrastructure Access services must be accepted, not just http(s)/tcp.
+    await service.upsert_tunnel_rule(original_hostname=None, original_path=None, hostname="rdp.example.com", service="rdp://192.168.0.5:3389")
+    saved = provider.put_ingress_calls[-1]
+    assert any(item.get("service") == "rdp://192.168.0.5:3389" for item in saved)
+
+    await service.upsert_tunnel_rule(
+        original_hostname=None,
+        original_path=None,
+        hostname="b.example.com",
+        service="http://x:80",
+        path="/api/*",
+        http_host_header="internal.example",
+        origin_server_name="internal.example",
+        connect_timeout_seconds=30,
+    )
+    saved = provider.put_ingress_calls[-1]
+    added = next(item for item in saved if item.get("hostname") == "b.example.com")
+    assert added["path"] == "/api/*"
+    assert added["originRequest"]["connectTimeout"] == "30s"
+
+
+@pytest.mark.asyncio
+async def test_cloudflare_service_upsert_catch_all_replaces_only_its_service(tmp_path: Path) -> None:
+    audit = JsonlDomainAuditRepository(tmp_path / "audit.jsonl")
+    provider = FakeCloudflareProvider(ingress=[{"hostname": "a.example.com", "service": "http://x:80"}, {"service": "http_status:404"}])
+    service = CloudflareService(provider, audit, operations_enabled=True)
+
+    await service.upsert_tunnel_rule(original_hostname=None, original_path=None, hostname=None, service="http_status:530")
+
+    saved = provider.put_ingress_calls[0]
+    assert saved[0] == {"hostname": "a.example.com", "service": "http://x:80"}
+    assert saved[-1] == {"service": "http_status:530"}
+
+
+@pytest.mark.asyncio
+async def test_cloudflare_service_delete_tunnel_rule_removes_only_the_match(tmp_path: Path) -> None:
+    audit = JsonlDomainAuditRepository(tmp_path / "audit.jsonl")
+    provider = FakeCloudflareProvider(
+        ingress=[
+            {"hostname": "family.example.com", "service": "http://api:3001", "path": "/api/v1/*"},
+            {"hostname": "family.example.com", "service": "http://web:3000"},
+            {"hostname": "a.example.com", "service": "http://x:80"},
+            {"service": "http_status:404"},
+        ]
+    )
+    service = CloudflareService(provider, audit, operations_enabled=True)
+
+    await service.delete_tunnel_rule("family.example.com", "/api/v1/*")
+
+    saved = provider.put_ingress_calls[0]
+    hostnames_with_path = [(item.get("hostname"), item.get("path")) for item in saved]
+    assert ("family.example.com", "/api/v1/*") not in hostnames_with_path
+    assert ("family.example.com", None) in hostnames_with_path  # the other family.example.com rule survives
+    assert ("a.example.com", None) in hostnames_with_path
+    assert saved[-1] == {"service": "http_status:404"}
+    assert audit.list_recent(1)[0].action == "tunnel-ingress-delete"
 
 
 def test_cloudflare_dns_page_and_tunnel_page_render(tmp_path: Path) -> None:
@@ -289,7 +393,7 @@ def test_cloudflare_dns_page_and_tunnel_page_render(tmp_path: Path) -> None:
     app = create_app(settings)
     provider = FakeCloudflareProvider(
         records=[DnsRecord(id="r1", type="A", name="example.com", content="1.2.3.4", ttl=1, proxied=True)],
-        ingress=[TunnelIngressRule(hostname="app.example.com", service="http://192.168.0.10:80"), TunnelIngressRule(hostname=None, service="http_status:404")],
+        ingress=[{"hostname": "app.example.com", "service": "http://192.168.0.10:80"}, {"service": "http_status:404"}],
     )
     app.state.cloudflare_service = CloudflareService(provider, JsonlDomainAuditRepository(tmp_path / "audit.jsonl"), operations_enabled=False)
 
@@ -352,6 +456,15 @@ def test_cloudflare_dns_api_crud_when_enabled(tmp_path: Path) -> None:
         assert deleted.status_code == 200
         assert provider.deleted == [("example.com", "r1")]
 
-        ingress_saved = client.put("/api/v1/cloudflare/tunnel/ingress", json={"rules": [{"hostname": "app.example.com", "service": "http://x:80"}]})
+        ingress_saved = client.put(
+            "/api/v1/cloudflare/tunnel/ingress",
+            json={"original_hostname": None, "original_path": None, "hostname": "app.example.com", "service": "http://x:80"},
+        )
         assert ingress_saved.status_code == 200
-        assert ingress_saved.json()["rules"][-1]["hostname"] is None
+        assert ingress_saved.json() == {"hostname": "app.example.com", "saved": True}
+        assert provider.put_ingress_calls[0][-1] == {"service": "http_status:404"}
+
+        ingress_deleted = client.delete("/api/v1/cloudflare/tunnel/ingress", params={"hostname": "app.example.com"})
+        assert ingress_deleted.status_code == 200
+        assert ingress_deleted.json() == {"hostname": "app.example.com", "deleted": True}
+        assert all(item.get("hostname") != "app.example.com" for item in provider.put_ingress_calls[-1])
