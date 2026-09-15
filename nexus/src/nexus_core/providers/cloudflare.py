@@ -225,6 +225,9 @@ class CloudflareApiProvider:
             json={"config": {"ingress": ingress}},
         )
 
+    def tunnel_target(self) -> str:
+        return f"{self._tunnel_id}.cfargotunnel.com"
+
 
 class UnconfiguredCloudflareProvider:
     async def list_dns_records(self, zone_name: str) -> list[DnsRecord]:
@@ -250,4 +253,7 @@ class UnconfiguredCloudflareProvider:
         raise RuntimeError("NEXUS_CF_API_TOKEN is not configured")
 
     async def put_tunnel_ingress_raw(self, ingress: list[dict[str, object]]) -> None:
+        raise RuntimeError("NEXUS_CF_API_TOKEN is not configured")
+
+    def tunnel_target(self) -> str:
         raise RuntimeError("NEXUS_CF_API_TOKEN is not configured")

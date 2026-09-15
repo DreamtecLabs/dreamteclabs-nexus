@@ -528,14 +528,14 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     @app.put("/api/v1/cloudflare/tunnel/ingress")
     async def upsert_tunnel_ingress_rule(payload: TunnelIngressUpsertInput, request: Request) -> dict[str, object]:
         try:
-            await request.app.state.cloudflare_service.upsert_tunnel_rule(**payload.model_dump())
+            dns_note = await request.app.state.cloudflare_service.upsert_tunnel_rule(**payload.model_dump())
         except CloudflareOperationsDisabled as exc:
             raise HTTPException(status_code=403, detail=str(exc)) from exc
         except ValueError as exc:
             raise HTTPException(status_code=422, detail=str(exc)) from exc
         except RuntimeError as exc:
             raise HTTPException(status_code=503, detail=str(exc)) from exc
-        return {"hostname": payload.hostname, "saved": True}
+        return {"hostname": payload.hostname, "saved": True, "dns_note": dns_note}
 
     @app.delete("/api/v1/cloudflare/tunnel/ingress")
     async def delete_tunnel_ingress_rule(request: Request, hostname: str, path: str | None = None) -> dict[str, object]:

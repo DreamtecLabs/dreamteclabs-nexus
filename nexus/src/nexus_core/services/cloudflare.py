@@ -128,13 +128,21 @@ class CloudflareService:
         http_host_header: str | None = None,
         origin_server_name: str | None = None,
         connect_timeout_seconds: int | None = None,
-    ) -> None:
+    ) -> str | None:
         """Add or edit exactly one ingress rule, in place, without touching any
         other rule. Fetches the live config fresh right before writing (never
         the possibly-stale page load) and passes every other entry through
         untouched -- so a rule this code doesn't fully model (an exotic
         service scheme, extra originRequest fields) can never be silently
-        dropped or corrupted just because a neighboring rule was edited."""
+        dropped or corrupted just because a neighboring rule was edited.
+
+        Returns a short human-readable note about the DNS side of this
+        hostname (created / already existed / couldn't be resolved), or None
+        for the catch-all (which has no hostname to publish DNS for). This is
+        purely informational -- a DNS problem never rolls back or fails the
+        already-saved ingress rule, matching the dashboard's own "add a
+        public hostname" flow, which creates the CNAME as a convenience
+        alongside the ingress rule rather than as a hard dependency."""
         self._require_enabled()
         normalized_service = self._normalize_service(service)
 
@@ -161,7 +169,7 @@ class CloudflareService:
                 self._audit_record("tunnel", "tunnel-ingress-upsert", "failed", f"(catch-all): {exc}")
                 raise
             self._audit_record("tunnel", "tunnel-ingress-upsert", "success", f"(catch-all) -> {normalized_service}")
-            return
+            return None
 
         normalized_hostname = self._normalize_ingress_hostname(hostname)
         normalized_path = self._normalize_ingress_path(path)
@@ -203,6 +211,41 @@ class CloudflareService:
             self._audit_record("tunnel", "tunnel-ingress-upsert", "failed", f"{normalized_hostname}: {exc}")
             raise
         self._audit_record("tunnel", "tunnel-ingress-upsert", "success", f"{normalized_hostname} -> {normalized_service}")
+        return await self._ensure_tunnel_dns_record(normalized_hostname)
+
+    async def _find_zone_and_records(self, hostname: str) -> tuple[str, list[DnsRecord]] | None:
+        """Cloudflare has no "which zone owns this hostname" lookup, so try
+        the hostname's own dot-suffixes from longest to shortest until one of
+        them turns out to be a zone in this account. Needed because the zone
+        isn't always "last two labels" (dreamtec.com.br is itself a zone, not
+        a subdomain of a com.br zone)."""
+        labels = hostname.split(".")
+        for start in range(len(labels) - 1):
+            candidate = ".".join(labels[start:])
+            try:
+                records = await self.list_dns_records(candidate)
+            except RuntimeError:
+                continue
+            return candidate, records
+        return None
+
+    async def _ensure_tunnel_dns_record(self, hostname: str) -> str:
+        # Best-effort only: the ingress rule this follows has already been
+        # saved, so nothing here may raise and turn a successful save into an
+        # apparent failure -- every problem becomes a note in the returned
+        # string instead.
+        try:
+            found = await self._find_zone_and_records(hostname)
+            if found is None:
+                return f"Tunnel rule saved, but no Cloudflare zone in this account matches {hostname} -- create its DNS record manually."
+            zone, records = found
+            if any(record.name == hostname for record in records):
+                return "DNS record already exists for this hostname -- left unchanged."
+            target = self._provider.tunnel_target()
+            await self.create_dns_record(zone, type="CNAME", name=hostname, content=target, proxied=True)
+            return f"DNS record created: CNAME {hostname} -> {target}."
+        except (RuntimeError, ValueError) as exc:
+            return f"Tunnel rule saved, but the DNS record could not be created automatically: {exc}"
 
     async def delete_tunnel_rule(self, hostname: str, path: str | None = None) -> None:
         self._require_enabled()

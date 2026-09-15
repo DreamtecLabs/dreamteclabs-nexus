@@ -16,16 +16,34 @@ from nexus_core.services.cloudflare import CloudflareOperationsDisabled, Cloudfl
 
 
 class FakeCloudflareProvider:
-    def __init__(self, records: list[DnsRecord] | None = None, ingress: list[dict[str, object]] | None = None) -> None:
+    def __init__(
+        self,
+        records: list[DnsRecord] | None = None,
+        ingress: list[dict[str, object]] | None = None,
+        *,
+        known_zones: set[str] | None = None,
+        tunnel_id: str = "tunnel-abc",
+    ) -> None:
         self.records = list(records or [])
         self.raw_ingress: list[dict[str, object]] = list(ingress or [{"service": "http_status:404"}])
         self.created: list[tuple[str, dict[str, object]]] = []
         self.updated: list[tuple[str, str, dict[str, object]]] = []
         self.deleted: list[tuple[str, str]] = []
         self.put_ingress_calls: list[list[dict[str, object]]] = []
+        # None means every zone name is treated as valid (old behavior, used by
+        # tests that don't care about zone resolution). Set it to constrain
+        # which candidate zone names list_dns_records accepts, mirroring
+        # Cloudflare's real "no active zone with that name" error.
+        self.known_zones = known_zones
+        self._tunnel_id = tunnel_id
 
     async def list_dns_records(self, zone_name: str) -> list[DnsRecord]:
+        if self.known_zones is not None and zone_name not in self.known_zones:
+            raise RuntimeError(f"Cloudflare has no active zone for {zone_name}")
         return self.records
+
+    def tunnel_target(self) -> str:
+        return f"{self._tunnel_id}.cfargotunnel.com"
 
     async def create_dns_record(self, zone_name: str, **kwargs: object) -> DnsRecord:
         self.created.append((zone_name, kwargs))
@@ -258,8 +276,10 @@ async def test_cloudflare_service_upsert_adds_new_rule_and_keeps_catch_all(tmp_p
     saved = provider.put_ingress_calls[0]
     assert [item.get("hostname") for item in saved] == ["a.example.com", None]
     assert saved[-1] == {"service": "http_status:404"}
-    assert audit.list_recent(1)[0].action == "tunnel-ingress-upsert"
-    assert audit.list_recent(1)[0].result == "success"
+    # [0] is the DNS auto-create that follows a successful upsert (list_recent is newest-first).
+    ingress_entry = audit.list_recent(2)[1]
+    assert ingress_entry.action == "tunnel-ingress-upsert"
+    assert ingress_entry.result == "success"
 
 
 @pytest.mark.asyncio
@@ -357,11 +377,58 @@ async def test_cloudflare_service_upsert_catch_all_replaces_only_its_service(tmp
     provider = FakeCloudflareProvider(ingress=[{"hostname": "a.example.com", "service": "http://x:80"}, {"service": "http_status:404"}])
     service = CloudflareService(provider, audit, operations_enabled=True)
 
-    await service.upsert_tunnel_rule(original_hostname=None, original_path=None, hostname=None, service="http_status:530")
+    result = await service.upsert_tunnel_rule(original_hostname=None, original_path=None, hostname=None, service="http_status:530")
 
     saved = provider.put_ingress_calls[0]
     assert saved[0] == {"hostname": "a.example.com", "service": "http://x:80"}
     assert saved[-1] == {"service": "http_status:530"}
+    assert result is None  # no hostname to publish DNS for
+
+
+@pytest.mark.asyncio
+async def test_cloudflare_service_upsert_creates_dns_record_when_none_exists(tmp_path: Path) -> None:
+    audit = JsonlDomainAuditRepository(tmp_path / "audit.jsonl")
+    # "app.dreamteclabs.com" itself isn't a zone -- only "dreamteclabs.com" is,
+    # so this also exercises walking down the hostname's suffixes.
+    provider = FakeCloudflareProvider(known_zones={"dreamteclabs.com"}, tunnel_id="119ff1e9-abc")
+    service = CloudflareService(provider, audit, operations_enabled=True)
+
+    note = await service.upsert_tunnel_rule(original_hostname=None, original_path=None, hostname="app.dreamteclabs.com", service="http://192.168.0.10:80")
+
+    assert note == "DNS record created: CNAME app.dreamteclabs.com -> 119ff1e9-abc.cfargotunnel.com."
+    assert provider.created == [
+        ("dreamteclabs.com", {"type": "CNAME", "name": "app.dreamteclabs.com", "content": "119ff1e9-abc.cfargotunnel.com", "ttl": 1, "proxied": True, "priority": None, "data": None})
+    ]
+
+
+@pytest.mark.asyncio
+async def test_cloudflare_service_upsert_leaves_existing_dns_record_alone(tmp_path: Path) -> None:
+    audit = JsonlDomainAuditRepository(tmp_path / "audit.jsonl")
+    provider = FakeCloudflareProvider(
+        records=[DnsRecord(id="r1", type="A", name="app.dreamteclabs.com", content="1.2.3.4", ttl=1, proxied=False)],
+        known_zones={"dreamteclabs.com"},
+    )
+    service = CloudflareService(provider, audit, operations_enabled=True)
+
+    note = await service.upsert_tunnel_rule(original_hostname=None, original_path=None, hostname="app.dreamteclabs.com", service="http://192.168.0.10:80")
+
+    assert note == "DNS record already exists for this hostname -- left unchanged."
+    assert provider.created == []
+
+
+@pytest.mark.asyncio
+async def test_cloudflare_service_upsert_notes_when_no_zone_matches_and_still_saves_the_rule(tmp_path: Path) -> None:
+    audit = JsonlDomainAuditRepository(tmp_path / "audit.jsonl")
+    provider = FakeCloudflareProvider(known_zones={"dreamteclabs.com"})  # "typo-domain.com" is not in this account
+    service = CloudflareService(provider, audit, operations_enabled=True)
+
+    note = await service.upsert_tunnel_rule(original_hostname=None, original_path=None, hostname="app.typo-domain.com", service="http://x:80")
+
+    assert "no Cloudflare zone in this account matches" in note
+    assert provider.created == []
+    # The ingress rule itself must still have been saved despite the DNS miss.
+    saved = provider.put_ingress_calls[0]
+    assert any(item.get("hostname") == "app.typo-domain.com" for item in saved)
 
 
 @pytest.mark.asyncio
@@ -479,7 +546,10 @@ def test_cloudflare_dns_api_crud_when_enabled(tmp_path: Path) -> None:
             json={"original_hostname": None, "original_path": None, "hostname": "app.example.com", "service": "http://x:80"},
         )
         assert ingress_saved.status_code == 200
-        assert ingress_saved.json() == {"hostname": "app.example.com", "saved": True}
+        body = ingress_saved.json()
+        assert body["hostname"] == "app.example.com"
+        assert body["saved"] is True
+        assert body["dns_note"] == "DNS record created: CNAME app.example.com -> tunnel-abc.cfargotunnel.com."
         assert provider.put_ingress_calls[0][-1] == {"service": "http_status:404"}
 
         ingress_deleted = client.delete("/api/v1/cloudflare/tunnel/ingress", params={"hostname": "app.example.com"})

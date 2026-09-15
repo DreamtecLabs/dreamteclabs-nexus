@@ -11,7 +11,7 @@
 {% endif %}
 
 <section class="card form-card">
-  <div><strong id="ingress-form-title">Add ingress rule</strong><p class="muted small">Writes straight to Cloudflare when you click "Save rule" — only the one rule below is touched, every other hostname on the tunnel is left exactly as-is.</p></div>
+  <div><strong id="ingress-form-title">Add ingress rule</strong><p class="muted small">Writes straight to Cloudflare when you click "Save rule" — only the one rule below is touched, every other hostname on the tunnel is left exactly as-is. If this hostname has no DNS record yet, a proxied CNAME to the tunnel is created for it automatically.</p></div>
   <div class="domain-form-row">
     <input class="control" id="ingress-hostname" placeholder="hostname (e.g. app.example.com)">
     <input class="control" id="ingress-service" placeholder="service (e.g. http://192.168.0.29:80)">
@@ -161,8 +161,9 @@
       });
       const data = await response.json();
       if (!response.ok) throw new Error(data.detail || `HTTP ${response.status}`);
-      show(`Saved ${hostname || '(catch-all)'}.`, 'success');
-      window.setTimeout(() => window.location.reload(), 500);
+      const suffix = data.dns_note ? ` ${data.dns_note}` : '';
+      show(`Saved ${hostname || '(catch-all)'}.${suffix}`, 'success');
+      window.setTimeout(() => window.location.reload(), suffix ? 1500 : 500);
     } catch (error) {
       saveBtn.disabled = false;
       show(String(error.message || error), 'error');
